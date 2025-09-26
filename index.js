@@ -518,6 +518,282 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Test flight implementation with sample data
+app.get('/test/flights', async (req, res) => {
+  try {
+    // Use your provided sample data with flight information
+    const sampleEvents = [
+      {
+        "event_name": "Kapolei Wedding",
+        "notion_url": "https://www.notion.so/1a639e4a65a980889e0af5ee5b096ce8",
+        "event_date": "2025-09-06T15:30:00-07:00",
+        "event_start": "2025-09-06T15:30:00-07:00",
+        "event_end": "2025-09-06T22:00:00-07:00",
+        "band": "Project 21",
+        "general_info": "Parking and Load In:\nLoad in directly to the venue from the parking lot. All one level. No elevators. Dollys and handtrucks are recommended.\n\nLarge free parking area. Please note dinner and dancing will be under a sail cloth tent.\nADDITIONAL POC/On-Site Manager: Maile Hatfield 415-302-1391\n\nDress Code:\nGentleman - black suit, white shirt, black bow tie, black dress shoes\nLadies - black formal dress, black dress shoes\n\nGreen Room:\nA Green room tent will be provided at Phase 2 for the band\n\nDay of Contact for Band: Hubie Wang - +14153052104\n\nContracted:\nCeremony: Guitar + Ceremony Sound 330pm-430pm (1hrs)\nCocktail: Bass + Keys + Cocktail Sound + Sax 430pm-545pm (1.25hrs)\nReception: Reception Sound + Band + Horns 545pm-10pm (4.25hrs)\n\nLocations:\nCeremony Outdoor\nCocktail Outdoor\nDinner Outdoor\nReception Outdoor\n\nContract Updated: February 25, 2025 8:19 PM\n\nNotes Updated: September 5, 2025 10:32 AM\n\nTimeline Updated: ",
+        "venue": "Lanikūhonua Cultural Institute",
+        "venue_address": "92-1101 Ali'inui Drive Kapolei, HI 96707",
+        "payroll": [{"position": "Band - Vox 1", "assignment": "Base + Rehearsal + A3 + Cocktail + Per Diem + Additional", "pay_total": 2425}],
+        "rehearsals": [{"rehearsal_time": "2025-09-03T14:00:00-07:00", "rehearsal_location": "Downbeat HQ", "rehearsal_address": "123 W Bellevue Dr Ste 4,\nPasadena, CA 91105⁠"}],
+        "flights": [
+          {
+            "confirmation": "HEOOAO",
+            "flight_status": "Booked",
+            "flight_type": "Round Trip",
+            "departure_name": "Flight to HNL (Band)",
+            "departure_airline": "American Airlines",
+            "departure_flightnumber": "AA 31",
+            "departure_from": "LAX",
+            "departure_from_city": "@Los Angeles",
+            "departure_to": "HNL",
+            "departure_to_city": "@Honolulu",
+            "departure_time": "2025-09-05T08:48:00-07:00",
+            "departure_arrival_time": "2025-09-05T11:45:00-07:00",
+            "departure_duration": "10620",
+            "return_confirmation": null,
+            "return_name": "Flight Return to LAX (Band)",
+            "return_airline": null,
+            "return_flightnumber": "AA 164",
+            "return_from": "HNL",
+            "return_from_city": "",
+            "return_to": "LAX",
+            "return_to_city": "",
+            "return_time": "2025-09-07T15:26:00-07:00",
+            "return_arrival_time": "2025-09-07T23:58:00-07:00",
+            "return_duration": "30720"
+          }
+        ],
+        "pay_total": 2425
+      }
+    ];
+
+    const calendar = ical({ 
+      name: 'Flight Test Calendar',
+      timezone: 'America/Los_Angeles'
+    });
+
+    const eventSummary = [];
+
+    sampleEvents.forEach((event, index) => {
+      const title = event.event_name;
+      const startDate = event.event_start;
+      const endDate = event.event_end;
+      const venue = event.venue;
+      const venueAddress = event.venue_address;
+      const band = event.band;
+      const eventId = `event-${index}-${Date.now()}`;
+
+      // Create location string from venue and address
+      const location = venueAddress ? `${venue}, ${venueAddress}` : venue;
+
+      if (startDate && title) {
+        // Fix date format by replacing 'T' quotes with actual T
+        const cleanStartDate = startDate.replace(/[']/g, '');
+        const cleanEndDate = endDate ? endDate.replace(/[']/g, '') : cleanStartDate;
+
+        // Build position assignments and pay information for test
+        let testPositionInfo = '';
+        if (event.payroll && event.payroll.length > 0) {
+          testPositionInfo = event.payroll.map(payrollItem => {
+            // Handle pay that might already have $ symbol or be just a number
+            const payAmount = typeof payrollItem.pay_total === 'string' ? 
+              (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
+              `$${payrollItem.pay_total}`;
+            return `Position: ${payrollItem.position}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
+          }).join('\n\n');
+        }
+
+        // Build description starting with position info, then general_info
+        let testEventDescription = '';
+        
+        // Add position info first if available
+        if (testPositionInfo) {
+          testEventDescription = testPositionInfo;
+        }
+        
+        // Add general_info after position info, or fall back to band/venue format
+        if (event.general_info) {
+          const generalInfo = event.general_info
+            .replace(/\r\n/g, '\n')  // Normalize line endings
+            .replace(/\r/g, '\n')    // Normalize line endings
+            .trim(); // Remove leading/trailing whitespace
+          
+          if (testEventDescription) {
+            testEventDescription += '\n\n' + generalInfo;
+          } else {
+            testEventDescription = generalInfo;
+          }
+        } else {
+          const fallbackInfo = `Band: ${band}\nVenue: ${venue}`;
+          if (testEventDescription) {
+            testEventDescription += '\n\n' + fallbackInfo;
+          } else {
+            testEventDescription = fallbackInfo;
+          }
+        }
+
+        // Create main event
+        calendar.createEvent({
+          start: new Date(cleanStartDate),
+          end: new Date(cleanEndDate),
+          summary: `${title} (${band})`,
+          location: location || '',
+          description: testEventDescription,
+          uid: `${eventId}@downbeat.agency`,
+          url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+        });
+
+        const mainEventInfo = {
+          type: 'main_event',
+          title: `${title} (${band})`,
+          start: cleanStartDate,
+          end: cleanEndDate,
+          location: location
+        };
+
+        eventSummary.push(mainEventInfo);
+
+        // Add flight events if they exist (using same logic as main calendar)
+        if (event.flights && Array.isArray(event.flights)) {
+          event.flights.forEach((flight, flightIndex) => {
+            // Process departure flight
+            if (flight.departure_time) {
+              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
+              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create departure airport location
+              const departureLocation = flight.departure_from_city ? 
+                `${flight.departure_from} (${flight.departure_from_city.replace('@', '')})` : 
+                flight.departure_from;
+              
+              const arrivalLocation = flight.departure_to_city ? 
+                `${flight.departure_to} (${flight.departure_to_city.replace('@', '')})` : 
+                flight.departure_to;
+              
+              // Build flight description
+              let flightDescription = `Flight for: ${title}\nBand: ${band}\n`;
+              flightDescription += `Airline: ${flight.departure_airline || 'TBD'}\n`;
+              flightDescription += `Flight: ${flight.departure_flightnumber || 'TBD'}\n`;
+              flightDescription += `From: ${departureLocation}\n`;
+              flightDescription += `To: ${arrivalLocation}\n`;
+              if (flight.confirmation) {
+                flightDescription += `Confirmation: ${flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                flightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: departureStart,
+                end: departureEnd,
+                summary: `✈️ FLIGHT: ${flight.departure_name || `${departureLocation} → ${arrivalLocation}`}`,
+                location: departureLocation,
+                description: flightDescription,
+                uid: `${departureEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+
+              const departureInfo = {
+                type: 'flight_departure',
+                title: `✈️ FLIGHT: ${flight.departure_name || `${departureLocation} → ${arrivalLocation}`}`,
+                start: departureStart.toISOString(),
+                end: departureEnd.toISOString(),
+                location: departureLocation,
+                airline: flight.departure_airline,
+                flightNumber: flight.departure_flightnumber,
+                confirmation: flight.confirmation,
+                mainEvent: title,
+                duration: `${Math.round((departureEnd - departureStart) / (1000 * 60))} minutes`
+              };
+
+              eventSummary.push(departureInfo);
+            }
+
+            // Process return flight
+            if (flight.return_time) {
+              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
+              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create return airport location
+              const returnDepartureLocation = flight.return_from_city ? 
+                `${flight.return_from} (${flight.return_from_city.replace('@', '')})` : 
+                flight.return_from;
+              
+              const returnArrivalLocation = flight.return_to_city ? 
+                `${flight.return_to} (${flight.return_to_city.replace('@', '')})` : 
+                flight.return_to;
+              
+              // Build return flight description
+              let returnFlightDescription = `Return flight for: ${title}\nBand: ${band}\n`;
+              returnFlightDescription += `Airline: ${flight.return_airline || flight.departure_airline || 'TBD'}\n`;
+              returnFlightDescription += `Flight: ${flight.return_flightnumber || 'TBD'}\n`;
+              returnFlightDescription += `From: ${returnDepartureLocation}\n`;
+              returnFlightDescription += `To: ${returnArrivalLocation}\n`;
+              if (flight.return_confirmation || flight.confirmation) {
+                returnFlightDescription += `Confirmation: ${flight.return_confirmation || flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                returnFlightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: returnStart,
+                end: returnEnd,
+                summary: `✈️ RETURN: ${flight.return_name || `${returnDepartureLocation} → ${returnArrivalLocation}`}`,
+                location: returnDepartureLocation,
+                description: returnFlightDescription,
+                uid: `${returnEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+
+              const returnInfo = {
+                type: 'flight_return',
+                title: `✈️ RETURN: ${flight.return_name || `${returnDepartureLocation} → ${returnArrivalLocation}`}`,
+                start: returnStart.toISOString(),
+                end: returnEnd.toISOString(),
+                location: returnDepartureLocation,
+                airline: flight.return_airline || flight.departure_airline,
+                flightNumber: flight.return_flightnumber,
+                confirmation: flight.return_confirmation || flight.confirmation,
+                mainEvent: title,
+                duration: `${Math.round((returnEnd - returnStart) / (1000 * 60))} minutes`
+              };
+
+              eventSummary.push(returnInfo);
+            }
+          });
+        }
+      }
+    });
+
+    // Return both JSON summary and option to download .ics
+    if (req.query.format === 'ics') {
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="flight-test.ics"');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.send(calendar.toString());
+    } else {
+      res.json({
+        message: 'Flight test completed successfully',
+        totalEvents: eventSummary.filter(e => e.type === 'main_event').length,
+        totalFlights: eventSummary.filter(e => e.type.startsWith('flight_')).length,
+        totalDepartureFlights: eventSummary.filter(e => e.type === 'flight_departure').length,
+        totalReturnFlights: eventSummary.filter(e => e.type === 'flight_return').length,
+        events: eventSummary,
+        downloadIcs: `${req.protocol}://${req.get('host')}/test/flights?format=ics`
+      });
+    }
+
+  } catch (error) {
+    console.error('Error testing flights:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Test rehearsal implementation with sample data
 app.get('/test/rehearsals', async (req, res) => {
   try {
@@ -697,6 +973,121 @@ app.get('/test/rehearsals', async (req, res) => {
             }
           });
         }
+
+        // Add flight events if they exist
+        if (event.flights && Array.isArray(event.flights)) {
+          event.flights.forEach((flight, flightIndex) => {
+            // Process departure flight
+            if (flight.departure_time) {
+              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
+              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create departure airport location
+              const departureLocation = flight.departure_from_city ? 
+                `${flight.departure_from} (${flight.departure_from_city.replace('@', '')})` : 
+                flight.departure_from;
+              
+              const arrivalLocation = flight.departure_to_city ? 
+                `${flight.departure_to} (${flight.departure_to_city.replace('@', '')})` : 
+                flight.departure_to;
+              
+              // Build flight description
+              let flightDescription = `Flight for: ${title}\nBand: ${band}\n`;
+              flightDescription += `Airline: ${flight.departure_airline || 'TBD'}\n`;
+              flightDescription += `Flight: ${flight.departure_flightnumber || 'TBD'}\n`;
+              flightDescription += `From: ${departureLocation}\n`;
+              flightDescription += `To: ${arrivalLocation}\n`;
+              if (flight.confirmation) {
+                flightDescription += `Confirmation: ${flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                flightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: departureStart,
+                end: departureEnd,
+                summary: `✈️ FLIGHT: ${flight.departure_name || `${departureLocation} → ${arrivalLocation}`}`,
+                location: departureLocation,
+                description: flightDescription,
+                uid: `${departureEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+
+              const departureInfo = {
+                type: 'flight_departure',
+                title: `✈️ FLIGHT: ${flight.departure_name || `${departureLocation} → ${arrivalLocation}`}`,
+                start: departureStart.toISOString(),
+                end: departureEnd.toISOString(),
+                location: departureLocation,
+                airline: flight.departure_airline,
+                flightNumber: flight.departure_flightnumber,
+                confirmation: flight.confirmation,
+                mainEvent: title,
+                duration: `${Math.round((departureEnd - departureStart) / (1000 * 60))} minutes`
+              };
+
+              eventSummary.push(departureInfo);
+            }
+
+            // Process return flight
+            if (flight.return_time) {
+              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
+              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create return airport location
+              const returnDepartureLocation = flight.return_from_city ? 
+                `${flight.return_from} (${flight.return_from_city.replace('@', '')})` : 
+                flight.return_from;
+              
+              const returnArrivalLocation = flight.return_to_city ? 
+                `${flight.return_to} (${flight.return_to_city.replace('@', '')})` : 
+                flight.return_to;
+              
+              // Build return flight description
+              let returnFlightDescription = `Return flight for: ${title}\nBand: ${band}\n`;
+              returnFlightDescription += `Airline: ${flight.return_airline || flight.departure_airline || 'TBD'}\n`;
+              returnFlightDescription += `Flight: ${flight.return_flightnumber || 'TBD'}\n`;
+              returnFlightDescription += `From: ${returnDepartureLocation}\n`;
+              returnFlightDescription += `To: ${returnArrivalLocation}\n`;
+              if (flight.return_confirmation || flight.confirmation) {
+                returnFlightDescription += `Confirmation: ${flight.return_confirmation || flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                returnFlightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: returnStart,
+                end: returnEnd,
+                summary: `✈️ RETURN: ${flight.return_name || `${returnDepartureLocation} → ${returnArrivalLocation}`}`,
+                location: returnDepartureLocation,
+                description: returnFlightDescription,
+                uid: `${returnEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+
+              const returnInfo = {
+                type: 'flight_return',
+                title: `✈️ RETURN: ${flight.return_name || `${returnDepartureLocation} → ${returnArrivalLocation}`}`,
+                start: returnStart.toISOString(),
+                end: returnEnd.toISOString(),
+                location: returnDepartureLocation,
+                airline: flight.return_airline || flight.departure_airline,
+                flightNumber: flight.return_flightnumber,
+                confirmation: flight.return_confirmation || flight.confirmation,
+                mainEvent: title,
+                duration: `${Math.round((returnEnd - returnStart) / (1000 * 60))} minutes`
+              };
+
+              eventSummary.push(returnInfo);
+            }
+          });
+        }
       }
     });
 
@@ -711,6 +1102,9 @@ app.get('/test/rehearsals', async (req, res) => {
         message: 'Rehearsal test completed successfully',
         totalEvents: eventSummary.filter(e => e.type === 'main_event').length,
         totalRehearsals: eventSummary.filter(e => e.type === 'rehearsal').length,
+        totalFlights: eventSummary.filter(e => e.type.startsWith('flight_')).length,
+        totalDepartureFlights: eventSummary.filter(e => e.type === 'flight_departure').length,
+        totalReturnFlights: eventSummary.filter(e => e.type === 'flight_return').length,
         events: eventSummary,
         downloadIcs: `${req.protocol}://${req.get('host')}/test/rehearsals?format=ics`
       });
@@ -936,6 +1330,91 @@ app.get('/calendar/:personId', async (req, res) => {
                 location: fullRehearsalLocation,
                 description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}`,
                 uid: `${rehearsalEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+            }
+          });
+        }
+
+        // Add flight events if they exist
+        if (event.flights && Array.isArray(event.flights)) {
+          event.flights.forEach((flight, flightIndex) => {
+            // Process departure flight
+            if (flight.departure_time) {
+              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
+              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create departure airport location
+              const departureLocation = flight.departure_from_city ? 
+                `${flight.departure_from} (${flight.departure_from_city.replace('@', '')})` : 
+                flight.departure_from;
+              
+              const arrivalLocation = flight.departure_to_city ? 
+                `${flight.departure_to} (${flight.departure_to_city.replace('@', '')})` : 
+                flight.departure_to;
+              
+              // Build flight description
+              let flightDescription = `Flight for: ${title}\nBand: ${band}\n`;
+              flightDescription += `Airline: ${flight.departure_airline || 'TBD'}\n`;
+              flightDescription += `Flight: ${flight.departure_flightnumber || 'TBD'}\n`;
+              flightDescription += `From: ${departureLocation}\n`;
+              flightDescription += `To: ${arrivalLocation}\n`;
+              if (flight.confirmation) {
+                flightDescription += `Confirmation: ${flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                flightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: departureStart,
+                end: departureEnd,
+                summary: `✈️ FLIGHT: ${flight.departure_name || `${departureLocation} → ${arrivalLocation}`}`,
+                location: departureLocation,
+                description: flightDescription,
+                uid: `${departureEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+            }
+
+            // Process return flight
+            if (flight.return_time) {
+              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
+              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+              
+              const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
+              
+              // Create return airport location
+              const returnDepartureLocation = flight.return_from_city ? 
+                `${flight.return_from} (${flight.return_from_city.replace('@', '')})` : 
+                flight.return_from;
+              
+              const returnArrivalLocation = flight.return_to_city ? 
+                `${flight.return_to} (${flight.return_to_city.replace('@', '')})` : 
+                flight.return_to;
+              
+              // Build return flight description
+              let returnFlightDescription = `Return flight for: ${title}\nBand: ${band}\n`;
+              returnFlightDescription += `Airline: ${flight.return_airline || flight.departure_airline || 'TBD'}\n`;
+              returnFlightDescription += `Flight: ${flight.return_flightnumber || 'TBD'}\n`;
+              returnFlightDescription += `From: ${returnDepartureLocation}\n`;
+              returnFlightDescription += `To: ${returnArrivalLocation}\n`;
+              if (flight.return_confirmation || flight.confirmation) {
+                returnFlightDescription += `Confirmation: ${flight.return_confirmation || flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                returnFlightDescription += `Status: ${flight.flight_status}`;
+              }
+              
+              calendar.createEvent({
+                start: returnStart,
+                end: returnEnd,
+                summary: `✈️ RETURN: ${flight.return_name || `${returnDepartureLocation} → ${returnArrivalLocation}`}`,
+                location: returnDepartureLocation,
+                description: returnFlightDescription,
+                uid: `${returnEventId}@downbeat.agency`,
                 url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
               });
             }
