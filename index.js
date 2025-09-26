@@ -20,7 +20,15 @@ app.get('/debug/env', (_req, res) => {
 app.get('/debug/notion', async (_req, res) => {
   try {
     const who = await notion.users.me();
-    res.json({ ok: true, user: who?.name || 'bot', workspace: who?.bot?.owner?.workspace_name });
+    res.json({ 
+      ok: true, 
+      user: who?.name || 'bot', 
+      workspace: who?.bot?.owner?.workspace_name,
+      clientMethods: {
+        databases: Object.keys(notion.databases || {}),
+        hasQuery: typeof notion.databases?.query === 'function'
+      }
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.body || e.message });
   }
@@ -30,6 +38,17 @@ async function dbInfo(id) {
   try {
     const meta = await notion.databases.retrieve({ database_id: id });
     const props = Object.entries(meta.properties || {}).map(([k,v]) => ({ name: k, type: v.type }));
+    
+    // Test if the query method exists
+    if (typeof notion.databases.query !== 'function') {
+      return { 
+        id, 
+        error: 'databases.query method not available', 
+        availableMethods: Object.keys(notion.databases),
+        clientVersion: notion.constructor.name 
+      };
+    }
+    
     const sample = await notion.databases.query({ database_id: id, page_size: 1 });
     return { id, title: meta.title?.[0]?.plain_text, props, sampleCount: sample.results.length };
   } catch (error) {
