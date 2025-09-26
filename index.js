@@ -7,6 +7,16 @@ const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
 // --- DEBUG ROUTES ---
+app.get('/debug/env', (_req, res) => {
+  res.json({
+    hasNotionKey: !!process.env.NOTION_API_KEY,
+    keyPrefix: process.env.NOTION_API_KEY?.substring(0, 4) + '...',
+    hasEventsDb: !!process.env.EVENTS_DATABASE_ID,
+    hasPersonnelDb: !!process.env.PERSONNEL_DATABASE_ID,
+    nodeEnv: process.env.NODE_ENV
+  });
+});
+
 app.get('/debug/notion', async (_req, res) => {
   try {
     const who = await notion.users.me();
