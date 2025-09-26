@@ -310,7 +310,17 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       });
     }
     
-    const response = { results: calendarData.events || [] };
+    // Handle different JSON structures
+    let events = [];
+    if (Array.isArray(calendarData)) {
+      events = calendarData; // JSON is directly an array
+    } else if (calendarData.events) {
+      events = calendarData.events; // JSON has events property
+    } else {
+      events = []; // No recognizable structure
+    }
+    
+    const response = { results: events };
     const filterApproach = 'calendar-feed-json';
     
     // Debug the events from JSON data
@@ -339,7 +349,13 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       debugInfo: {
         hasCalendarFeedJson: !!calendarFeedJson,
         jsonLength: calendarFeedJson?.length || 0,
-        parsedSuccessfully: true
+        parsedSuccessfully: true,
+        jsonStructure: {
+          isArray: Array.isArray(calendarData),
+          hasEventsProperty: !!calendarData.events,
+          topLevelKeys: Object.keys(calendarData).slice(0, 10),
+          firstEventSample: events[0] || null
+        }
       },
       idComparison: {
         searchId: personId,
@@ -552,8 +568,17 @@ app.get('/calendar/:personId', async (req, res) => {
       });
     }
     
-    // Convert the calendar data to response format
-    const response = { results: calendarData.events || [] };
+    // Handle different JSON structures
+    let events = [];
+    if (Array.isArray(calendarData)) {
+      events = calendarData; // JSON is directly an array
+    } else if (calendarData.events) {
+      events = calendarData.events; // JSON has events property
+    } else {
+      events = []; // No recognizable structure
+    }
+    
+    const response = { results: events };
     
     const calendar = ical({ 
       name: 'Downbeat Events',
