@@ -213,6 +213,39 @@ app.get('/', async (req, res) => {
   }
 });
 
+// Debug all events in database (first 10 to see structure)
+app.get('/debug/events', async (req, res) => {
+  try {
+    const response = await notion.databases.query({
+      database_id: EVENTS_DB,
+      page_size: 10,
+      sorts: [{ property: 'Event Date', direction: 'descending' }]
+    });
+    
+    const eventDebug = response.results.map(event => {
+      const props = event.properties;
+      return {
+        id: event.id,
+        title: props.Event?.title?.[0]?.plain_text,
+        eventDate: props['Event Date']?.date,
+        payrollPersonnelIds: props['Payroll Personnel']?.relation?.map(rel => rel.id) || [],
+        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0,
+        allRelationFields: Object.keys(props).filter(key => props[key].type === 'relation')
+      };
+    });
+    
+    res.json({
+      totalEventsInDB: response.results.length,
+      events: eventDebug,
+      hasMore: response.has_more
+    });
+    
+  } catch (error) {
+    console.error('Error debugging events:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Debug calendar data for specific person
 app.get('/debug/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
@@ -221,15 +254,41 @@ app.get('/debug/calendar/:personId', async (req, res) => {
     // First, get the person's info
     const person = await notion.pages.retrieve({ page_id: personId });
     
-    // Then query events for this person
-    const response = await notion.databases.query({
-      database_id: EVENTS_DB,
-      filter: {
-        property: 'Payroll Personnel',
-        relation: { contains: personId }
-      },
-      sorts: [{ property: 'Event Date', direction: 'ascending' }]
-    });
+    // Try multiple query approaches
+    let response, filterApproach;
+    
+    // Approach 1: Standard relation filter
+    try {
+      response = await notion.databases.query({
+        database_id: EVENTS_DB,
+        filter: {
+          property: 'Payroll Personnel',
+          relation: { contains: personId }
+        },
+        sorts: [{ property: 'Event Date', direction: 'ascending' }]
+      });
+      filterApproach = 'relation-contains';
+    } catch (error1) {
+      // Approach 2: Try without filter to see all events
+      try {
+        const allEvents = await notion.databases.query({
+          database_id: EVENTS_DB,
+          page_size: 100,
+          sorts: [{ property: 'Event Date', direction: 'ascending' }]
+        });
+        
+        // Manually filter for this person
+        response = {
+          results: allEvents.results.filter(event => {
+            const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
+            return payrollPersonnel.some(rel => rel.id === personId);
+          })
+        };
+        filterApproach = 'manual-filter';
+      } catch (error2) {
+        throw new Error(`Both filter approaches failed: ${error1.message}, ${error2.message}`);
+      }
+    }
     
     // Debug the events
     const eventDebug = response.results.map(event => {
@@ -250,6 +309,7 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
       totalEvents: response.results.length,
       events: eventDebug,
+      filterApproach,
       filterUsed: {
         property: 'Payroll Personnel',
         relation: { contains: personId }
