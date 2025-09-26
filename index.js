@@ -790,12 +790,14 @@ app.get('/calendar/:personId', async (req, res) => {
         
         // Build position assignments and pay information
         let positionInfo = '';
-        if (event.position_assignments && event.position_assignments.length > 0) {
+        if (event.payroll && event.payroll.length > 0) {
           positionInfo = '\n\nPosition Assignments:\n' + 
-            event.position_assignments.map(assignment => {
+            event.payroll.map(payrollItem => {
               // Handle pay that might already have $ symbol or be just a number
-              const payAmount = typeof assignment.pay === 'string' ? assignment.pay : `$${assignment.pay}`;
-              return `• ${assignment.position}: ${assignment.assignment} - ${payAmount}`;
+              const payAmount = typeof payrollItem.pay_total === 'string' ? 
+                (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
+                `$${payrollItem.pay_total}`;
+              return `• ${payrollItem.position}: ${payrollItem.assignment} - ${payAmount}`;
             }).join('\n');
         }
         
