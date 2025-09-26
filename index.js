@@ -647,7 +647,7 @@ app.get('/test/rehearsals', async (req, res) => {
                 end: rehearsalEnd,
                 summary: `REHEARSAL: ${title} (${band})`,
                 location: fullRehearsalLocation,
-                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}\nRehearsal Location: ${rehearsalLocationName}${rehearsalAddress ? '\nRehearsal Address: ' + rehearsalAddress : ''}`,
+                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}`,
                 uid: `${rehearsalEventId}@downbeat.agency`,
                 url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
               });
@@ -892,7 +892,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 end: rehearsalEnd,
                 summary: `REHEARSAL: ${title} (${band})`,
                 location: fullRehearsalLocation,
-                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}\nRehearsal Location: ${rehearsalLocationName}${rehearsalAddress ? '\nRehearsal Address: ' + rehearsalAddress : ''}`,
+                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}`,
                 uid: `${rehearsalEventId}@downbeat.agency`,
                 url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
               });
