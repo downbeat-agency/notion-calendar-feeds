@@ -620,8 +620,8 @@ app.get('/test/rehearsals', async (req, res) => {
               const rehearsalTimeStr = rehearsal.rehearsal_time.replace(/[']/g, '');
               
               if (rehearsalTimeStr.includes('→')) {
-                // Format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
-                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
+                // Format: "@Month DD, YYYY H:MM AM/PM (TZ) → H:MM AM/PM"
+                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
                 if (match) {
                   const dateStr = match[1].trim(); // "September 11, 2025"
                   const startTimeStr = match[2].trim(); // "10:00 AM"
@@ -878,8 +878,8 @@ app.get('/calendar/:personId', async (req, res) => {
               const rehearsalTimeStr = rehearsal.rehearsal_time.replace(/[']/g, '');
               
               if (rehearsalTimeStr.includes('→')) {
-                // Format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
-                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
+                // Format: "@Month DD, YYYY H:MM AM/PM (TZ) → H:MM AM/PM"
+                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
                 if (match) {
                   const dateStr = match[1].trim(); // "September 11, 2025"
                   const startTimeStr = match[2].trim(); // "10:00 AM"
