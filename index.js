@@ -608,7 +608,7 @@ app.get('/calendar/:personId', async (req, res) => {
           end: new Date(cleanEndDate),
           summary: `${title} (${band})`,
           location: location || '',
-          description: `Band: ${band}\nVenue: ${venue}\n\nDownbeat Agency Event`,
+          description: `Band: ${band}\nVenue: ${venue}`,
           uid: `${eventId}@downbeat.agency`,
           url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
         });
