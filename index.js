@@ -603,12 +603,21 @@ app.get('/calendar/:personId', async (req, res) => {
         const cleanStartDate = startDate.replace(/[']/g, '');
         const cleanEndDate = endDate ? endDate.replace(/[']/g, '') : cleanStartDate;
         
+        // Build position assignments and pay information
+        let positionInfo = '';
+        if (event.position_assignments && event.position_assignments.length > 0) {
+          positionInfo = '\n\nPosition Assignments:\n' + 
+            event.position_assignments.map(assignment => 
+              `• ${assignment.position}: ${assignment.assignment} - $${assignment.pay}`
+            ).join('\n');
+        }
+        
         calendar.createEvent({
           start: new Date(cleanStartDate),
           end: new Date(cleanEndDate),
           summary: `${title} (${band})`,
           location: location || '',
-          description: `Band: ${band}\nVenue: ${venue}`,
+          description: `Band: ${band}\nVenue: ${venue}${positionInfo}`,
           uid: `${eventId}@downbeat.agency`,
           url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
         });
