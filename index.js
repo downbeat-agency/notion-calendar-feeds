@@ -69,6 +69,45 @@ app.get('/debug/dbs', async (_req, res) => {
 const EVENTS_DB = '3dec3113-f747-49db-b666-8ba1f06c1d3e';
 const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
 
+// Generate and update calendar URLs for all personnel
+app.get('/update-calendar-urls', async (req, res) => {
+  try {
+    const response = await notion.databases.query({
+      database_id: PERSONNEL_DB,
+      sorts: [{ property: 'Full Name', direction: 'ascending' }]
+    });
+
+    let updated = 0;
+    const baseUrl = `https://${req.get('host')}`;
+    
+    for (const person of response.results) {
+      const personId = person.id;
+      const calendarUrl = `${baseUrl}/calendar/${personId}`;
+      
+      // Update the person's record with their calendar URL
+      await notion.pages.update({
+        page_id: personId,
+        properties: {
+          'Calendar URL': {
+            url: calendarUrl
+          }
+        }
+      });
+      updated++;
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Updated ${updated} personnel records with calendar URLs`,
+      baseUrl 
+    });
+
+  } catch (error) {
+    console.error('Error updating calendar URLs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Home page - List all personnel
 app.get('/', async (req, res) => {
   try {
@@ -140,19 +179,29 @@ app.get('/', async (req, res) => {
             </ol>
           </div>
           
-          <div>
-            ${response.results.map(person => {
-              const name = person.properties['Full Name']?.formula?.string || 'Unknown';
-              const personId = person.id;
-              
-              return `
-                <div class="person">
-                  <span class="name">${name}</span>
-                  <a href="/calendar/${personId}" class="button">Get Calendar</a>
-                </div>
-              `;
-            }).join('')}
-          </div>
+           <div>
+             ${response.results.map(person => {
+               const name = person.properties['Full Name']?.formula?.string || 'Unknown';
+               const personId = person.id;
+               const calendarUrl = person.properties['Calendar URL']?.url;
+               
+               return `
+                 <div class="person">
+                   <span class="name">${name}</span>
+                   ${calendarUrl ? 
+                     `<a href="${calendarUrl}" class="button">Get Calendar</a>` :
+                     `<a href="/calendar/${personId}" class="button">Get Calendar</a>`
+                   }
+                 </div>
+               `;
+             }).join('')}
+           </div>
+           
+           <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px;">
+             <h3>📝 Admin</h3>
+             <p>To populate calendar URLs in your Notion database:</p>
+             <a href="/update-calendar-urls" style="background: #28a745; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none;">Update All Calendar URLs</a>
+           </div>
         </body>
       </html>
     `;
