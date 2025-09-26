@@ -274,7 +274,8 @@ app.get('/debug/calendar/:personId', async (req, res) => {
   try {
     // Get the person's record and their Calendar Feed JSON
     const person = await notion.pages.retrieve({ page_id: personId });
-    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string || 
+                             person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
     
     if (!calendarFeedJson) {
       return res.json({
@@ -284,7 +285,9 @@ app.get('/debug/calendar/:personId', async (req, res) => {
         totalEvents: 0,
         events: [],
         filterApproach: 'calendar-feed-json',
-        error: 'No Calendar Feed JSON property found',
+        error: 'No Calendar Feed JSON property found or formula returned empty',
+        propertyType: person.properties?.['Calendar Feed JSON']?.type,
+        propertyValue: person.properties?.['Calendar Feed JSON'],
         availableProperties: Object.keys(person.properties)
       });
     }
@@ -524,13 +527,16 @@ app.get('/calendar/:personId', async (req, res) => {
   try {
     // Get the person's record and their Calendar Feed JSON
     const person = await notion.pages.retrieve({ page_id: personId });
-    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string || 
+                             person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
     
     if (!calendarFeedJson) {
       return res.status(404).json({ 
-        error: 'No calendar feed data found for this person',
+        error: 'No calendar feed data found for this person - formula may be empty',
         personId,
-        personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text
+        personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
+        propertyType: person.properties?.['Calendar Feed JSON']?.type,
+        propertyValue: person.properties?.['Calendar Feed JSON']
       });
     }
     
