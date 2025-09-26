@@ -38,40 +38,8 @@ async function dbInfo(id) {
   try {
     const meta = await notion.databases.retrieve({ database_id: id });
     const props = Object.entries(meta.properties || {}).map(([k,v]) => ({ name: k, type: v.type }));
-    
-    // Try different ways to access the query method
-    let queryMethod = null;
-    let queryResult = null;
-    
-    if (typeof notion.databases.query === 'function') {
-      queryMethod = 'notion.databases.query';
-      queryResult = await notion.databases.query({ database_id: id, page_size: 1 });
-    } else if (typeof notion.query === 'function') {
-      queryMethod = 'notion.query';
-      queryResult = await notion.query({ database_id: id, page_size: 1 });
-    } else if (typeof notion.request === 'function') {
-      queryMethod = 'notion.request';
-      queryResult = await notion.request({
-        path: `databases/${id}/query`,
-        method: 'POST',
-        body: { page_size: 1 }
-      });
-    } else {
-      return { 
-        id, 
-        error: 'No query method found', 
-        availableMethods: Object.keys(notion.databases),
-        topLevelMethods: Object.keys(notion).filter(key => typeof notion[key] === 'function')
-      };
-    }
-    
-    return { 
-      id, 
-      title: meta.title?.[0]?.plain_text, 
-      props, 
-      sampleCount: queryResult?.results?.length || 0,
-      queryMethod 
-    };
+    const sample = await notion.databases.query({ database_id: id, page_size: 1 });
+    return { id, title: meta.title?.[0]?.plain_text, props, sampleCount: sample.results.length };
   } catch (error) {
     return { id, error: error.message, status: error.status };
   }
@@ -104,22 +72,10 @@ const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
 // Home page - List all personnel
 app.get('/', async (req, res) => {
   try {
-    // Try different query methods
-    let response;
-    if (typeof notion.databases.query === 'function') {
-      response = await notion.databases.query({
-        database_id: PERSONNEL_DB,
-        sorts: [{ property: 'Full Name', direction: 'ascending' }]
-      });
-    } else if (typeof notion.request === 'function') {
-      response = await notion.request({
-        path: `databases/${PERSONNEL_DB}/query`,
-        method: 'POST',
-        body: { sorts: [{ property: 'Full Name', direction: 'ascending' }] }
-      });
-    } else {
-      throw new Error('No query method available');
-    }
+    const response = await notion.databases.query({
+      database_id: PERSONNEL_DB,
+      sorts: [{ property: 'Full Name', direction: 'ascending' }]
+    });
     
     const html = `
       <!DOCTYPE html>
@@ -213,32 +169,14 @@ app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
   try {
-    // Try different query methods
-    let response;
-    if (typeof notion.databases.query === 'function') {
-      response = await notion.databases.query({
-        database_id: EVENTS_DB,
-        filter: {
-          property: 'Payroll Personnel',
-          relation: { contains: personId }
-        },
-        sorts: [{ property: 'Event Date', direction: 'ascending' }]
-      });
-    } else if (typeof notion.request === 'function') {
-      response = await notion.request({
-        path: `databases/${EVENTS_DB}/query`,
-        method: 'POST',
-        body: {
-          filter: {
-            property: 'Payroll Personnel',
-            relation: { contains: personId }
-          },
-          sorts: [{ property: 'Event Date', direction: 'ascending' }]
-        }
-      });
-    } else {
-      throw new Error('No query method available');
-    }
+    const response = await notion.databases.query({
+      database_id: EVENTS_DB,
+      filter: {
+        property: 'Payroll Personnel',
+        relation: { contains: personId }
+      },
+      sorts: [{ property: 'Event Date', direction: 'ascending' }]
+    });
     
     const calendar = ical({ 
       name: 'Downbeat Events',
