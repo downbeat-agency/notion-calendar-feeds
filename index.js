@@ -551,14 +551,13 @@ app.get('/test/rehearsals', async (req, res) => {
         // Build position assignments and pay information for test
         let testPositionInfo = '';
         if (event.payroll && event.payroll.length > 0) {
-          testPositionInfo = 'Position Assignments:\n' + 
-            event.payroll.map(payrollItem => {
-              // Handle pay that might already have $ symbol or be just a number
-              const payAmount = typeof payrollItem.pay_total === 'string' ? 
-                (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
-                `$${payrollItem.pay_total}`;
-              return `• ${payrollItem.position}: ${payrollItem.assignment} - ${payAmount}`;
-            }).join('\n');
+          testPositionInfo = event.payroll.map(payrollItem => {
+            // Handle pay that might already have $ symbol or be just a number
+            const payAmount = typeof payrollItem.pay_total === 'string' ? 
+              (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
+              `$${payrollItem.pay_total}`;
+            return `Position: ${payrollItem.position}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
+          }).join('\n\n');
         }
 
         // Build description starting with position info, then general_info
@@ -821,14 +820,13 @@ app.get('/calendar/:personId', async (req, res) => {
         // Build position assignments and pay information
         let positionInfo = '';
         if (event.payroll && event.payroll.length > 0) {
-          positionInfo = '\n\nPosition Assignments:\n' + 
-            event.payroll.map(payrollItem => {
-              // Handle pay that might already have $ symbol or be just a number
-              const payAmount = typeof payrollItem.pay_total === 'string' ? 
-                (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
-                `$${payrollItem.pay_total}`;
-              return `• ${payrollItem.position}: ${payrollItem.assignment} - ${payAmount}`;
-            }).join('\n');
+          positionInfo = event.payroll.map(payrollItem => {
+            // Handle pay that might already have $ symbol or be just a number
+            const payAmount = typeof payrollItem.pay_total === 'string' ? 
+              (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
+              `$${payrollItem.pay_total}`;
+            return `Position: ${payrollItem.position}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
+          }).join('\n\n');
         }
         
         // Build description starting with position info, then general_info
