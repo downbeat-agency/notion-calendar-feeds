@@ -551,16 +551,13 @@ app.get('/test/rehearsals', async (req, res) => {
         // Use general_info if available, otherwise fall back to band/venue format
         let testEventDescription = '';
         if (event.general_info) {
-          // Clean and escape general_info for iCal compatibility
+          // Let the iCal library handle formatting - just clean up the text
           testEventDescription = event.general_info
             .replace(/\r\n/g, '\n')  // Normalize line endings
             .replace(/\r/g, '\n')    // Normalize line endings
-            .split('\n')
-            .map(line => line.trim()) // Remove extra whitespace
-            .filter(line => line.length > 0) // Remove empty lines
-            .join('\\n'); // Use iCal line break format
+            .trim(); // Remove leading/trailing whitespace
         } else {
-          testEventDescription = `Band: ${band}\\nVenue: ${venue}`;
+          testEventDescription = `Band: ${band}\nVenue: ${venue}`;
         }
 
         // Create main event
@@ -805,21 +802,18 @@ app.get('/calendar/:personId', async (req, res) => {
         // Use general_info if available, otherwise fall back to band/venue format
         let eventDescription = '';
         if (event.general_info) {
-          // Clean and escape general_info for iCal compatibility
+          // Let the iCal library handle formatting - just clean up the text
           eventDescription = event.general_info
             .replace(/\r\n/g, '\n')  // Normalize line endings
             .replace(/\r/g, '\n')    // Normalize line endings
-            .split('\n')
-            .map(line => line.trim()) // Remove extra whitespace
-            .filter(line => line.length > 0) // Remove empty lines
-            .join('\\n'); // Use iCal line break format
+            .trim(); // Remove leading/trailing whitespace
         } else {
-          eventDescription = `Band: ${band}\\nVenue: ${venue}`;
+          eventDescription = `Band: ${band}\nVenue: ${venue}`;
         }
         
         // Add position info if available
         if (positionInfo) {
-          eventDescription += positionInfo.replace(/\n/g, '\\n');
+          eventDescription += positionInfo;
         }
 
         calendar.createEvent({
