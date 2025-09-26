@@ -295,7 +295,9 @@ app.get('/debug/calendar/:personId', async (req, res) => {
     // Parse the calendar feed JSON
     let calendarData;
     try {
-      calendarData = JSON.parse(calendarFeedJson);
+      // Clean up common JSON issues like unquoted dollar amounts
+      const cleanedJson = calendarFeedJson.replace(/:\$(\d+)/g, ':"$$$1"');
+      calendarData = JSON.parse(cleanedJson);
     } catch (parseError) {
       return res.json({
         searchingForPersonId: personId,
@@ -559,12 +561,15 @@ app.get('/calendar/:personId', async (req, res) => {
     // Parse the calendar feed JSON
     let calendarData;
     try {
-      calendarData = JSON.parse(calendarFeedJson);
+      // Clean up common JSON issues like unquoted dollar amounts
+      const cleanedJson = calendarFeedJson.replace(/:\$(\d+)/g, ':"$$$1"');
+      calendarData = JSON.parse(cleanedJson);
     } catch (parseError) {
       return res.status(400).json({ 
         error: 'Invalid JSON in Calendar Feed JSON property',
         personId,
-        parseError: parseError.message
+        parseError: parseError.message,
+        originalJson: calendarFeedJson.substring(0, 500) + '...' // First 500 chars for debugging
       });
     }
     
@@ -607,9 +612,11 @@ app.get('/calendar/:personId', async (req, res) => {
         let positionInfo = '';
         if (event.position_assignments && event.position_assignments.length > 0) {
           positionInfo = '\n\nPosition Assignments:\n' + 
-            event.position_assignments.map(assignment => 
-              `• ${assignment.position}: ${assignment.assignment} - $${assignment.pay}`
-            ).join('\n');
+            event.position_assignments.map(assignment => {
+              // Handle pay that might already have $ symbol or be just a number
+              const payAmount = typeof assignment.pay === 'string' ? assignment.pay : `$${assignment.pay}`;
+              return `• ${assignment.position}: ${assignment.assignment} - ${payAmount}`;
+            }).join('\n');
         }
         
         calendar.createEvent({
