@@ -3,7 +3,7 @@ import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; // Force refresh for Notion sync
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
 // --- DEBUG ROUTES ---
