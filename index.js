@@ -239,8 +239,7 @@ app.get('/debug/events', async (req, res) => {
     const response = await notion.databases.query({
       database_id: EVENTS_DB,
       page_size: 50,
-      sorts: [{ property: 'Event Date', direction: 'descending' }],
-      filter_properties: ['Event', 'Event Date', 'Location (Print)', 'Event Type', 'Payroll Personnel']
+      sorts: [{ property: 'Event Date', direction: 'descending' }]
     });
     
     const eventDebug = response.results.map(event => {
@@ -292,8 +291,7 @@ app.get('/debug/calendar/:personId', async (req, res) => {
             relation: { contains: personId }
           },
           sorts: [{ property: 'Event Date', direction: 'ascending' }],
-          page_size: 100,
-          filter_properties: ['Event', 'Event Date', 'Location (Print)', 'Event Type', 'Payroll Personnel']
+          page_size: 100
         };
         
         if (startCursor) {
@@ -318,8 +316,7 @@ app.get('/debug/calendar/:personId', async (req, res) => {
         const allEvents = await notion.databases.query({
           database_id: EVENTS_DB,
           page_size: 200,
-          sorts: [{ property: 'Event Date', direction: 'ascending' }],
-          filter_properties: ['Event', 'Event Date', 'Location (Print)', 'Event Type', 'Payroll Personnel']
+          sorts: [{ property: 'Event Date', direction: 'ascending' }]
         });
         
         // Manually filter for this person
@@ -385,8 +382,7 @@ app.get('/calendar/:personId', async (req, res) => {
           relation: { contains: personId }
         },
         sorts: [{ property: 'Event Date', direction: 'ascending' }],
-        page_size: 100,
-        filter_properties: ['Event', 'Event Date', 'Location (Print)', 'Event Type', 'Payroll Personnel']
+        page_size: 100
       };
       
       if (startCursor) {
