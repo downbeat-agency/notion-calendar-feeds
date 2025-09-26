@@ -418,6 +418,89 @@ app.get('/debug/personnel', async (req, res) => {
   }
 });
 
+// Debug specific personnel IDs
+app.get('/debug/lookup-personnel', async (req, res) => {
+  try {
+    // IDs from the AMFM Orange County Wedding event
+    const eventPersonnelIds = [
+      "26d39e4a-65a9-8113-88e5-d3c11a5c7810",
+      "26d39e4a-65a9-8124-b819-ee55fb435216", 
+      "26d39e4a-65a9-81d0-828d-eb0538122e3f",
+      "26d39e4a-65a9-818e-9d19-ddfbb3cc1aa7",
+      "26d39e4a-65a9-81c9-b3f3-dbc146661a8b",
+      "26d39e4a-65a9-8185-9488-c572478b9137",
+      "26d39e4a-65a9-81ed-b492-dfbe4dbb48b0",
+      "26d39e4a-65a9-817a-b3fc-c093ad56fb67",
+      "26d39e4a-65a9-8199-aba1-fdfdb33ce324",
+      "26d39e4a-65a9-81f9-8faa-df7f9b9caa29",
+      "26d39e4a-65a9-81c9-803d-cf8fbc01aa65",
+      "26d39e4a-65a9-8192-a3cb-ce1013ab352c"
+    ];
+    
+    const andrewSearchId = "345984c3-1f94-4476-a27c-1b98f51c56d8";
+    
+    // Look up each personnel ID
+    const personnelLookups = [];
+    
+    for (const personId of eventPersonnelIds) {
+      try {
+        const person = await notion.pages.retrieve({ page_id: personId });
+        personnelLookups.push({
+          id: personId,
+          fullName: person.properties?.['Full Name']?.formula?.string,
+          nickname: person.properties?.['Nickname']?.title?.[0]?.plain_text,
+          email: person.properties?.['Email']?.email,
+          isAndrew: personId === andrewSearchId,
+          matchesAndrewSearch: personId === andrewSearchId
+        });
+      } catch (error) {
+        personnelLookups.push({
+          id: personId,
+          error: error.message,
+          isAndrew: personId === andrewSearchId
+        });
+      }
+    }
+    
+    // Also try to look up Andrew's ID
+    let andrewLookup = null;
+    try {
+      const andrew = await notion.pages.retrieve({ page_id: andrewSearchId });
+      andrewLookup = {
+        id: andrewSearchId,
+        fullName: andrew.properties?.['Full Name']?.formula?.string,
+        nickname: andrew.properties?.['Nickname']?.title?.[0]?.plain_text,
+        email: andrew.properties?.['Email']?.email,
+        inEventList: eventPersonnelIds.includes(andrewSearchId)
+      };
+    } catch (error) {
+      andrewLookup = {
+        id: andrewSearchId,
+        error: error.message,
+        inEventList: false
+      };
+    }
+    
+    res.json({
+      eventTitle: "11/21/26 AMFM - Orange County Wedding",
+      eventPersonnelCount: eventPersonnelIds.length,
+      andrewSearchId,
+      andrewInEventList: eventPersonnelIds.includes(andrewSearchId),
+      andrewLookup,
+      eventPersonnel: personnelLookups,
+      andrewMatches: personnelLookups.filter(p => p.matchesAndrewSearch),
+      andrewNameMatches: personnelLookups.filter(p => 
+        p.fullName?.toLowerCase().includes('andrew') || 
+        p.nickname?.toLowerCase().includes('andrew')
+      )
+    });
+    
+  } catch (error) {
+    console.error('Error looking up personnel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Calendar for specific person
 app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
