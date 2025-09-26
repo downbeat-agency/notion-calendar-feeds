@@ -501,6 +501,31 @@ app.get('/debug/lookup-personnel', async (req, res) => {
   }
 });
 
+// Test Andrew's assignment lookup
+app.get('/debug/test-assignment/:assignmentId', async (req, res) => {
+  const { assignmentId } = req.params;
+  
+  try {
+    const assignmentPage = await notion.pages.retrieve({ page_id: assignmentId });
+    
+    res.json({
+      assignmentId,
+      assignmentPage: {
+        id: assignmentPage.id,
+        properties: Object.keys(assignmentPage.properties),
+        personnel: assignmentPage.properties?.['Personnel']?.relation,
+        personnelId: assignmentPage.properties?.['Personnel']?.relation?.[0]?.id,
+        position: assignmentPage.properties?.['Position']?.select?.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      assignmentId,
+      error: error.message 
+    });
+  }
+});
+
 // Calendar for specific person
 app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
