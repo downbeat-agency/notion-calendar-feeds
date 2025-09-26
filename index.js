@@ -6,6 +6,35 @@ const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
+// --- DEBUG ROUTES ---
+app.get('/debug/notion', async (_req, res) => {
+  try {
+    const who = await notion.users.me();
+    res.json({ ok: true, user: who?.name || 'bot', workspace: who?.bot?.owner?.workspace_name });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.body || e.message });
+  }
+});
+
+async function dbInfo(id) {
+  const meta = await notion.databases.retrieve({ database_id: id });
+  const props = Object.entries(meta.properties).map(([k,v]) => ({ name: k, type: v.type }));
+  const sample = await notion.databases.query({ database_id: id, page_size: 1 });
+  return { id, title: meta.title?.[0]?.plain_text, props, sampleCount: sample.results.length };
+}
+
+app.get('/debug/dbs', async (_req, res) => {
+  try {
+    const eventsId = process.env.EVENTS_DATABASE_ID;
+    const peopleId = process.env.PERSONNEL_DATABASE_ID;
+    if (!eventsId || !peopleId) return res.status(400).json({ ok:false, error:'Missing EVENTS_DATABASE_ID or PERSONNEL_DATABASE_ID' });
+    const [events, personnel] = await Promise.all([dbInfo(eventsId), dbInfo(peopleId)]);
+    res.json({ ok:true, events, personnel });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: e.body || e.message });
+  }
+});
+
 const EVENTS_DB = '3dec3113-f747-49db-b666-8ba1f06c1d3e';
 const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
 
