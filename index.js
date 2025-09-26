@@ -248,9 +248,10 @@ app.get('/debug/events', async (req, res) => {
         id: event.id,
         title: props.Event?.title?.[0]?.plain_text,
         eventDate: props['Event Date']?.date,
+        location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
+        eventType: props['Event Type']?.select?.name,
         payrollPersonnelIds: props['Payroll Personnel']?.relation?.map(rel => rel.id) || [],
-        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0,
-        allRelationFields: Object.keys(props).filter(key => props[key].type === 'relation')
+        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0
       };
     });
     
@@ -337,12 +338,11 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       const props = event.properties;
       return {
         id: event.id,
-        eventDate: props['Event Date']?.date,
         title: props.Event?.title?.[0]?.plain_text,
+        eventDate: props['Event Date']?.date,
         location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
         eventType: props['Event Type']?.select?.name,
-        payrollPersonnel: props['Payroll Personnel']?.relation,
-        rawProperties: Object.keys(props)
+        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0
       };
     });
     
