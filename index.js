@@ -531,18 +531,17 @@ app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
   try {
-    // Get ALL events for this person using pagination
-    let allEvents = [];
+    // Since Payroll Personnel stores Assignment IDs, we need to:
+    // 1. Get all events
+    // 2. Check each assignment to see if its Personnel relation matches our personId
+    
+    let allEventsResponse = [];
     let hasMore = true;
     let startCursor = undefined;
     
     while (hasMore) {
       const queryParams = {
         database_id: EVENTS_DB,
-        filter: {
-          property: 'Payroll Personnel',
-          relation: { contains: personId }
-        },
         sorts: [{ property: 'Event Date', direction: 'ascending' }],
         page_size: 100
       };
@@ -552,13 +551,44 @@ app.get('/calendar/:personId', async (req, res) => {
       }
       
       const response = await notion.databases.query(queryParams);
-      allEvents = allEvents.concat(response.results);
+      allEventsResponse = allEventsResponse.concat(response.results);
       
       hasMore = response.has_more;
       startCursor = response.next_cursor;
+      
+      // Safety limit
+      if (allEventsResponse.length > 1000) break;
     }
     
-    const response = { results: allEvents };
+    // Filter events by checking assignment Personnel relations
+    const matchingEvents = [];
+    
+    for (const event of allEventsResponse) {
+      const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
+      let hasMatchingPersonnel = false;
+      
+      // Check each assignment
+      for (const assignment of payrollPersonnel) {
+        try {
+          const assignmentPage = await notion.pages.retrieve({ page_id: assignment.id });
+          const assignmentPersonnelId = assignmentPage.properties?.['Personnel']?.relation?.[0]?.id;
+          
+          if (assignmentPersonnelId === personId) {
+            hasMatchingPersonnel = true;
+            break;
+          }
+        } catch (error) {
+          // Skip if we can't read the assignment page
+          continue;
+        }
+      }
+      
+      if (hasMatchingPersonnel) {
+        matchingEvents.push(event);
+      }
+    }
+    
+    const response = { results: matchingEvents };
     
     const calendar = ical({ 
       name: 'Downbeat Events',
