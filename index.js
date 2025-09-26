@@ -548,16 +548,46 @@ app.get('/test/rehearsals', async (req, res) => {
         const cleanStartDate = startDate.replace(/[']/g, '');
         const cleanEndDate = endDate ? endDate.replace(/[']/g, '') : cleanStartDate;
 
-        // Use general_info if available, otherwise fall back to band/venue format
+        // Build position assignments and pay information for test
+        let testPositionInfo = '';
+        if (event.payroll && event.payroll.length > 0) {
+          testPositionInfo = 'Position Assignments:\n' + 
+            event.payroll.map(payrollItem => {
+              // Handle pay that might already have $ symbol or be just a number
+              const payAmount = typeof payrollItem.pay_total === 'string' ? 
+                (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
+                `$${payrollItem.pay_total}`;
+              return `• ${payrollItem.position}: ${payrollItem.assignment} - ${payAmount}`;
+            }).join('\n');
+        }
+
+        // Build description starting with position info, then general_info
         let testEventDescription = '';
+        
+        // Add position info first if available
+        if (testPositionInfo) {
+          testEventDescription = testPositionInfo;
+        }
+        
+        // Add general_info after position info, or fall back to band/venue format
         if (event.general_info) {
-          // Let the iCal library handle formatting - just clean up the text
-          testEventDescription = event.general_info
+          const generalInfo = event.general_info
             .replace(/\r\n/g, '\n')  // Normalize line endings
             .replace(/\r/g, '\n')    // Normalize line endings
             .trim(); // Remove leading/trailing whitespace
+          
+          if (testEventDescription) {
+            testEventDescription += '\n\n' + generalInfo;
+          } else {
+            testEventDescription = generalInfo;
+          }
         } else {
-          testEventDescription = `Band: ${band}\nVenue: ${venue}`;
+          const fallbackInfo = `Band: ${band}\nVenue: ${venue}`;
+          if (testEventDescription) {
+            testEventDescription += '\n\n' + fallbackInfo;
+          } else {
+            testEventDescription = fallbackInfo;
+          }
         }
 
         // Create main event
@@ -801,21 +831,33 @@ app.get('/calendar/:personId', async (req, res) => {
             }).join('\n');
         }
         
-        // Use general_info if available, otherwise fall back to band/venue format
+        // Build description starting with position info, then general_info
         let eventDescription = '';
+        
+        // Add position info first if available
+        if (positionInfo) {
+          eventDescription = positionInfo;
+        }
+        
+        // Add general_info after position info, or fall back to band/venue format
         if (event.general_info) {
-          // Let the iCal library handle formatting - just clean up the text
-          eventDescription = event.general_info
+          const generalInfo = event.general_info
             .replace(/\r\n/g, '\n')  // Normalize line endings
             .replace(/\r/g, '\n')    // Normalize line endings
             .trim(); // Remove leading/trailing whitespace
+          
+          if (eventDescription) {
+            eventDescription += '\n\n' + generalInfo;
+          } else {
+            eventDescription = generalInfo;
+          }
         } else {
-          eventDescription = `Band: ${band}\nVenue: ${venue}`;
-        }
-        
-        // Add position info if available
-        if (positionInfo) {
-          eventDescription += positionInfo;
+          const fallbackInfo = `Band: ${band}\nVenue: ${venue}`;
+          if (eventDescription) {
+            eventDescription += '\n\n' + fallbackInfo;
+          } else {
+            eventDescription = fallbackInfo;
+          }
         }
 
         calendar.createEvent({
