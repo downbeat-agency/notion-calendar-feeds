@@ -213,6 +213,55 @@ app.get('/', async (req, res) => {
   }
 });
 
+// Debug calendar data for specific person
+app.get('/debug/calendar/:personId', async (req, res) => {
+  const { personId } = req.params;
+  
+  try {
+    // First, get the person's info
+    const person = await notion.pages.retrieve({ page_id: personId });
+    
+    // Then query events for this person
+    const response = await notion.databases.query({
+      database_id: EVENTS_DB,
+      filter: {
+        property: 'Payroll Personnel',
+        relation: { contains: personId }
+      },
+      sorts: [{ property: 'Event Date', direction: 'ascending' }]
+    });
+    
+    // Debug the events
+    const eventDebug = response.results.map(event => {
+      const props = event.properties;
+      return {
+        id: event.id,
+        eventDate: props['Event Date']?.date,
+        title: props.Event?.title?.[0]?.plain_text,
+        location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
+        eventType: props['Event Type']?.select?.name,
+        payrollPersonnel: props['Payroll Personnel']?.relation,
+        rawProperties: Object.keys(props)
+      };
+    });
+    
+    res.json({
+      personId,
+      personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
+      totalEvents: response.results.length,
+      events: eventDebug,
+      filterUsed: {
+        property: 'Payroll Personnel',
+        relation: { contains: personId }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error debugging calendar:', error);
+    res.status(500).json({ error: error.message, personId });
+  }
+});
+
 // Calendar for specific person
 app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
