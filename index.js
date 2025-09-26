@@ -267,7 +267,7 @@ app.get('/debug/events', async (req, res) => {
   }
 });
 
-// Debug calendar data for specific person
+// Debug calendar data for specific person  
 app.get('/debug/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
@@ -275,46 +275,28 @@ app.get('/debug/calendar/:personId', async (req, res) => {
     // First, get the person's info
     const person = await notion.pages.retrieve({ page_id: personId });
     
-    // Use the same logic as the main calendar endpoint
-    // Since Payroll Personnel stores Assignment IDs, we need to:
-    // 1. Get all events
-    // 2. Check each assignment to see if its Personnel relation matches our personId
+    // Simplified approach - just get recent events to test
+    const recentEvents = await notion.databases.query({
+      database_id: EVENTS_DB,
+      sorts: [{ property: 'Event Date', direction: 'descending' }],
+      page_size: 20 // Limit to 20 recent events to avoid timeouts
+    });
     
-    let allEventsResponse = [];
-    let hasMore = true;
-    let startCursor = undefined;
-    
-    while (hasMore) {
-      const queryParams = {
-        database_id: EVENTS_DB,
-        sorts: [{ property: 'Event Date', direction: 'ascending' }],
-        page_size: 100
-      };
-      
-      if (startCursor) {
-        queryParams.start_cursor = startCursor;
-      }
-      
-      const pageResponse = await notion.databases.query(queryParams);
-      allEventsResponse = allEventsResponse.concat(pageResponse.results);
-      
-      hasMore = pageResponse.has_more;
-      startCursor = pageResponse.next_cursor;
-      
-      // Safety limit
-      if (allEventsResponse.length > 1000) break;
-    }
-    
-    // Filter events by checking assignment Personnel relations
     const matchingEvents = [];
+    let checkedAssignments = 0;
+    let errors = [];
     
-    for (const event of allEventsResponse) {
+    // Check each event (limited to prevent timeouts)
+    for (const event of recentEvents.results) {
       const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
       let hasMatchingPersonnel = false;
       
-      // Check each assignment
-      for (const assignment of payrollPersonnel) {
+      // Limit assignment checks per event
+      const assignmentsToCheck = payrollPersonnel.slice(0, 5); // Max 5 assignments per event
+      
+      for (const assignment of assignmentsToCheck) {
         try {
+          checkedAssignments++;
           const assignmentPage = await notion.pages.retrieve({ page_id: assignment.id });
           const assignmentPersonnelId = assignmentPage.properties?.['Personnel']?.relation?.[0]?.id;
           
@@ -322,8 +304,11 @@ app.get('/debug/calendar/:personId', async (req, res) => {
             hasMatchingPersonnel = true;
             break;
           }
+          
+          // Stop if we've checked too many assignments
+          if (checkedAssignments > 50) break;
         } catch (error) {
-          // Skip if we can't read the assignment page
+          errors.push({ assignmentId: assignment.id, error: error.message });
           continue;
         }
       }
@@ -331,10 +316,13 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       if (hasMatchingPersonnel) {
         matchingEvents.push(event);
       }
+      
+      // Stop if we've checked too many assignments total
+      if (checkedAssignments > 50) break;
     }
     
     const response = { results: matchingEvents };
-    const filterApproach = 'assignment-personnel-lookup';
+    const filterApproach = 'limited-assignment-lookup';
     
     // Debug the events with detailed ID information
     const eventDebug = response.results.map(event => {
@@ -359,6 +347,12 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       totalEvents: response.results.length,
       events: eventDebug,
       filterApproach,
+      debugInfo: {
+        eventsChecked: recentEvents.results.length,
+        assignmentsChecked: checkedAssignments,
+        errors: errors.length,
+        errorSample: errors.slice(0, 3)
+      },
       idComparison: {
         searchId: personId,
         actualPersonPageId: person.id,
