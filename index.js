@@ -275,63 +275,66 @@ app.get('/debug/calendar/:personId', async (req, res) => {
     // First, get the person's info
     const person = await notion.pages.retrieve({ page_id: personId });
     
-    // Try multiple query approaches
-    let response, filterApproach;
+    // Use the same logic as the main calendar endpoint
+    // Since Payroll Personnel stores Assignment IDs, we need to:
+    // 1. Get all events
+    // 2. Check each assignment to see if its Personnel relation matches our personId
     
-    // Approach 1: Standard relation filter with pagination
-    try {
-      let allEvents = [];
-      let hasMore = true;
-      let startCursor = undefined;
+    let allEventsResponse = [];
+    let hasMore = true;
+    let startCursor = undefined;
+    
+    while (hasMore) {
+      const queryParams = {
+        database_id: EVENTS_DB,
+        sorts: [{ property: 'Event Date', direction: 'ascending' }],
+        page_size: 100
+      };
       
-      while (hasMore) {
-        const queryParams = {
-          database_id: EVENTS_DB,
-          filter: {
-            property: 'Payroll Personnel',
-            relation: { contains: personId }
-          },
-          sorts: [{ property: 'Event Date', direction: 'ascending' }],
-          page_size: 100
-        };
-        
-        if (startCursor) {
-          queryParams.start_cursor = startCursor;
-        }
-        
-        const pageResponse = await notion.databases.query(queryParams);
-        allEvents = allEvents.concat(pageResponse.results);
-        
-        hasMore = pageResponse.has_more;
-        startCursor = pageResponse.next_cursor;
-        
-        // Safety limit to prevent infinite loops
-        if (allEvents.length > 1000) break;
+      if (startCursor) {
+        queryParams.start_cursor = startCursor;
       }
       
-      response = { results: allEvents };
-      filterApproach = 'relation-contains-paginated';
-    } catch (error1) {
-      // Approach 2: Try without filter to see all events
-      try {
-        const allEvents = await notion.databases.query({
-          database_id: EVENTS_DB,
-          page_size: 200,
-          sorts: [{ property: 'Event Date', direction: 'ascending' }]
-        });
-        
-        // Manually filter for this person
-        response = {
-          results: allEvents.results.filter(event => {
-            const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
-            return payrollPersonnel.some(rel => rel.id === personId);
-          })
-        };
-        filterApproach = 'manual-filter';
-      } catch (error2) {
-        throw new Error(`Both filter approaches failed: ${error1.message}, ${error2.message}`);
+      const pageResponse = await notion.databases.query(queryParams);
+      allEventsResponse = allEventsResponse.concat(pageResponse.results);
+      
+      hasMore = pageResponse.has_more;
+      startCursor = pageResponse.next_cursor;
+      
+      // Safety limit
+      if (allEventsResponse.length > 1000) break;
+    }
+    
+    // Filter events by checking assignment Personnel relations
+    const matchingEvents = [];
+    
+    for (const event of allEventsResponse) {
+      const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
+      let hasMatchingPersonnel = false;
+      
+      // Check each assignment
+      for (const assignment of payrollPersonnel) {
+        try {
+          const assignmentPage = await notion.pages.retrieve({ page_id: assignment.id });
+          const assignmentPersonnelId = assignmentPage.properties?.['Personnel']?.relation?.[0]?.id;
+          
+          if (assignmentPersonnelId === personId) {
+            hasMatchingPersonnel = true;
+            break;
+          }
+        } catch (error) {
+          // Skip if we can't read the assignment page
+          continue;
+        }
+      }
+      
+      if (hasMatchingPersonnel) {
+        matchingEvents.push(event);
       }
     }
+    
+    const response = { results: matchingEvents };
+    const filterApproach = 'assignment-personnel-lookup';
     
     // Debug the events with detailed ID information
     const eventDebug = response.results.map(event => {
