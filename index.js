@@ -556,7 +556,7 @@ app.get('/test/rehearsals', async (req, res) => {
             const payAmount = typeof payrollItem.pay_total === 'string' ? 
               (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
               `$${payrollItem.pay_total}`;
-            return `Position: ${payrollItem.position}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
+            return `Position: ${payrollItem.position.replace(/:/g, ' -')}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
           }).join('\n\n');
         }
 
@@ -825,7 +825,7 @@ app.get('/calendar/:personId', async (req, res) => {
             const payAmount = typeof payrollItem.pay_total === 'string' ? 
               (payrollItem.pay_total.startsWith('$') ? payrollItem.pay_total : `$${payrollItem.pay_total}`) : 
               `$${payrollItem.pay_total}`;
-            return `Position: ${payrollItem.position}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
+            return `Position: ${payrollItem.position.replace(/:/g, ' -')}\nPosition Assignments:\n${payrollItem.assignment} - ${payAmount}`;
           }).join('\n\n');
         }
         
