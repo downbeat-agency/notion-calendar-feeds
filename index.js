@@ -111,10 +111,30 @@ app.get('/update-calendar-urls', async (req, res) => {
 // Home page - List all personnel
 app.get('/', async (req, res) => {
   try {
-    const response = await notion.databases.query({
-      database_id: PERSONNEL_DB,
-      sorts: [{ property: 'Full Name', direction: 'ascending' }]
-    });
+    // Get ALL personnel using pagination
+    let allPersonnel = [];
+    let hasMore = true;
+    let startCursor = undefined;
+    
+    while (hasMore) {
+      const queryParams = {
+        database_id: PERSONNEL_DB,
+        sorts: [{ property: 'Full Name', direction: 'ascending' }],
+        page_size: 100
+      };
+      
+      if (startCursor) {
+        queryParams.start_cursor = startCursor;
+      }
+      
+      const pageResponse = await notion.databases.query(queryParams);
+      allPersonnel = allPersonnel.concat(pageResponse.results);
+      
+      hasMore = pageResponse.has_more;
+      startCursor = pageResponse.next_cursor;
+    }
+    
+    const response = { results: allPersonnel };
     
     const html = `
       <!DOCTYPE html>
@@ -257,18 +277,39 @@ app.get('/debug/calendar/:personId', async (req, res) => {
     // Try multiple query approaches
     let response, filterApproach;
     
-    // Approach 1: Standard relation filter
+    // Approach 1: Standard relation filter with pagination
     try {
-      response = await notion.databases.query({
-        database_id: EVENTS_DB,
-        filter: {
-          property: 'Payroll Personnel',
-          relation: { contains: personId }
-        },
-        sorts: [{ property: 'Event Date', direction: 'ascending' }],
-        page_size: 100
-      });
-      filterApproach = 'relation-contains';
+      let allEvents = [];
+      let hasMore = true;
+      let startCursor = undefined;
+      
+      while (hasMore) {
+        const queryParams = {
+          database_id: EVENTS_DB,
+          filter: {
+            property: 'Payroll Personnel',
+            relation: { contains: personId }
+          },
+          sorts: [{ property: 'Event Date', direction: 'ascending' }],
+          page_size: 100
+        };
+        
+        if (startCursor) {
+          queryParams.start_cursor = startCursor;
+        }
+        
+        const pageResponse = await notion.databases.query(queryParams);
+        allEvents = allEvents.concat(pageResponse.results);
+        
+        hasMore = pageResponse.has_more;
+        startCursor = pageResponse.next_cursor;
+        
+        // Safety limit to prevent infinite loops
+        if (allEvents.length > 1000) break;
+      }
+      
+      response = { results: allEvents };
+      filterApproach = 'relation-contains-paginated';
     } catch (error1) {
       // Approach 2: Try without filter to see all events
       try {
@@ -328,15 +369,34 @@ app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
   try {
-    const response = await notion.databases.query({
-      database_id: EVENTS_DB,
-      filter: {
-        property: 'Payroll Personnel',
-        relation: { contains: personId }
-      },
-      sorts: [{ property: 'Event Date', direction: 'ascending' }],
-      page_size: 100
-    });
+    // Get ALL events for this person using pagination
+    let allEvents = [];
+    let hasMore = true;
+    let startCursor = undefined;
+    
+    while (hasMore) {
+      const queryParams = {
+        database_id: EVENTS_DB,
+        filter: {
+          property: 'Payroll Personnel',
+          relation: { contains: personId }
+        },
+        sorts: [{ property: 'Event Date', direction: 'ascending' }],
+        page_size: 100
+      };
+      
+      if (startCursor) {
+        queryParams.start_cursor = startCursor;
+      }
+      
+      const response = await notion.databases.query(queryParams);
+      allEvents = allEvents.concat(response.results);
+      
+      hasMore = response.has_more;
+      startCursor = response.next_cursor;
+    }
+    
+    const response = { results: allEvents };
     
     const calendar = ical({ 
       name: 'Downbeat Events',
