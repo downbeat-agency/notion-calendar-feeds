@@ -333,34 +333,88 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       }
     }
     
-    // Debug the events
+    // Debug the events with detailed ID information
     const eventDebug = response.results.map(event => {
       const props = event.properties;
+      const personnelRelation = props['Payroll Personnel']?.relation || [];
       return {
         id: event.id,
         title: props.Event?.title?.[0]?.plain_text,
         eventDate: props['Event Date']?.date,
         location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
         eventType: props['Event Type']?.select?.name,
-        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0
+        payrollPersonnelCount: personnelRelation.length,
+        payrollPersonnelIds: personnelRelation.map(rel => rel.id),
+        matchesSearchId: personnelRelation.some(rel => rel.id === personId)
       };
     });
     
     res.json({
-      personId,
+      searchingForPersonId: personId,
+      personPageId: person.id,
       personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
       totalEvents: response.results.length,
       events: eventDebug,
       filterApproach,
-      filterUsed: {
-        property: 'Payroll Personnel',
-        relation: { contains: personId }
+      idComparison: {
+        searchId: personId,
+        actualPersonPageId: person.id,
+        idsMatch: personId === person.id
       }
     });
     
   } catch (error) {
     console.error('Error debugging calendar:', error);
     res.status(500).json({ error: error.message, personId });
+  }
+});
+
+// Debug personnel database to see actual IDs
+app.get('/debug/personnel', async (req, res) => {
+  try {
+    let allPersonnel = [];
+    let hasMore = true;
+    let startCursor = undefined;
+    
+    while (hasMore) {
+      const queryParams = {
+        database_id: PERSONNEL_DB,
+        sorts: [{ property: 'Full Name', direction: 'ascending' }],
+        page_size: 100
+      };
+      
+      if (startCursor) {
+        queryParams.start_cursor = startCursor;
+      }
+      
+      const response = await notion.databases.query(queryParams);
+      allPersonnel = allPersonnel.concat(response.results);
+      
+      hasMore = response.has_more;
+      startCursor = response.next_cursor;
+      
+      if (allPersonnel.length > 200) break; // Safety limit
+    }
+    
+    const personnelDebug = allPersonnel.map(person => ({
+      id: person.id,
+      fullName: person.properties?.['Full Name']?.formula?.string,
+      nickname: person.properties?.['Nickname']?.title?.[0]?.plain_text,
+      email: person.properties?.['Email']?.email
+    }));
+    
+    res.json({
+      totalPersonnel: allPersonnel.length,
+      personnel: personnelDebug,
+      andrewSearch: personnelDebug.find(p => 
+        p.fullName?.toLowerCase().includes('andrew') || 
+        p.nickname?.toLowerCase().includes('andrew')
+      )
+    });
+    
+  } catch (error) {
+    console.error('Error debugging personnel:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
