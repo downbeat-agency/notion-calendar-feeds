@@ -336,6 +336,11 @@ app.get('/debug/calendar/:personId', async (req, res) => {
         band: event.band,
         venue: event.venue,
         venue_address: event.venue_address,
+        general_info: event.general_info || 'Not available',
+        general_info_length: event.general_info ? event.general_info.length : 0,
+        has_general_info: !!event.general_info,
+        rehearsals: event.rehearsals || [],
+        rehearsalCount: event.rehearsals ? event.rehearsals.length : 0,
         cleanedStartDate: event.event_start?.replace(/[']/g, ''),
         cleanedEndDate: event.event_end?.replace(/[']/g, '')
       };
@@ -513,6 +518,177 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Test rehearsal implementation with sample data
+app.get('/test/rehearsals', async (req, res) => {
+  try {
+    // Sample data with general_info field
+    const sampleEvents = [{"event_name":"Santa Monica Wedding","notion_url":"https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6","event_date":"2025-09-13T17:00:00-07:00","event_start":"2025-09-13T17:00:00-07:00","event_end":"2025-09-13T23:00:00-07:00","band":"Gold Standard","general_info":"Venue:\nCasa Del Mar\n1910 Ocean Way, Santa Monica, CA 90405\n\nParking and Load In:\nValet Parking: Miller/Tom Wedding\n\nDress Code:\nGentleman - black suit, white shirt, black bow tie, black dress shoes\nLadies - black formal dress, black dress shoes\n\nGreen Room:\nThe Boardroom\n\nDay of Contact for Band: \n\nDay of Planner: Annette - 3104987995\n\nContracted:\nCocktail: 1 Speaker + Playback 5pm-6pm (1hrs)\nReception: Reception Sound + Band + 4th Vocalist + Sax 6pm-10pm (4hrs)\nAfter Party: DJ + Reception Sound 10pm-11pm (1hrs)","venue":"Casa Del Mar","venue_address":"1910 Ocean Way, Santa Monica, CA 90405","payroll":[{"position":"Band: Drums","assignment":"Base + Rehearsal","pay_total":800}],"rehearsals":[{"rehearsal_time":"@September 11, 2025 10:00 AM → 12:00 PM","rehearsal_location":"Downbeat HQ","rehearsal_address":"123 W Bellevue Dr Ste 4,\nPasadena, CA 91105⁠"}]},{"event_name":"Orange County Event","notion_url":"https://www.notion.so/22439e4a65a9802da165f46d4447f89c","event_date":"2025-09-27T16:30:00-07:00","event_start":"2025-09-27T16:30:00-07:00","event_end":"2025-09-27T22:30:00-07:00","band":"Gold Standard","general_info":"Venue:\nOrange County Museum of Art\n1661 W Sunflower Ave, Santa Ana, CA 92704\n\nParking and Load In:\nLoad In on side of museum.\nCall Mike upon arrival for load in if you need assistance\n\nPark in structure. Take a Ticket. Gate should be up at the end of the event.\n\nDress Code:\nGentleman - black suit, white shirt, black bow tie, black dress shoes\nLadies - black formal dress, black dress shoes\n\nGreen Room:\nEducation Pavillion\n\nDay of Contact for Band: Diego - (626) 991-4302\n\nDay of Planner: Michael - 714.981.2820\n\nContracted:\nCocktail: DJ + Sax + No Speakers 430pm-630pm (2hrs)\nReception: Reception Sound + Band + Horns + No Speakers 9pm-1030pm (1.5hrs)","venue":"Orange County Museum of Art","venue_address":"1661 W Sunflower Ave, Santa Ana, CA 92704","payroll":[{"position":"Band: Drums","assignment":"Base + Rehearsal + MD","pay_total":1300}],"rehearsals":[{"rehearsal_time":"@September 25, 2025 12:00 PM → 2:00 PM","rehearsal_location":"Downbeat HQ","rehearsal_address":"123 W Bellevue Dr Ste 4,\nPasadena, CA 91105⁠"}]}];
+
+    const calendar = ical({ 
+      name: 'Rehearsal Test Calendar',
+      timezone: 'America/Los_Angeles'
+    });
+
+    const eventSummary = [];
+
+    sampleEvents.forEach((event, index) => {
+      const title = event.event_name;
+      const startDate = event.event_start;
+      const endDate = event.event_end;
+      const venue = event.venue;
+      const venueAddress = event.venue_address;
+      const band = event.band;
+      const eventId = `event-${index}-${Date.now()}`;
+
+      // Create location string from venue and address
+      const location = venueAddress ? `${venue}, ${venueAddress}` : venue;
+
+      if (startDate && title) {
+        // Fix date format by replacing 'T' quotes with actual T
+        const cleanStartDate = startDate.replace(/[']/g, '');
+        const cleanEndDate = endDate ? endDate.replace(/[']/g, '') : cleanStartDate;
+
+        // Use general_info if available, otherwise fall back to band/venue format
+        let testEventDescription = '';
+        if (event.general_info) {
+          testEventDescription = event.general_info;
+        } else {
+          testEventDescription = `Band: ${band}\nVenue: ${venue}`;
+        }
+
+        // Create main event
+        calendar.createEvent({
+          start: new Date(cleanStartDate),
+          end: new Date(cleanEndDate),
+          summary: `${title} (${band})`,
+          location: location || '',
+          description: testEventDescription,
+          uid: `${eventId}@downbeat.agency`,
+          url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+        });
+
+        const mainEventInfo = {
+          type: 'main_event',
+          title: `${title} (${band})`,
+          start: cleanStartDate,
+          end: cleanEndDate,
+          location: location
+        };
+
+        eventSummary.push(mainEventInfo);
+
+        // Add rehearsal events if they exist
+        if (event.rehearsals && Array.isArray(event.rehearsals)) {
+          event.rehearsals.forEach((rehearsal, rehearsalIndex) => {
+            if (rehearsal.rehearsal_time) {
+              let rehearsalStart, rehearsalEnd;
+              
+              // Handle different rehearsal_time formats
+              const rehearsalTimeStr = rehearsal.rehearsal_time.replace(/[']/g, '');
+              
+              if (rehearsalTimeStr.includes('→')) {
+                // Format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
+                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
+                if (match) {
+                  const dateStr = match[1].trim(); // "September 11, 2025"
+                  const startTimeStr = match[2].trim(); // "10:00 AM"
+                  const endTimeStr = match[3].trim(); // "12:00 PM"
+                  
+                  // Parse the date and times
+                  rehearsalStart = new Date(`${dateStr} ${startTimeStr}`);
+                  rehearsalEnd = new Date(`${dateStr} ${endTimeStr}`);
+                  
+                  // Ensure valid dates
+                  if (isNaN(rehearsalStart.getTime()) || isNaN(rehearsalEnd.getTime())) {
+                    // Fallback to 3 hours if parsing fails
+                    rehearsalStart = new Date(rehearsalTimeStr);
+                    rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000);
+                  }
+                } else {
+                  // Fallback if regex doesn't match
+                  rehearsalStart = new Date(rehearsalTimeStr);
+                  rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000);
+                }
+              } else if (rehearsalTimeStr.includes('/')) {
+                // Format: "start/end" (e.g., "2025-09-11T10:00:00-07:00/2025-09-11T13:00:00-07:00")
+                const [startStr, endStr] = rehearsalTimeStr.split('/');
+                rehearsalStart = new Date(startStr.trim());
+                rehearsalEnd = new Date(endStr.trim());
+              } else if (rehearsal.rehearsal_start && rehearsal.rehearsal_end) {
+                // Separate start/end fields
+                rehearsalStart = new Date(rehearsal.rehearsal_start.replace(/[']/g, ''));
+                rehearsalEnd = new Date(rehearsal.rehearsal_end.replace(/[']/g, ''));
+              } else if (rehearsal.rehearsal_time && rehearsal.rehearsal_end) {
+                // Start time in rehearsal_time, end time separate
+                rehearsalStart = new Date(rehearsalTimeStr);
+                rehearsalEnd = new Date(rehearsal.rehearsal_end.replace(/[']/g, ''));
+              } else {
+                // Only start time provided, default to 3 hours
+                rehearsalStart = new Date(rehearsalTimeStr);
+                rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000); // Add 3 hours
+              }
+              
+              const rehearsalEventId = `rehearsal-${index}-${rehearsalIndex}-${Date.now()}`;
+              const rehearsalLocationName = rehearsal.rehearsal_location || 'TBD';
+              const rehearsalAddress = rehearsal.rehearsal_address || '';
+              
+              // Create full location string (name + address)
+              let fullRehearsalLocation = rehearsalLocationName;
+              if (rehearsalAddress) {
+                fullRehearsalLocation = `${rehearsalLocationName}, ${rehearsalAddress}`;
+              }
+              
+              calendar.createEvent({
+                start: rehearsalStart,
+                end: rehearsalEnd,
+                summary: `REHEARSAL: ${title} (${band})`,
+                location: fullRehearsalLocation,
+                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}\nRehearsal Location: ${rehearsalLocationName}${rehearsalAddress ? '\nRehearsal Address: ' + rehearsalAddress : ''}`,
+                uid: `${rehearsalEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+
+              const rehearsalInfo = {
+                type: 'rehearsal',
+                title: `REHEARSAL: ${title} (${band})`,
+                start: rehearsalStart.toISOString(),
+                end: rehearsalEnd.toISOString(),
+                location: fullRehearsalLocation,
+                locationName: rehearsalLocationName,
+                address: rehearsalAddress,
+                mainEvent: title,
+                duration: `${Math.round((rehearsalEnd - rehearsalStart) / (1000 * 60))} minutes`
+              };
+
+              eventSummary.push(rehearsalInfo);
+            }
+          });
+        }
+      }
+    });
+
+    // Return both JSON summary and option to download .ics
+    if (req.query.format === 'ics') {
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="rehearsal-test.ics"');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.send(calendar.toString());
+    } else {
+      res.json({
+        message: 'Rehearsal test completed successfully',
+        totalEvents: eventSummary.filter(e => e.type === 'main_event').length,
+        totalRehearsals: eventSummary.filter(e => e.type === 'rehearsal').length,
+        events: eventSummary,
+        downloadIcs: `${req.protocol}://${req.get('host')}/test/rehearsals?format=ics`
+      });
+    }
+
+  } catch (error) {
+    console.error('Error testing rehearsals:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Test Andrew's assignment lookup
 app.get('/debug/test-assignment/:assignmentId', async (req, res) => {
   const { assignmentId } = req.params;
@@ -619,15 +795,102 @@ app.get('/calendar/:personId', async (req, res) => {
             }).join('\n');
         }
         
+        // Use general_info if available, otherwise fall back to band/venue format
+        let eventDescription = '';
+        if (event.general_info) {
+          eventDescription = event.general_info;
+        } else {
+          eventDescription = `Band: ${band}\nVenue: ${venue}`;
+        }
+        
+        // Add position info if available
+        if (positionInfo) {
+          eventDescription += positionInfo;
+        }
+
         calendar.createEvent({
           start: new Date(cleanStartDate),
           end: new Date(cleanEndDate),
           summary: `${title} (${band})`,
           location: location || '',
-          description: `Band: ${band}\nVenue: ${venue}${positionInfo}`,
+          description: eventDescription,
           uid: `${eventId}@downbeat.agency`,
           url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
         });
+
+        // Add rehearsal events if they exist
+        if (event.rehearsals && Array.isArray(event.rehearsals)) {
+          event.rehearsals.forEach((rehearsal, rehearsalIndex) => {
+            if (rehearsal.rehearsal_time) {
+              let rehearsalStart, rehearsalEnd;
+              
+              // Handle different rehearsal_time formats
+              const rehearsalTimeStr = rehearsal.rehearsal_time.replace(/[']/g, '');
+              
+              if (rehearsalTimeStr.includes('→')) {
+                // Format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
+                const match = rehearsalTimeStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))\s+→\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
+                if (match) {
+                  const dateStr = match[1].trim(); // "September 11, 2025"
+                  const startTimeStr = match[2].trim(); // "10:00 AM"
+                  const endTimeStr = match[3].trim(); // "12:00 PM"
+                  
+                  // Parse the date and times
+                  rehearsalStart = new Date(`${dateStr} ${startTimeStr}`);
+                  rehearsalEnd = new Date(`${dateStr} ${endTimeStr}`);
+                  
+                  // Ensure valid dates
+                  if (isNaN(rehearsalStart.getTime()) || isNaN(rehearsalEnd.getTime())) {
+                    // Fallback to 3 hours if parsing fails
+                    rehearsalStart = new Date(rehearsalTimeStr);
+                    rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000);
+                  }
+                } else {
+                  // Fallback if regex doesn't match
+                  rehearsalStart = new Date(rehearsalTimeStr);
+                  rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000);
+                }
+              } else if (rehearsalTimeStr.includes('/')) {
+                // Format: "start/end" (e.g., "2025-09-11T10:00:00-07:00/2025-09-11T13:00:00-07:00")
+                const [startStr, endStr] = rehearsalTimeStr.split('/');
+                rehearsalStart = new Date(startStr.trim());
+                rehearsalEnd = new Date(endStr.trim());
+              } else if (rehearsal.rehearsal_start && rehearsal.rehearsal_end) {
+                // Separate start/end fields
+                rehearsalStart = new Date(rehearsal.rehearsal_start.replace(/[']/g, ''));
+                rehearsalEnd = new Date(rehearsal.rehearsal_end.replace(/[']/g, ''));
+              } else if (rehearsal.rehearsal_time && rehearsal.rehearsal_end) {
+                // Start time in rehearsal_time, end time separate
+                rehearsalStart = new Date(rehearsalTimeStr);
+                rehearsalEnd = new Date(rehearsal.rehearsal_end.replace(/[']/g, ''));
+              } else {
+                // Only start time provided, default to 3 hours
+                rehearsalStart = new Date(rehearsalTimeStr);
+                rehearsalEnd = new Date(rehearsalStart.getTime() + 3 * 60 * 60 * 1000); // Add 3 hours
+              }
+              
+              const rehearsalEventId = `rehearsal-${index}-${rehearsalIndex}-${Date.now()}`;
+              const rehearsalLocationName = rehearsal.rehearsal_location || 'TBD';
+              const rehearsalAddress = rehearsal.rehearsal_address || '';
+              
+              // Create full location string (name + address)
+              let fullRehearsalLocation = rehearsalLocationName;
+              if (rehearsalAddress) {
+                fullRehearsalLocation = `${rehearsalLocationName}, ${rehearsalAddress}`;
+              }
+              
+              calendar.createEvent({
+                start: rehearsalStart,
+                end: rehearsalEnd,
+                summary: `REHEARSAL: ${title} (${band})`,
+                location: fullRehearsalLocation,
+                description: `Rehearsal for: ${title}\nBand: ${band}\nMain Event Venue: ${venue}\nRehearsal Location: ${rehearsalLocationName}${rehearsalAddress ? '\nRehearsal Address: ' + rehearsalAddress : ''}`,
+                uid: `${rehearsalEventId}@downbeat.agency`,
+                url: event.notion_url || `https://www.notion.so/downbeat/Events-3dec3113f74749dbb6668ba1f06c1d3e`
+              });
+            }
+          });
+        }
       }
     });
     
