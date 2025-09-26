@@ -27,21 +27,34 @@ app.get('/debug/notion', async (_req, res) => {
 });
 
 async function dbInfo(id) {
-  const meta = await notion.databases.retrieve({ database_id: id });
-  const props = Object.entries(meta.properties).map(([k,v]) => ({ name: k, type: v.type }));
-  const sample = await notion.databases.query({ database_id: id, page_size: 1 });
-  return { id, title: meta.title?.[0]?.plain_text, props, sampleCount: sample.results.length };
+  try {
+    const meta = await notion.databases.retrieve({ database_id: id });
+    const props = Object.entries(meta.properties || {}).map(([k,v]) => ({ name: k, type: v.type }));
+    const sample = await notion.databases.query({ database_id: id, page_size: 1 });
+    return { id, title: meta.title?.[0]?.plain_text, props, sampleCount: sample.results.length };
+  } catch (error) {
+    return { id, error: error.message, status: error.status };
+  }
 }
 
 app.get('/debug/dbs', async (_req, res) => {
   try {
     const eventsId = process.env.EVENTS_DATABASE_ID;
     const peopleId = process.env.PERSONNEL_DATABASE_ID;
-    if (!eventsId || !peopleId) return res.status(400).json({ ok:false, error:'Missing EVENTS_DATABASE_ID or PERSONNEL_DATABASE_ID' });
+    
+    if (!eventsId || !peopleId) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Missing database IDs',
+        eventsId: eventsId || 'MISSING',
+        peopleId: peopleId || 'MISSING'
+      });
+    }
+    
     const [events, personnel] = await Promise.all([dbInfo(eventsId), dbInfo(peopleId)]);
-    res.json({ ok:true, events, personnel });
+    res.json({ ok: true, events, personnel });
   } catch (e) {
-    res.status(500).json({ ok:false, error: e.body || e.message });
+    res.status(500).json({ ok: false, error: e.body || e.message, stack: e.stack });
   }
 });
 
