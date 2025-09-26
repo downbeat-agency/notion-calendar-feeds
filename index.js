@@ -218,7 +218,7 @@ app.get('/debug/events', async (req, res) => {
   try {
     const response = await notion.databases.query({
       database_id: EVENTS_DB,
-      page_size: 10,
+      page_size: 50,
       sorts: [{ property: 'Event Date', direction: 'descending' }]
     });
     
@@ -265,7 +265,8 @@ app.get('/debug/calendar/:personId', async (req, res) => {
           property: 'Payroll Personnel',
           relation: { contains: personId }
         },
-        sorts: [{ property: 'Event Date', direction: 'ascending' }]
+        sorts: [{ property: 'Event Date', direction: 'ascending' }],
+        page_size: 100
       });
       filterApproach = 'relation-contains';
     } catch (error1) {
@@ -273,7 +274,7 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       try {
         const allEvents = await notion.databases.query({
           database_id: EVENTS_DB,
-          page_size: 100,
+          page_size: 200,
           sorts: [{ property: 'Event Date', direction: 'ascending' }]
         });
         
@@ -333,7 +334,8 @@ app.get('/calendar/:personId', async (req, res) => {
         property: 'Payroll Personnel',
         relation: { contains: personId }
       },
-      sorts: [{ property: 'Event Date', direction: 'ascending' }]
+      sorts: [{ property: 'Event Date', direction: 'ascending' }],
+      page_size: 100
     });
     
     const calendar = ical({ 
