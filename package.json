@@ -1,0 +1,20 @@
+{
+  "name": "notion-calendar-feeds",
+  "version": "1.0.0",
+  "description": "A Node.js application for managing Notion calendar feeds",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["notion", "calendar", "feeds", "ical"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@notionhq/client": "^5.1.0",
+    "express": "^5.1.0",
+    "ical-generator": "^9.0.0"
+  }
+}
