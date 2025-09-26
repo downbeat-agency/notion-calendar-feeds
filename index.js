@@ -504,6 +504,15 @@ app.get('/debug/lookup-personnel', async (req, res) => {
   }
 });
 
+// Simple health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    message: 'Server is running' 
+  });
+});
+
 // Test Andrew's assignment lookup
 app.get('/debug/test-assignment/:assignmentId', async (req, res) => {
   const { assignmentId } = req.params;
