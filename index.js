@@ -272,71 +272,57 @@ app.get('/debug/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
   try {
-    // First, get the person's info
+    // Get the person's record and their Calendar Feed JSON
     const person = await notion.pages.retrieve({ page_id: personId });
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
     
-    // Simplified approach - just get recent events to test
-    const recentEvents = await notion.databases.query({
-      database_id: EVENTS_DB,
-      sorts: [{ property: 'Event Date', direction: 'descending' }],
-      page_size: 20 // Limit to 20 recent events to avoid timeouts
-    });
-    
-    const matchingEvents = [];
-    let checkedAssignments = 0;
-    let errors = [];
-    
-    // Check each event (limited to prevent timeouts)
-    for (const event of recentEvents.results) {
-      const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
-      let hasMatchingPersonnel = false;
-      
-      // Limit assignment checks per event
-      const assignmentsToCheck = payrollPersonnel.slice(0, 5); // Max 5 assignments per event
-      
-      for (const assignment of assignmentsToCheck) {
-        try {
-          checkedAssignments++;
-          const assignmentPage = await notion.pages.retrieve({ page_id: assignment.id });
-          const assignmentPersonnelId = assignmentPage.properties?.['Personnel']?.relation?.[0]?.id;
-          
-          if (assignmentPersonnelId === personId) {
-            hasMatchingPersonnel = true;
-            break;
-          }
-          
-          // Stop if we've checked too many assignments
-          if (checkedAssignments > 50) break;
-        } catch (error) {
-          errors.push({ assignmentId: assignment.id, error: error.message });
-          continue;
-        }
-      }
-      
-      if (hasMatchingPersonnel) {
-        matchingEvents.push(event);
-      }
-      
-      // Stop if we've checked too many assignments total
-      if (checkedAssignments > 50) break;
+    if (!calendarFeedJson) {
+      return res.json({
+        searchingForPersonId: personId,
+        personPageId: person.id,
+        personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
+        totalEvents: 0,
+        events: [],
+        filterApproach: 'calendar-feed-json',
+        error: 'No Calendar Feed JSON property found',
+        availableProperties: Object.keys(person.properties)
+      });
     }
     
-    const response = { results: matchingEvents };
-    const filterApproach = 'limited-assignment-lookup';
+    // Parse the calendar feed JSON
+    let calendarData;
+    try {
+      calendarData = JSON.parse(calendarFeedJson);
+    } catch (parseError) {
+      return res.json({
+        searchingForPersonId: personId,
+        personPageId: person.id,
+        personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text,
+        totalEvents: 0,
+        events: [],
+        filterApproach: 'calendar-feed-json',
+        error: 'Invalid JSON in Calendar Feed JSON property',
+        parseError: parseError.message,
+        rawJson: calendarFeedJson?.substring(0, 200) + '...'
+      });
+    }
     
-    // Debug the events with detailed ID information
-    const eventDebug = response.results.map(event => {
-      const props = event.properties;
-      const personnelRelation = props['Payroll Personnel']?.relation || [];
+    const response = { results: calendarData.events || [] };
+    const filterApproach = 'calendar-feed-json';
+    
+    // Debug the events from JSON data
+    const eventDebug = response.results.map((event, index) => {
       return {
-        id: event.id,
-        title: props.Event?.title?.[0]?.plain_text,
-        eventDate: props['Event Date']?.date,
-        location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
-        eventType: props['Event Type']?.select?.name,
-        payrollPersonnelCount: personnelRelation.length,
-        payrollPersonnelIds: personnelRelation.map(rel => rel.id),
-        matchesSearchId: personnelRelation.some(rel => rel.id === personId)
+        index,
+        event_name: event.event_name,
+        event_date: event.event_date,
+        event_start: event.event_start,
+        event_end: event.event_end,
+        band: event.band,
+        venue: event.venue,
+        venue_address: event.venue_address,
+        cleanedStartDate: event.event_start?.replace(/[']/g, ''),
+        cleanedEndDate: event.event_end?.replace(/[']/g, '')
       };
     });
     
@@ -348,10 +334,9 @@ app.get('/debug/calendar/:personId', async (req, res) => {
       events: eventDebug,
       filterApproach,
       debugInfo: {
-        eventsChecked: recentEvents.results.length,
-        assignmentsChecked: checkedAssignments,
-        errors: errors.length,
-        errorSample: errors.slice(0, 3)
+        hasCalendarFeedJson: !!calendarFeedJson,
+        jsonLength: calendarFeedJson?.length || 0,
+        parsedSuccessfully: true
       },
       idComparison: {
         searchId: personId,
@@ -537,86 +522,64 @@ app.get('/calendar/:personId', async (req, res) => {
   const { personId } = req.params;
   
   try {
-    // Since Payroll Personnel stores Assignment IDs, we need to:
-    // 1. Get all events
-    // 2. Check each assignment to see if its Personnel relation matches our personId
+    // Get the person's record and their Calendar Feed JSON
+    const person = await notion.pages.retrieve({ page_id: personId });
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.rich_text?.[0]?.plain_text;
     
-    let allEventsResponse = [];
-    let hasMore = true;
-    let startCursor = undefined;
-    
-    while (hasMore) {
-      const queryParams = {
-        database_id: EVENTS_DB,
-        sorts: [{ property: 'Event Date', direction: 'ascending' }],
-        page_size: 100
-      };
-      
-      if (startCursor) {
-        queryParams.start_cursor = startCursor;
-      }
-      
-      const response = await notion.databases.query(queryParams);
-      allEventsResponse = allEventsResponse.concat(response.results);
-      
-      hasMore = response.has_more;
-      startCursor = response.next_cursor;
-      
-      // Safety limit
-      if (allEventsResponse.length > 1000) break;
+    if (!calendarFeedJson) {
+      return res.status(404).json({ 
+        error: 'No calendar feed data found for this person',
+        personId,
+        personName: person.properties?.['Full Name']?.formula?.string || person.properties?.['Nickname']?.title?.[0]?.plain_text
+      });
     }
     
-    // Filter events by checking assignment Personnel relations
-    const matchingEvents = [];
-    
-    for (const event of allEventsResponse) {
-      const payrollPersonnel = event.properties['Payroll Personnel']?.relation || [];
-      let hasMatchingPersonnel = false;
-      
-      // Check each assignment
-      for (const assignment of payrollPersonnel) {
-        try {
-          const assignmentPage = await notion.pages.retrieve({ page_id: assignment.id });
-          const assignmentPersonnelId = assignmentPage.properties?.['Personnel']?.relation?.[0]?.id;
-          
-          if (assignmentPersonnelId === personId) {
-            hasMatchingPersonnel = true;
-            break;
-          }
-        } catch (error) {
-          // Skip if we can't read the assignment page
-          continue;
-        }
-      }
-      
-      if (hasMatchingPersonnel) {
-        matchingEvents.push(event);
-      }
+    // Parse the calendar feed JSON
+    let calendarData;
+    try {
+      calendarData = JSON.parse(calendarFeedJson);
+    } catch (parseError) {
+      return res.status(400).json({ 
+        error: 'Invalid JSON in Calendar Feed JSON property',
+        personId,
+        parseError: parseError.message
+      });
     }
     
-    const response = { results: matchingEvents };
+    // Convert the calendar data to response format
+    const response = { results: calendarData.events || [] };
     
     const calendar = ical({ 
       name: 'Downbeat Events',
       timezone: 'America/Los_Angeles'
     });
     
-    response.results.forEach(event => {
-      const props = event.properties;
-      const eventDate = props['Event Date']?.date;
-      const title = props.Event?.title?.[0]?.plain_text;
-      const location = props['Location (Print)']?.rich_text?.[0]?.plain_text;
-      const eventType = props['Event Type']?.select?.name;
+    response.results.forEach((event, index) => {
+      // Handle the specific JSON format from your sample
+      const title = event.event_name;
+      const startDate = event.event_start;
+      const endDate = event.event_end;
+      const venue = event.venue;
+      const venueAddress = event.venue_address;
+      const band = event.band;
+      const eventId = `event-${index}-${Date.now()}`;
       
-      if (eventDate && title) {
+      // Create location string from venue and address
+      const location = venueAddress ? `${venue}, ${venueAddress}` : venue;
+      
+      if (startDate && title) {
+        // Fix date format by replacing 'T' quotes with actual T
+        const cleanStartDate = startDate.replace(/[']/g, '');
+        const cleanEndDate = endDate ? endDate.replace(/[']/g, '') : cleanStartDate;
+        
         calendar.createEvent({
-          start: new Date(eventDate.start),
-          end: eventDate.end ? new Date(eventDate.end) : new Date(eventDate.start),
-          summary: title,
+          start: new Date(cleanStartDate),
+          end: new Date(cleanEndDate),
+          summary: `${title} (${band})`,
           location: location || '',
-          description: `Type: ${eventType || 'Event'}\n\nView in Notion: ${event.url}`,
-          uid: `${event.id}@downbeat.agency`,
-          url: event.url
+          description: `Band: ${band}\nVenue: ${venue}\n\nDownbeat Agency Event`,
+          uid: `${eventId}@downbeat.agency`,
+          url: `https://downbeat.agency/events/${eventId}`
         });
       }
     });
