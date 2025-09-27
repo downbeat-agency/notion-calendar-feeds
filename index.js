@@ -49,7 +49,12 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
       // Try to get the Calendar Feed JSON
       calendarFeedExists: !!person.properties?.['Calendar Feed JSON'],
       calendarFeedType: person.properties?.['Calendar Feed JSON']?.type,
-      calendarFeedLength: person.properties?.['Calendar Feed JSON']?.formula?.string?.length || 0
+      calendarFeedLength: person.properties?.['Calendar Feed JSON']?.formula?.string?.length || 0,
+      calendarFeedPreview: person.properties?.['Calendar Feed JSON']?.formula?.string?.substring(0, 200) || 'null',
+      // Also test the "Test Calendar Feed" property
+      testCalendarFeedExists: !!person.properties?.['Test Calendar Feed'],
+      testCalendarFeedLength: person.properties?.['Test Calendar Feed']?.formula?.string?.length || 0,
+      testCalendarFeedPreview: person.properties?.['Test Calendar Feed']?.formula?.string?.substring(0, 200) || 'null'
     };
 
     console.log('=== SIMPLE TEST DEBUG ===');
