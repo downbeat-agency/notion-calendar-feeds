@@ -185,6 +185,39 @@ app.get('/calendar/:personId', async (req, res) => {
           }
         });
       }
+
+      // Add hotel events
+      if (event.hotels && Array.isArray(event.hotels)) {
+        event.hotels.forEach(hotel => {
+          if (hotel.check_in && hotel.check_out) {
+            // Parse check-in/check-out dates (handle both ISO format and "May 8, 2026 4:00 PM" format)
+            let checkInDate, checkOutDate;
+            
+            try {
+              // Try parsing as-is first (for ISO format)
+              checkInDate = new Date(hotel.check_in).toISOString();
+              checkOutDate = new Date(hotel.check_out).toISOString();
+            } catch (e) {
+              // If parsing fails, skip this hotel
+              console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
+              return;
+            }
+
+            allCalendarEvents.push({
+              type: 'hotel',
+              title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
+              start: checkInDate,
+              end: checkOutDate,
+              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nReserved Under: ${hotel.name_under_reservation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}`,
+              location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
+              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              confirmation: hotel.confirmation || '',
+              hotelName: hotel.hotel_name || '',
+              mainEvent: event.event_name
+            });
+          }
+        });
+      }
     });
 
     if (format === 'ics') {
@@ -215,7 +248,8 @@ app.get('/calendar/:personId', async (req, res) => {
       breakdown: {
         mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
-        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length
+        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
+        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length
       },
       events: allCalendarEvents
     });
