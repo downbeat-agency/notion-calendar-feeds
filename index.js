@@ -41,7 +41,11 @@ app.get('/calendar/:personId', async (req, res) => {
     // Get Calendar Feed JSON from person's formula property
     const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
     
+    // Debug logging
+    console.log('Raw Calendar Feed JSON:', calendarFeedJson);
+    
     if (!calendarFeedJson) {
+      console.log('Available properties:', Object.keys(person.properties || {}));
       return res.status(404).json({ error: 'No calendar feed data found' });
     }
 
