@@ -658,10 +658,21 @@ app.get('/test/flights', async (req, res) => {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
             if (flight.departure_name || flight.departure_airline) {
-              // Create departure flight 1-2 days BEFORE the event (more realistic)
-              const departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
-              departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
-              const departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual flight times if available, otherwise use placeholder times
+              let departureStart, departureEnd;
+              
+              if (flight.departure_time) {
+                // Use real departure time from Notion
+                departureStart = new Date(flight.departure_time);
+                departureEnd = flight.departure_arrival_time ? 
+                  new Date(flight.departure_arrival_time) : 
+                  new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
+                departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
+                departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -715,10 +726,21 @@ app.get('/test/flights', async (req, res) => {
 
             // Process return flight
             if (flight.return_name || flight.return_airline) {
-              // Create return flight 1 day AFTER the event
-              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
-              returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
-              const returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual return flight times if available, otherwise use placeholder times
+              let returnStart, returnEnd;
+              
+              if (flight.return_time) {
+                // Use real return time from Notion
+                returnStart = new Date(flight.return_time);
+                returnEnd = flight.return_arrival_time ? 
+                  new Date(flight.return_arrival_time) : 
+                  new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
+                returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
+                returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
@@ -983,10 +1005,21 @@ app.get('/test/rehearsals', async (req, res) => {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
             if (flight.departure_name || flight.departure_airline) {
-              // Create departure flight 1-2 days BEFORE the event (more realistic)
-              const departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
-              departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
-              const departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual flight times if available, otherwise use placeholder times
+              let departureStart, departureEnd;
+              
+              if (flight.departure_time) {
+                // Use real departure time from Notion
+                departureStart = new Date(flight.departure_time);
+                departureEnd = flight.departure_arrival_time ? 
+                  new Date(flight.departure_arrival_time) : 
+                  new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
+                departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
+                departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1040,10 +1073,21 @@ app.get('/test/rehearsals', async (req, res) => {
 
             // Process return flight
             if (flight.return_name || flight.return_airline) {
-              // Create return flight 1 day AFTER the event
-              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
-              returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
-              const returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual return flight times if available, otherwise use placeholder times
+              let returnStart, returnEnd;
+              
+              if (flight.return_time) {
+                // Use real return time from Notion
+                returnStart = new Date(flight.return_time);
+                returnEnd = flight.return_arrival_time ? 
+                  new Date(flight.return_arrival_time) : 
+                  new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
+                returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
+                returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1349,10 +1393,21 @@ app.get('/calendar/:personId', async (req, res) => {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
             if (flight.departure_name || flight.departure_airline) {
-              // Create departure flight 1-2 days BEFORE the event (more realistic)
-              const departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
-              departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
-              const departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual flight times if available, otherwise use placeholder times
+              let departureStart, departureEnd;
+              
+              if (flight.departure_time) {
+                // Use real departure time from Notion
+                departureStart = new Date(flight.departure_time);
+                departureEnd = flight.departure_arrival_time ? 
+                  new Date(flight.departure_arrival_time) : 
+                  new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                departureStart = new Date(new Date(event.event_date).getTime() - 24 * 60 * 60 * 1000); // 1 day before event
+                departureStart.setHours(10, 0, 0, 0); // Set to 10:00 AM
+                departureEnd = new Date(departureStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1391,10 +1446,21 @@ app.get('/calendar/:personId', async (req, res) => {
 
             // Process return flight
             if (flight.return_name || flight.return_airline) {
-              // Create return flight 1 day AFTER the event
-              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
-              returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
-              const returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              // Use actual return flight times if available, otherwise use placeholder times
+              let returnStart, returnEnd;
+              
+              if (flight.return_time) {
+                // Use real return time from Notion
+                returnStart = new Date(flight.return_time);
+                returnEnd = flight.return_arrival_time ? 
+                  new Date(flight.return_arrival_time) : 
+                  new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour default if no arrival time
+              } else {
+                // Fallback to placeholder timing
+                returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000); // 1 day after event
+                returnStart.setHours(14, 0, 0, 0); // Set to 2:00 PM
+                returnEnd = new Date(returnStart.getTime() + 3 * 60 * 60 * 1000); // 3 hour duration
+              }
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
