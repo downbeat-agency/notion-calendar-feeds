@@ -657,9 +657,10 @@ app.get('/test/flights', async (req, res) => {
         if (event.flights && Array.isArray(event.flights)) {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
-            if (flight.departure_time) {
-              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
-              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.departure_name || flight.departure_airline) {
+              // Create flight event on the main event date since we don't have specific flight times
+              const departureStart = new Date(event.event_date);
+              const departureEnd = new Date(departureStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -712,9 +713,10 @@ app.get('/test/flights', async (req, res) => {
             }
 
             // Process return flight
-            if (flight.return_time) {
-              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
-              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.return_name || flight.return_airline) {
+              // Create return flight event on the main event date + 1 day since we don't have specific flight times
+              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000);
+              const returnEnd = new Date(returnStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
@@ -978,9 +980,10 @@ app.get('/test/rehearsals', async (req, res) => {
         if (event.flights && Array.isArray(event.flights)) {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
-            if (flight.departure_time) {
-              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
-              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.departure_name || flight.departure_airline) {
+              // Create flight event on the main event date since we don't have specific flight times
+              const departureStart = new Date(event.event_date);
+              const departureEnd = new Date(departureStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1033,9 +1036,10 @@ app.get('/test/rehearsals', async (req, res) => {
             }
 
             // Process return flight
-            if (flight.return_time) {
-              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
-              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.return_name || flight.return_airline) {
+              // Create return flight event on the main event date + 1 day since we don't have specific flight times
+              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000);
+              const returnEnd = new Date(returnStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1340,9 +1344,10 @@ app.get('/calendar/:personId', async (req, res) => {
         if (event.flights && Array.isArray(event.flights)) {
           event.flights.forEach((flight, flightIndex) => {
             // Process departure flight
-            if (flight.departure_time) {
-              const departureStart = new Date(flight.departure_time.replace(/[']/g, ''));
-              const departureEnd = new Date(flight.departure_arrival_time ? flight.departure_arrival_time.replace(/[']/g, '') : departureStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.departure_name || flight.departure_airline) {
+              // Create flight event on the main event date since we don't have specific flight times
+              const departureStart = new Date(event.event_date);
+              const departureEnd = new Date(departureStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const departureEventId = `flight-departure-${index}-${flightIndex}-${Date.now()}`;
               
@@ -1380,9 +1385,10 @@ app.get('/calendar/:personId', async (req, res) => {
             }
 
             // Process return flight
-            if (flight.return_time) {
-              const returnStart = new Date(flight.return_time.replace(/[']/g, ''));
-              const returnEnd = new Date(flight.return_arrival_time ? flight.return_arrival_time.replace(/[']/g, '') : returnStart.getTime() + 3 * 60 * 60 * 1000);
+            if (flight.return_name || flight.return_airline) {
+              // Create return flight event on the main event date + 1 day since we don't have specific flight times
+              const returnStart = new Date(new Date(event.event_date).getTime() + 24 * 60 * 60 * 1000);
+              const returnEnd = new Date(returnStart.getTime() + 2 * 60 * 60 * 1000); // 2 hour duration
               
               const returnEventId = `flight-return-${index}-${flightIndex}-${Date.now()}`;
               
