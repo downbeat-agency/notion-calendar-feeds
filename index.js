@@ -11,9 +11,7 @@ app.get('/debug/env', (_req, res) => {
   res.json({
     hasNotionKey: !!process.env.NOTION_API_KEY,
     keyPrefix: process.env.NOTION_API_KEY?.substring(0, 4) + '...',
-    hasEventsDb: !!process.env.EVENTS_DATABASE_ID,
-    hasPersonnelDb: !!process.env.PERSONNEL_DATABASE_ID,
-    hasGigPayrollDb: !!GIG_PAYROLL_DB,
+    hasPersonnelDb: !!PERSONNEL_DB,
     nodeEnv: process.env.NODE_ENV
   });
 });
@@ -48,32 +46,14 @@ async function dbInfo(id) {
 
 app.get('/debug/dbs', async (_req, res) => {
   try {
-    const eventsId = process.env.EVENTS_DATABASE_ID;
-    const peopleId = process.env.PERSONNEL_DATABASE_ID;
-    
-    if (!eventsId || !peopleId) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Missing database IDs',
-        eventsId: eventsId || 'MISSING',
-        peopleId: peopleId || 'MISSING'
-      });
-    }
-    
-    const [events, personnel, gigPayroll] = await Promise.all([
-      dbInfo(eventsId), 
-      dbInfo(peopleId),
-      GIG_PAYROLL_DB ? dbInfo(GIG_PAYROLL_DB) : { error: 'No Gig Payroll DB ID' }
-    ]);
-    res.json({ ok: true, events, personnel, gigPayroll });
+    const personnel = await dbInfo(PERSONNEL_DB);
+    res.json({ ok: true, personnel });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.body || e.message, stack: e.stack });
   }
 });
 
-const EVENTS_DB = '3dec3113-f747-49db-b666-8ba1f06c1d3e';
 const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
-const GIG_PAYROLL_DB = '0fe5a34d-07e4-438a-af78-4caa27407e68';
 
 // Generate and update calendar URLs for all personnel
 app.get('/update-calendar-urls', async (req, res) => {
@@ -239,56 +219,7 @@ app.get('/', async (req, res) => {
   }
 });
 
-// Debug all events in database (first 10 to see structure)
-app.get('/debug/events', async (req, res) => {
-  try {
-    // Get first page to start
-    let allResults = [];
-    let hasMore = true;
-    let startCursor = undefined;
-    let pageCount = 0;
-    const maxPages = 10; // Safety limit to avoid infinite loops
-
-    while (hasMore && pageCount < maxPages) {
-      const response = await notion.databases.query({
-        database_id: EVENTS_DB,
-        page_size: 100,
-        sorts: [{ property: 'Event Date', direction: 'descending' }],
-        start_cursor: startCursor
-      });
-      
-      allResults = allResults.concat(response.results);
-      hasMore = response.has_more;
-      startCursor = response.next_cursor;
-      pageCount++;
-    }
-    
-    const eventDebug = allResults.slice(0, 50).map(event => { // Still limit display to 50 for readability
-      const props = event.properties;
-      return {
-        id: event.id,
-        title: props.Event?.title?.[0]?.plain_text,
-        eventDate: props['Event Date']?.date,
-        location: props['Location (Print)']?.rich_text?.[0]?.plain_text,
-        eventType: props['Event Type']?.select?.name,
-        payrollPersonnelIds: props['Payroll Personnel']?.relation?.map(rel => rel.id) || [],
-        payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0
-      };
-    });
-
-    res.json({
-      totalEventsInDB: allResults.length,
-      totalPagesQueried: pageCount,
-      events: eventDebug,
-      eventsDisplayed: eventDebug.length,
-      hasMore: allResults.length > 50
-    });
-    
-  } catch (error) {
-    console.error('Error debugging events:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// Removed debug/events endpoint - app only uses Personnel Calendar Feed JSON
 
 // Debug calendar data for specific person  
 app.get('/debug/calendar/:personId', async (req, res) => {
