@@ -15,9 +15,52 @@ app.get('/', (_req, res) => {
     status: 'Calendar Feed Server Running',
     endpoints: {
       calendar: '/calendar/:personId',
-      ics: '/calendar/:personId?format=ics'
+      ics: '/calendar/:personId?format=ics',
+      debug: '/debug/simple-test/:personId'
     }
   });
+});
+
+// Simple formula test endpoint
+app.get('/debug/simple-test/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Get person from Personnel database
+    const person = await notion.pages.retrieve({ page_id: personId });
+    
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+
+    // Test multiple properties to see what works
+    const testResults = {
+      personId: personId,
+      fullName: person.properties?.['Full Name']?.formula?.string,
+      timestamp: new Date().toISOString(),
+      // Test if we can get Gig Payroll count
+      gigPayrollCount: person.properties?.['Gig Payroll']?.relation?.length || 0,
+      availableProperties: Object.keys(person.properties || {}),
+      // Try to get the Calendar Feed JSON
+      calendarFeedExists: !!person.properties?.['Calendar Feed JSON'],
+      calendarFeedType: person.properties?.['Calendar Feed JSON']?.type,
+      calendarFeedLength: person.properties?.['Calendar Feed JSON']?.formula?.string?.length || 0
+    };
+
+    console.log('=== SIMPLE TEST DEBUG ===');
+    console.log('Test Results:', JSON.stringify(testResults, null, 2));
+    console.log('=== END SIMPLE TEST ===');
+
+    res.json(testResults);
+  } catch (error) {
+    console.error('Simple test error:', error);
+    res.status(500).json({ error: 'Error in simple test', details: error.message });
+  }
 });
 
 // Main calendar endpoint
@@ -41,15 +84,16 @@ app.get('/calendar/:personId', async (req, res) => {
     // Get Calendar Feed JSON from person's formula property
     const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
     
-    // Debug: Log what API actually receives
-    console.log('=== API DEBUG ===');
-    console.log('Personnel DB ID:', PERSONNEL_DB);
-    console.log('Person ID:', personId);
-    console.log('Raw Calendar Feed JSON from API:', calendarFeedJson);
-    console.log('Calendar Feed JSON length:', calendarFeedJson?.length);
+    // Add comprehensive debugging
+    console.log('=== API DEBUG INFO ===');
+    console.log('PersonId:', personId);
+    console.log('Person Full Name:', person.properties?.['Full Name']?.formula?.string);
+    console.log('Raw Calendar Feed JSON length:', calendarFeedJson?.length || 0);
+    console.log('Raw Calendar Feed JSON preview (first 500 chars):', calendarFeedJson?.substring(0, 500) || 'NULL');
+    console.log('Available properties:', Object.keys(person.properties || {}));
+    console.log('=== END DEBUG INFO ===');
     
     if (!calendarFeedJson) {
-      console.log('Available properties:', Object.keys(person.properties || {}));
       return res.status(404).json({ error: 'No calendar feed data found' });
     }
 
