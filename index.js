@@ -362,11 +362,18 @@ app.get('/debug/calendar/:personId', async (req, res) => {
         hasCalendarFeedJson: !!calendarFeedJson,
         jsonLength: calendarFeedJson?.length || 0,
         parsedSuccessfully: true,
+        rawJsonFromNotion: calendarFeedJson, // Show the exact raw JSON from Notion API
         jsonStructure: {
           isArray: Array.isArray(calendarData),
           hasEventsProperty: !!calendarData.events,
           topLevelKeys: Object.keys(calendarData).slice(0, 10),
           firstEventSample: events[0] || null
+        },
+        propertyDebug: {
+          propertyExists: !!person.properties?.['Calendar Feed JSON'],
+          propertyType: person.properties?.['Calendar Feed JSON']?.type,
+          formulaExists: !!person.properties?.['Calendar Feed JSON']?.formula,
+          formulaString: person.properties?.['Calendar Feed JSON']?.formula?.string?.substring(0, 200) + '...'
         }
       },
       idComparison: {
