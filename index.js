@@ -135,12 +135,28 @@ app.get('/calendar/:personId', async (req, res) => {
     events.forEach(event => {
       // Add main event
       if (event.event_name && event.event_start) {
+        // Build payroll info for description
+        let payrollInfo = '';
+        if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
+          payrollInfo = '\n\n--- POSITION INFO ---\n';
+          event.payroll.forEach(payroll => {
+            payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
+            if (payroll.assignment) {
+              payrollInfo += `Assignment: ${payroll.assignment}\n`;
+            }
+            if (payroll.pay_total) {
+              payrollInfo += `Pay: $${payroll.pay_total}\n`;
+            }
+            payrollInfo += '\n';
+          });
+        }
+
         allCalendarEvents.push({
           type: 'main_event',
           title: event.event_name,
           start: event.event_start,
           end: event.event_end || event.event_start,
-          description: event.general_info || '',
+          description: (event.general_info || '') + payrollInfo,
           location: event.venue_address || event.venue || '',
           url: event.notion_url || '',
           band: event.band || '',
