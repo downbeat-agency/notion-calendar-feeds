@@ -412,8 +412,10 @@ app.get('/debug/personnel', async (req, res) => {
     let allPersonnel = [];
     let hasMore = true;
     let startCursor = undefined;
+    let pageCount = 0;
+    const maxPages = 10; // Safety limit to avoid infinite loops
     
-    while (hasMore) {
+    while (hasMore && pageCount < maxPages) {
       const queryParams = {
         database_id: PERSONNEL_DB,
         sorts: [{ property: 'Full Name', direction: 'ascending' }],
@@ -429,11 +431,10 @@ app.get('/debug/personnel', async (req, res) => {
       
       hasMore = response.has_more;
       startCursor = response.next_cursor;
-      
-      if (allPersonnel.length > 200) break; // Safety limit
+      pageCount++;
     }
     
-    const personnelDebug = allPersonnel.map(person => ({
+    const personnelDebug = allPersonnel.slice(0, 50).map(person => ({ // Still limit display to 50 for readability
       id: person.id,
       fullName: person.properties?.['Full Name']?.formula?.string,
       nickname: person.properties?.['Nickname']?.title?.[0]?.plain_text,
@@ -441,11 +442,14 @@ app.get('/debug/personnel', async (req, res) => {
     }));
     
     res.json({
-      totalPersonnel: allPersonnel.length,
+      totalPersonnelInDB: allPersonnel.length,
+      totalPagesQueried: pageCount,
       personnel: personnelDebug,
-      andrewSearch: personnelDebug.find(p => 
-        p.fullName?.toLowerCase().includes('andrew') || 
-        p.nickname?.toLowerCase().includes('andrew')
+      personnelDisplayed: personnelDebug.length,
+      hasMore: allPersonnel.length > 50,
+      andrewSearch: allPersonnel.find(p => 
+        p.properties?.['Full Name']?.formula?.string?.toLowerCase().includes('andrew') || 
+        p.properties?.['Nickname']?.title?.[0]?.plain_text?.toLowerCase().includes('andrew')
       )
     });
     
