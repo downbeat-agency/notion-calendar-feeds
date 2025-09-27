@@ -233,7 +233,7 @@ app.get('/calendar/:personId', async (req, res) => {
               title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
               start: checkInDate,
               end: checkOutDate,
-              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nReserved Under: ${hotel.name_under_reservation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}`,
+              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation: ${hotel.names_on_reservation || 'N/A'}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
               location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
               url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
               confirmation: hotel.confirmation || '',
