@@ -269,7 +269,12 @@ app.get('/debug/events', async (req, res) => {
 
 // Debug calendar data for specific person  
 app.get('/debug/calendar/:personId', async (req, res) => {
-  const { personId } = req.params;
+  let { personId } = req.params;
+  
+  // Convert personId to proper UUID format if it doesn't have hyphens
+  if (personId.length === 32 && !personId.includes('-')) {
+    personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
   
   try {
     // Get the person's record and their Calendar Feed JSON
@@ -1195,7 +1200,12 @@ app.get('/debug/test-assignment/:assignmentId', async (req, res) => {
 
 // Calendar for specific person
 app.get('/calendar/:personId', async (req, res) => {
-  const { personId } = req.params;
+  let { personId } = req.params;
+  
+  // Convert personId to proper UUID format if it doesn't have hyphens
+  if (personId.length === 32 && !personId.includes('-')) {
+    personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
   
   try {
     // Get the person's record and their Calendar Feed JSON
