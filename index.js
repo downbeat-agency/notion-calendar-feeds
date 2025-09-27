@@ -6,12 +6,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
-// Personnel database ID
-const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
+// Use environment variable for Personnel database ID
+const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
 // Health check endpoint
 app.get('/', (_req, res) => {
-  res.json({ 
+  res.json({
     status: 'Calendar Feed Server Running',
     endpoints: {
       calendar: '/calendar/:personId',
@@ -43,6 +43,7 @@ app.get('/calendar/:personId', async (req, res) => {
     
     // Debug: Log what API actually receives
     console.log('=== API DEBUG ===');
+    console.log('Personnel DB ID:', PERSONNEL_DB);
     console.log('Person ID:', personId);
     console.log('Raw Calendar Feed JSON from API:', calendarFeedJson);
     console.log('Calendar Feed JSON length:', calendarFeedJson?.length);
@@ -69,7 +70,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
       events.forEach(event => {
         if (event.event_name && event.event_start) {
-          calendar.createEvent({
+        calendar.createEvent({
             start: new Date(event.event_start),
             end: new Date(event.event_end || event.event_start),
             summary: event.event_name,
