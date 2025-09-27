@@ -13,6 +13,7 @@ app.get('/debug/env', (_req, res) => {
     keyPrefix: process.env.NOTION_API_KEY?.substring(0, 4) + '...',
     hasEventsDb: !!process.env.EVENTS_DATABASE_ID,
     hasPersonnelDb: !!process.env.PERSONNEL_DATABASE_ID,
+    hasGigPayrollDb: !!GIG_PAYROLL_DB,
     nodeEnv: process.env.NODE_ENV
   });
 });
@@ -59,8 +60,12 @@ app.get('/debug/dbs', async (_req, res) => {
       });
     }
     
-    const [events, personnel] = await Promise.all([dbInfo(eventsId), dbInfo(peopleId)]);
-    res.json({ ok: true, events, personnel });
+    const [events, personnel, gigPayroll] = await Promise.all([
+      dbInfo(eventsId), 
+      dbInfo(peopleId),
+      GIG_PAYROLL_DB ? dbInfo(GIG_PAYROLL_DB) : { error: 'No Gig Payroll DB ID' }
+    ]);
+    res.json({ ok: true, events, personnel, gigPayroll });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.body || e.message, stack: e.stack });
   }
@@ -68,6 +73,7 @@ app.get('/debug/dbs', async (_req, res) => {
 
 const EVENTS_DB = '3dec3113-f747-49db-b666-8ba1f06c1d3e';
 const PERSONNEL_DB = 'f8044a3d-6c88-4579-bbe0-2d15de3448be';
+const GIG_PAYROLL_DB = '0fe5a34d-07e4-438a-af78-4caa27407e68';
 
 // Generate and update calendar URLs for all personnel
 app.get('/update-calendar-urls', async (req, res) => {
