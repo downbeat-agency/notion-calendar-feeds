@@ -189,7 +189,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
     if (format === 'ics') {
       // Generate ICS calendar with all events
-      const calendar = ical({ name: `${person.properties?.['Full Name']?.formula?.string || 'Personnel'} Calendar` });
+      const calendar = ical({ name: 'My Downbeat Events' });
 
       allCalendarEvents.forEach(event => {
         calendar.createEvent({
