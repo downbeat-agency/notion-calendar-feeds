@@ -150,6 +150,9 @@ app.get('/calendar/:personId', async (req, res) => {
           payrollInfo += '\n'; // Add spacing after position info
         }
 
+        // Debug log the time values
+        console.log(`Event: ${event.event_name}, Start: ${event.event_start}, End: ${event.event_end}`);
+        
         allCalendarEvents.push({
           type: 'main_event',
           title: event.event_name,
