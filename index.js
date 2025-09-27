@@ -236,13 +236,28 @@ app.get('/', async (req, res) => {
 // Debug all events in database (first 10 to see structure)
 app.get('/debug/events', async (req, res) => {
   try {
-    const response = await notion.databases.query({
-      database_id: EVENTS_DB,
-      page_size: 50,
-      sorts: [{ property: 'Event Date', direction: 'descending' }]
-    });
+    // Get first page to start
+    let allResults = [];
+    let hasMore = true;
+    let startCursor = undefined;
+    let pageCount = 0;
+    const maxPages = 10; // Safety limit to avoid infinite loops
+
+    while (hasMore && pageCount < maxPages) {
+      const response = await notion.databases.query({
+        database_id: EVENTS_DB,
+        page_size: 100,
+        sorts: [{ property: 'Event Date', direction: 'descending' }],
+        start_cursor: startCursor
+      });
+      
+      allResults = allResults.concat(response.results);
+      hasMore = response.has_more;
+      startCursor = response.next_cursor;
+      pageCount++;
+    }
     
-    const eventDebug = response.results.map(event => {
+    const eventDebug = allResults.slice(0, 50).map(event => { // Still limit display to 50 for readability
       const props = event.properties;
       return {
         id: event.id,
@@ -254,11 +269,13 @@ app.get('/debug/events', async (req, res) => {
         payrollPersonnelCount: props['Payroll Personnel']?.relation?.length || 0
       };
     });
-    
+
     res.json({
-      totalEventsInDB: response.results.length,
+      totalEventsInDB: allResults.length,
+      totalPagesQueried: pageCount,
       events: eventDebug,
-      hasMore: response.has_more
+      eventsDisplayed: eventDebug.length,
+      hasMore: allResults.length > 50
     });
     
   } catch (error) {
