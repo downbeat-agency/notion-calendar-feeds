@@ -89,12 +89,17 @@ app.get('/calendar/:personId', async (req, res) => {
     // Get Calendar Feed JSON from person's formula property
     const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
     
+    // Also get Hotels JSON if it exists (for testing)
+    const hotelsJson = person.properties?.['Hotels JSON']?.formula?.string;
+    
     // Add comprehensive debugging
     console.log('=== API DEBUG INFO ===');
     console.log('PersonId:', personId);
     console.log('Person Full Name:', person.properties?.['Full Name']?.formula?.string);
     console.log('Raw Calendar Feed JSON length:', calendarFeedJson?.length || 0);
     console.log('Raw Calendar Feed JSON preview (first 500 chars):', calendarFeedJson?.substring(0, 500) || 'NULL');
+    console.log('Hotels JSON length:', hotelsJson?.length || 0);
+    console.log('Hotels JSON preview:', hotelsJson?.substring(0, 200) || 'NULL');
     console.log('Available properties:', Object.keys(person.properties || {}));
     console.log('=== END DEBUG INFO ===');
     
@@ -112,6 +117,17 @@ app.get('/calendar/:personId', async (req, res) => {
 
     // Extract events array
     const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
+
+    // Parse separate Hotels JSON if it exists
+    let hotelsData = null;
+    if (hotelsJson) {
+      try {
+        hotelsData = JSON.parse(hotelsJson);
+        console.log('Parsed Hotels JSON:', hotelsData);
+      } catch (e) {
+        console.warn('Failed to parse Hotels JSON:', e.message);
+      }
+    }
 
     // Process all events into a flat array including main events, flights, and rehearsals
     const allCalendarEvents = [];
@@ -186,9 +202,18 @@ app.get('/calendar/:personId', async (req, res) => {
         });
       }
 
-      // Add hotel events
-      if (event.hotels && Array.isArray(event.hotels)) {
-        event.hotels.forEach(hotel => {
+      // Add hotel events (from event hotels or separate Hotels JSON property)
+      let hotelsToProcess = event.hotels || [];
+      
+      // If we have separate Hotels JSON data, merge it in for this event
+      if (hotelsData && Array.isArray(hotelsData)) {
+        // For now, add all hotels from separate property to each event
+        // Later you can add logic to match hotels to specific events
+        hotelsToProcess = [...hotelsToProcess, ...hotelsData];
+      }
+      
+      if (hotelsToProcess && Array.isArray(hotelsToProcess)) {
+        hotelsToProcess.forEach(hotel => {
           if (hotel.check_in && hotel.check_out) {
             // Parse check-in/check-out dates (handle both ISO format and "May 8, 2026 4:00 PM" format)
             let checkInDate, checkOutDate;
