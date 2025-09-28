@@ -9,6 +9,84 @@ const notion = new Client({ auth: process.env.NOTION_API_KEY });
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
+// Helper function to parse unified date/time format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
+function parseUnifiedDateTime(dateTimeStr) {
+  if (!dateTimeStr || dateTimeStr === null) {
+    return null;
+  }
+
+  // Clean up the string
+  const cleanStr = dateTimeStr.replace(/[']/g, '').trim();
+  
+  // Check if it's the unified format with @
+  if (cleanStr.startsWith('@')) {
+    const match = cleanStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s+→\s+(.+)/i);
+    if (match) {
+      const dateStr = match[1].trim();
+      const startTimeStr = match[2].trim();
+      const endPart = match[3].trim();
+      
+      // Check if end part has a date (for multi-day events)
+      let endTimeStr, endDateStr;
+      const endMatch = endPart.match(/(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))/i);
+      if (endMatch && endMatch[1].toLowerCase().includes(',')) {
+        // Multi-day format: "November 9, 2025 1:00 AM"
+        endDateStr = endMatch[1].trim();
+        endTimeStr = endMatch[2].trim();
+      } else {
+        // Same day format: "12:00 PM"
+        endDateStr = dateStr;
+        endTimeStr = endPart;
+      }
+      
+      try {
+        const startDate = new Date(`${dateStr} ${startTimeStr}`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        
+        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          return {
+            start: startDate.toISOString(),
+            end: endDate.toISOString()
+          };
+        }
+      } catch (e) {
+        console.warn('Failed to parse unified date format:', cleanStr, e);
+      }
+    }
+    
+    // Fallback: try to parse as single date without end time
+    const singleMatch = cleanStr.match(/@(.+)/);
+    if (singleMatch) {
+      try {
+        const date = new Date(singleMatch[1].trim());
+        if (!isNaN(date.getTime())) {
+          return {
+            start: date.toISOString(),
+            end: date.toISOString()
+          };
+        }
+      } catch (e) {
+        console.warn('Failed to parse single date format:', cleanStr, e);
+      }
+    }
+  }
+  
+  // Fallback: try to parse as regular ISO date
+  try {
+    const date = new Date(cleanStr);
+    if (!isNaN(date.getTime())) {
+      return {
+        start: date.toISOString(),
+        end: date.toISOString()
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to parse as ISO date:', cleanStr, e);
+  }
+  
+  return null;
+}
+
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
@@ -134,45 +212,68 @@ app.get('/calendar/:personId', async (req, res) => {
     
     events.forEach(event => {
       // Add main event
-      if (event.event_name && event.event_start) {
-        // Build payroll info for description (put at TOP)
-        let payrollInfo = '';
-        if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
-          event.payroll.forEach(payroll => {
-            payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
-            if (payroll.assignment) {
-              payrollInfo += `Assignment: ${payroll.assignment}\n`;
-            }
-            if (payroll.pay_total) {
-              payrollInfo += `Pay: $${payroll.pay_total}\n`;
-            }
-          });
-          payrollInfo += '\n'; // Add spacing after position info
+      if (event.event_name && (event.event_date || event.event_start)) {
+        // Parse event date/time (prefer new event_date format)
+        let eventTimes = null;
+        if (event.event_date) {
+          eventTimes = parseUnifiedDateTime(event.event_date);
+        } else if (event.event_start) {
+          // Fallback to old format
+          eventTimes = {
+            start: event.event_start,
+            end: event.event_end || event.event_start
+          };
         }
 
-        allCalendarEvents.push({
-          type: 'main_event',
-          title: event.event_name,
-          start: event.event_start,
-          end: event.event_end || event.event_start,
-          description: payrollInfo + (event.general_info || ''),
-          location: event.venue_address || event.venue || '',
-          url: event.notion_url || '',
-          band: event.band || '',
-          mainEvent: event.event_name
+        if (eventTimes) {
+          // Build payroll info for description (put at TOP)
+          let payrollInfo = '';
+          if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
+            event.payroll.forEach(payroll => {
+              payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
+              if (payroll.assignment) {
+                payrollInfo += `Assignment: ${payroll.assignment}\n`;
+              }
+              if (payroll.pay_total) {
+                payrollInfo += `Pay: $${payroll.pay_total}\n`;
+              }
+            });
+            payrollInfo += '\n'; // Add spacing after position info
+          }
+
+          allCalendarEvents.push({
+            type: 'main_event',
+            title: event.event_name,
+            start: eventTimes.start,
+            end: eventTimes.end,
+            description: payrollInfo + (event.general_info || ''),
+            location: event.venue_address || event.venue || '',
+            url: event.notion_url || '',
+            band: event.band || '',
+            mainEvent: event.event_name
         });
       }
-
+    }
+    
       // Add flight events
       if (event.flights && Array.isArray(event.flights)) {
         event.flights.forEach(flight => {
           // Departure flight
           if (flight.departure_time && flight.departure_name) {
+            let departureTimes = parseUnifiedDateTime(flight.departure_time);
+            if (!departureTimes) {
+              // Fallback to old format
+              departureTimes = {
+                start: flight.departure_time,
+                end: flight.departure_arrival_time || flight.departure_time
+              };
+            }
+
             allCalendarEvents.push({
               type: 'flight_departure',
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
-              start: flight.departure_time,
-              end: flight.departure_arrival_time || flight.departure_time,
+              start: departureTimes.start,
+              end: departureTimes.end,
               description: `Confirmation: ${flight.confirmation || 'N/A'}\nAirline: ${flight.departure_airline || 'N/A'}\nFlight: ${flight.departure_flightnumber || 'N/A'}`,
               location: flight.departure_from || 'Airport',
               airline: flight.departure_airline || '',
@@ -184,33 +285,61 @@ app.get('/calendar/:personId', async (req, res) => {
 
           // Return flight
           if (flight.return_time && flight.return_name) {
+            let returnTimes = parseUnifiedDateTime(flight.return_time);
+            if (!returnTimes) {
+              // Fallback to old format
+              returnTimes = {
+                start: flight.return_time,
+                end: flight.return_arrival_time || flight.return_time
+              };
+            }
+
             allCalendarEvents.push({
               type: 'flight_return',
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
-              start: flight.return_time,
-              end: flight.return_arrival_time || flight.return_time,
+              start: returnTimes.start,
+              end: returnTimes.end,
               description: `Confirmation: ${flight.confirmation || 'N/A'}\nAirline: ${flight.return_airline || 'N/A'}\nFlight: ${flight.return_flightnumber || 'N/A'}`,
               location: flight.return_from || 'Airport',
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
               mainEvent: event.event_name
-            });
-          }
-        });
+    });
+  }
+});
       }
 
       // Add rehearsal events
       if (event.rehearsals && Array.isArray(event.rehearsals)) {
         event.rehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
+            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+            if (!rehearsalTimes) {
+              // Fallback: treat as single time point
+              rehearsalTimes = {
+                start: rehearsal.rehearsal_time,
+                end: rehearsal.rehearsal_time
+              };
+            }
+
+            // Build location string
+            let location = 'TBD';
+            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
+              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
+            } else if (rehearsal.rehearsal_location) {
+              location = rehearsal.rehearsal_location;
+            } else if (rehearsal.rehearsal_address) {
+              location = rehearsal.rehearsal_address;
+            }
+
             allCalendarEvents.push({
               type: 'rehearsal',
               title: `🎵 Rehearsal - ${event.event_name}`,
-              start: rehearsal.rehearsal_time,
-              end: rehearsal.rehearsal_time, // Rehearsals typically don't have end times
+              start: rehearsalTimes.start,
+              end: rehearsalTimes.end,
               description: `Rehearsal for ${event.event_name}`,
-              location: rehearsal.rehearsal_address || rehearsal.rehearsal_location || 'TBD',
+              location: location,
               mainEvent: event.event_name
             });
           }
@@ -229,25 +358,30 @@ app.get('/calendar/:personId', async (req, res) => {
       
       if (hotelsToProcess && Array.isArray(hotelsToProcess)) {
         hotelsToProcess.forEach(hotel => {
-          if (hotel.check_in && hotel.check_out) {
-            // Parse check-in/check-out dates (handle both ISO format and "May 8, 2026 4:00 PM" format)
-            let checkInDate, checkOutDate;
-            
+          // Try new dates_booked format first, then fallback to old check_in/check_out
+          let hotelTimes = null;
+          
+          if (hotel.dates_booked) {
+            hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
+          } else if (hotel.check_in && hotel.check_out) {
+            // Fallback to old format
             try {
-              // Try parsing as-is first (for ISO format)
-              checkInDate = new Date(hotel.check_in).toISOString();
-              checkOutDate = new Date(hotel.check_out).toISOString();
+              hotelTimes = {
+                start: new Date(hotel.check_in).toISOString(),
+                end: new Date(hotel.check_out).toISOString()
+              };
             } catch (e) {
-              // If parsing fails, skip this hotel
               console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
               return;
             }
+          }
 
+          if (hotelTimes) {
             allCalendarEvents.push({
               type: 'hotel',
               title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
-              start: checkInDate,
-              end: checkOutDate,
+              start: hotelTimes.start,
+              end: hotelTimes.end,
               description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation: ${hotel.names_on_reservation || 'N/A'}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
               location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
               url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
@@ -259,7 +393,7 @@ app.get('/calendar/:personId', async (req, res) => {
         });
       }
     });
-
+    
     if (format === 'ics') {
       // Generate ICS calendar with all events
       const calendar = ical({ name: 'My Downbeat Events' });
@@ -293,7 +427,7 @@ app.get('/calendar/:personId', async (req, res) => {
       },
       events: allCalendarEvents
     });
-
+    
   } catch (error) {
     console.error('Calendar generation error:', error);
     res.status(500).json({ error: 'Error generating calendar' });
