@@ -401,13 +401,18 @@ app.get('/calendar/:personId', async (req, res) => {
       const calendar = ical({ name: 'My Downbeat Events' });
 
       allCalendarEvents.forEach(event => {
+        // Create Date objects but treat them as local time (no timezone conversion)
+        const startDate = new Date(event.start);
+        const endDate = new Date(event.end);
+        
         calendar.createEvent({
-          start: new Date(event.start),
-          end: new Date(event.end),
+          start: startDate,
+          end: endDate,
           summary: event.title,
           description: event.description,
           location: event.location,
-          url: event.url || ''
+          url: event.url || '',
+          timezone: 'America/Los_Angeles' // Explicitly set Pacific timezone
         });
       });
 
