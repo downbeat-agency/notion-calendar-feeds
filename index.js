@@ -44,9 +44,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          // Return local date strings without UTC conversion
           return {
-            start: startDate.toISOString(),
-            end: endDate.toISOString()
+            start: `${dateStr} ${startTimeStr}`,
+            end: `${endDateStr} ${endTimeStr}`
           };
         }
       } catch (e) {
@@ -58,11 +59,12 @@ function parseUnifiedDateTime(dateTimeStr) {
     const singleMatch = cleanStr.match(/@(.+)/);
     if (singleMatch) {
       try {
-        const date = new Date(singleMatch[1].trim());
+        const dateStr = singleMatch[1].trim();
+        const date = new Date(dateStr);
         if (!isNaN(date.getTime())) {
           return {
-            start: date.toISOString(),
-            end: date.toISOString()
+            start: dateStr,
+            end: dateStr
           };
         }
       } catch (e) {
@@ -76,8 +78,8 @@ function parseUnifiedDateTime(dateTimeStr) {
     const date = new Date(cleanStr);
     if (!isNaN(date.getTime())) {
       return {
-        start: date.toISOString(),
-        end: date.toISOString()
+        start: cleanStr,
+        end: cleanStr
       };
     }
   } catch (e) {
@@ -364,11 +366,11 @@ app.get('/calendar/:personId', async (req, res) => {
           if (hotel.dates_booked) {
             hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
           } else if (hotel.check_in && hotel.check_out) {
-            // Fallback to old format
+            // Fallback to old format - keep local time
             try {
               hotelTimes = {
-                start: new Date(hotel.check_in).toISOString(),
-                end: new Date(hotel.check_out).toISOString()
+                start: hotel.check_in,
+                end: hotel.check_out
               };
             } catch (e) {
               console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
