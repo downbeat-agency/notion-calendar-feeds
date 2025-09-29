@@ -31,7 +31,7 @@ function convertToPacific(isoString) {
   }
 }
 
-// Helper function to parse unified date/time format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM" (RESTART VERSION)
+// Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
     return null;
@@ -66,7 +66,7 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-          // Return Date objects (same as new ISO format)
+          // Return Date objects
           return {
             start: startDate,
             end: endDate
@@ -235,27 +235,17 @@ app.get('/calendar/:personId', async (req, res) => {
     const allCalendarEvents = [];
     
     events.forEach(event => {
-      // Add main event
-      if (event.event_name && (event.event_start || event.event_date)) {
-        // Parse event date/time (prefer new ISO 8601 format)
-        let eventTimes = null;
-        if (event.event_start && event.event_end) {
-          // New ISO 8601 format with timezone offset - already in Pacific time
-          const startPacific = convertToPacific(event.event_start);
-          const endPacific = convertToPacific(event.event_end);
-          
-          if (startPacific && endPacific) {
-            eventTimes = {
-              start: startPacific,
-              end: endPacific
-            };
-          }
-        } else if (event.event_date) {
-          // Fallback to old @ format
-          eventTimes = parseUnifiedDateTime(event.event_date);
-        }
-
-        if (eventTimes) {
+      // Add main event (only using new ISO 8601 format)
+      if (event.event_name && event.event_start && event.event_end) {
+        // Parse event date/time using ISO 8601 format with timezone offset
+        const startPacific = convertToPacific(event.event_start);
+        const endPacific = convertToPacific(event.event_end);
+        
+        if (startPacific && endPacific) {
+          const eventTimes = {
+            start: startPacific,
+            end: endPacific
+          };
           // Build payroll info for description (put at TOP)
           let payrollInfo = '';
           if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
@@ -282,9 +272,9 @@ app.get('/calendar/:personId', async (req, res) => {
             band: event.band || '',
             mainEvent: event.event_name
         });
+        }
       }
-    }
-    
+      
       // Add flight events
       if (event.flights && Array.isArray(event.flights)) {
         event.flights.forEach(flight => {
