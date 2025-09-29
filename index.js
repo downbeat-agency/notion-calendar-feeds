@@ -114,7 +114,7 @@ function parseUnifiedDateTime(dateTimeStr) {
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
-    status: 'Calendar Feed Server Running',
+    status: 'Calendar Feed Server Running (Updated)',
     endpoints: {
       calendar: '/calendar/:personId',
       ics: '/calendar/:personId?format=ics',
