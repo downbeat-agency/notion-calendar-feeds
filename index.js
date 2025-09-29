@@ -396,12 +396,18 @@ app.get('/calendar/:personId', async (req, res) => {
               location = rehearsal.rehearsal_address;
             }
 
+            // Build description with band personnel
+            let description = `Rehearsal for ${event.event_name}`;
+            if (rehearsal.rehearsal_band) {
+              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
+            }
+
             allCalendarEvents.push({
               type: 'rehearsal',
               title: `🎤 Rehearsal - ${event.event_name}`,
               start: rehearsalTimes.start,
               end: rehearsalTimes.end,
-              description: `Rehearsal for ${event.event_name}`,
+              description: description,
               location: location,
               mainEvent: event.event_name
             });
