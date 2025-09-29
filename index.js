@@ -223,6 +223,12 @@ app.get('/calendar/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     const format = req.query.format;
+    
+    // Auto-detect format from Accept header for calendar subscriptions
+    const acceptHeader = req.headers.accept || '';
+    const shouldReturnICS = format === 'ics' || 
+                           acceptHeader.includes('text/calendar') || 
+                           acceptHeader.includes('application/calendar');
 
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
@@ -497,9 +503,10 @@ app.get('/calendar/:personId', async (req, res) => {
       }
     });
     
-    if (format === 'ics') {
+    if (shouldReturnICS) {
       // Generate ICS calendar with all events
-      const calendar = ical({ name: 'My Downbeat Events' });
+      const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+      const calendar = ical({ name: `${personName} - Downbeat Events` });
 
       allCalendarEvents.forEach(event => {
         // event.start and event.end are already Date objects for new format
