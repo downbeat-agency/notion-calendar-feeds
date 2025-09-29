@@ -62,8 +62,9 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        const startDate = new Date(`${dateStr} ${startTimeStr}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        // Create dates in Pacific timezone to avoid UTC conversion issues
+        const startDate = new Date(`${dateStr} ${startTimeStr} PST`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr} PST`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           // Return Date objects
@@ -82,7 +83,7 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(dateStr);
+        const date = new Date(`${dateStr} PST`);
         if (!isNaN(date.getTime())) {
           return {
             start: date,
