@@ -408,11 +408,15 @@ app.get('/calendar/:personId', async (req, res) => {
               };
             }
 
+            // For ground transport, make events 30 minutes long
+            const startTime = new Date(transportTimes.start);
+            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
+
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
               title: `🚗 ${transport.title || 'Ground Transport'}`,
-              start: transportTimes.start,
-              end: transportTimes.end,
+              start: startTime.toISOString(),
+              end: endTime.toISOString(),
               description: transport.description || 'Ground transportation details',
               location: transport.location || '',
               mainEvent: event.event_name
