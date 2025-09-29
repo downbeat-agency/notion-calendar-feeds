@@ -31,6 +31,19 @@ function convertToPacific(isoString) {
   }
 }
 
+// Helper function to determine Pacific timezone offset
+function getPacificOffset(date) {
+  // Simple check: March 9 to November 2, 2025 should be PDT (UTC-7)
+  // This is a simplified check - in production you'd want a proper timezone library
+  const month = date.getMonth() + 1; // getMonth() is 0-based
+  const day = date.getDate();
+  
+  if (month > 3 && month < 11) return '-07:00'; // PDT
+  if (month === 3 && day >= 9) return '-07:00'; // PDT
+  if (month === 11 && day <= 2) return '-07:00'; // PDT
+  return '-08:00'; // PST
+}
+
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -62,11 +75,15 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        const startDate = new Date(`${dateStr} ${startTimeStr}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        // Create a temporary date to determine timezone offset
+        const tempDate = new Date(`${dateStr} ${startTimeStr}`);
+        const offset = getPacificOffset(tempDate);
+        
+        // Create dates with explicit Pacific timezone offset
+        const startDate = new Date(`${dateStr} ${startTimeStr}${offset}`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr}${offset}`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-          // Return Date objects (same as rehearsal logic)
           return {
             start: startDate,
             end: endDate
@@ -82,7 +99,9 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(dateStr);
+        const tempDate = new Date(dateStr);
+        const offset = getPacificOffset(tempDate);
+        const date = new Date(`${dateStr}${offset}`);
         if (!isNaN(date.getTime())) {
           return {
             start: date,
