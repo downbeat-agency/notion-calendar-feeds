@@ -9,7 +9,7 @@ const notion = new Client({ auth: process.env.NOTION_API_KEY });
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
-// Helper function to convert timezone-aware ISO 8601 to Pacific time
+// Helper function to convert timezone-aware ISO 8601 to Pacific time (updated)
 function convertToPacific(isoString) {
   if (!isoString) return null;
   
