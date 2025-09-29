@@ -246,8 +246,8 @@ app.get('/calendar/:personId', async (req, res) => {
           
           if (startPacific && endPacific) {
             eventTimes = {
-              start: startPacific.toISOString(),
-              end: endPacific.toISOString()
+              start: startPacific,
+              end: endPacific
             };
           }
         } else if (event.event_date) {
@@ -463,9 +463,10 @@ app.get('/calendar/:personId', async (req, res) => {
       const calendar = ical({ name: 'My Downbeat Events' });
 
       allCalendarEvents.forEach(event => {
-        // Create Date objects from the ISO strings
-        const startDate = new Date(event.start);
-        const endDate = new Date(event.end);
+        // event.start and event.end are already Date objects for new format
+        // or strings for old format
+        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
         
         calendar.createEvent({
           start: startDate,
