@@ -101,8 +101,20 @@ function parseUnifiedDateTime(dateTimeStr) {
         const isPDT = startMonth >= 2 && startMonth <= 10; // March to November
         const offsetHours = isPDT ? 7 : 8; // PDT is UTC-7, PST is UTC-8
         
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
+        // Check if adding the offset will cross midnight and adjust the date accordingly
+        let adjustedStartDay = startDay;
+        let adjustedEndDay = endDay;
+        
+        // If the hour + offset >= 24, we need to move to the next day
+        if (startHour + offsetHours >= 24) {
+          adjustedStartDay = startDay + 1;
+        }
+        if (endHour + offsetHours >= 24) {
+          adjustedEndDay = endDay + 1;
+        }
+        
+        const startDate = new Date(Date.UTC(startYear, startMonth, adjustedStartDay, (startHour + offsetHours) % 24, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, adjustedEndDay, (endHour + offsetHours) % 24, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
