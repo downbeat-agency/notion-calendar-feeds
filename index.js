@@ -404,7 +404,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
             allCalendarEvents.push({
               type: 'rehearsal',
-              title: `🎤 Rehearsal - ${event.event_name}`,
+              title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
               start: rehearsalTimes.start,
               end: rehearsalTimes.end,
               description: description,
