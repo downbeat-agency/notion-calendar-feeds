@@ -235,17 +235,12 @@ app.get('/calendar/:personId', async (req, res) => {
     const allCalendarEvents = [];
     
     events.forEach(event => {
-      // Add main event (only using new ISO 8601 format)
-      if (event.event_name && event.event_start && event.event_end) {
-        // Parse event date/time using ISO 8601 format with timezone offset
-        const startPacific = convertToPacific(event.event_start);
-        const endPacific = convertToPacific(event.event_end);
+      // Add main event (using same logic as rehearsals)
+      if (event.event_name && event.event_date) {
+        // Parse event date/time using the same logic as rehearsal_time
+        let eventTimes = parseUnifiedDateTime(event.event_date);
         
-        if (startPacific && endPacific) {
-          const eventTimes = {
-            start: startPacific,
-            end: endPacific
-          };
+        if (eventTimes) {
           // Build payroll info for description (put at TOP)
           let payrollInfo = '';
           if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
