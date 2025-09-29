@@ -75,21 +75,30 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Create dates that represent the correct Pacific times in UTC
-        // We need to create UTC dates that, when interpreted as local time, show the correct Pacific times
+        // Create UTC dates that represent the correct Pacific times
+        // We need to create dates that, when interpreted as local time, show the correct Pacific times
         
-        // Parse the date and time components
+        // Parse the date and time components manually
         const startDateObj = new Date(`${dateStr} ${startTimeStr}`);
         const endDateObj = new Date(`${endDateStr} ${endTimeStr}`);
         
-        // Create UTC dates that represent the Pacific times
-        // For Pacific time, we need to subtract the timezone offset to get UTC
-        const isPDT = startDateObj.getMonth() >= 2 && startDateObj.getMonth() <= 10; // March to November
-        const offsetHours = isPDT ? 7 : 8; // PDT is UTC-7, PST is UTC-8
+        // Create UTC dates by manually constructing them
+        // For Pacific time, we need to create UTC dates that represent the Pacific times
+        const startYear = startDateObj.getFullYear();
+        const startMonth = startDateObj.getMonth();
+        const startDay = startDateObj.getDate();
+        const startHour = startDateObj.getHours();
+        const startMinute = startDateObj.getMinutes();
         
-        // Create UTC dates by subtracting the timezone offset
-        const startDate = new Date(startDateObj.getTime() - (offsetHours * 60 * 60 * 1000));
-        const endDate = new Date(endDateObj.getTime() - (offsetHours * 60 * 60 * 1000));
+        const endYear = endDateObj.getFullYear();
+        const endMonth = endDateObj.getMonth();
+        const endDay = endDateObj.getDate();
+        const endHour = endDateObj.getHours();
+        const endMinute = endDateObj.getMinutes();
+        
+        // Create UTC dates that represent the Pacific times
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
