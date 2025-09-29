@@ -75,13 +75,21 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Create a temporary date to determine timezone offset
-        const tempDate = new Date(`${dateStr} ${startTimeStr}`);
-        const offset = getPacificOffset(tempDate);
+        // Create dates that represent the correct Pacific times in UTC
+        // We need to create UTC dates that, when interpreted as local time, show the correct Pacific times
         
-        // Create dates with explicit Pacific timezone offset
-        const startDate = new Date(`${dateStr} ${startTimeStr}${offset}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}${offset}`);
+        // Parse the date and time components
+        const startDateObj = new Date(`${dateStr} ${startTimeStr}`);
+        const endDateObj = new Date(`${endDateStr} ${endTimeStr}`);
+        
+        // Create UTC dates that represent the Pacific times
+        // For Pacific time, we need to subtract the timezone offset to get UTC
+        const isPDT = startDateObj.getMonth() >= 2 && startDateObj.getMonth() <= 10; // March to November
+        const offsetHours = isPDT ? 7 : 8; // PDT is UTC-7, PST is UTC-8
+        
+        // Create UTC dates by subtracting the timezone offset
+        const startDate = new Date(startDateObj.getTime() - (offsetHours * 60 * 60 * 1000));
+        const endDate = new Date(endDateObj.getTime() - (offsetHours * 60 * 60 * 1000));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -478,8 +486,8 @@ app.get('/calendar/:personId', async (req, res) => {
           summary: event.title,
           description: event.description,
           location: event.location,
-          url: event.url || '',
-          timezone: 'America/Los_Angeles' // Explicitly set Pacific timezone
+          url: event.url || ''
+          // No timezone - let calendar apps interpret UTC times as local
         });
       });
 
