@@ -412,9 +412,13 @@ app.get('/calendar/:personId', async (req, res) => {
             const startTime = new Date(transportTimes.start);
             const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
 
+            // Format title to replace PICKUP/DROPOFF with proper capitalization
+            let formattedTitle = transport.title || 'Ground Transport';
+            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:');
+
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
-              title: `🚗 ${transport.title || 'Ground Transport'}`,
+              title: `🚗 ${formattedTitle}`,
               start: startTime.toISOString(),
               end: endTime.toISOString(),
               description: transport.description || 'Ground transportation details',
