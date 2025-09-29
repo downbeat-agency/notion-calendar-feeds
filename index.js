@@ -343,9 +343,9 @@ app.get('/calendar/:personId', async (req, res) => {
               description: `Rehearsal for ${event.event_name}`,
               location: location,
               mainEvent: event.event_name
-            });
-          }
-        });
+    });
+  }
+});
       }
 
       // Add hotel events (from event hotels or separate Hotels JSON property)
@@ -410,7 +410,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
-              title: transport.title || 'Ground Transport',
+              title: `🚗 ${transport.title || 'Ground Transport'}`,
               start: transportTimes.start,
               end: transportTimes.end,
               description: transport.description || 'Ground transportation details',
