@@ -105,11 +105,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
         const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
         
-        // If the original time was 5 PM or later, subtract 24 hours to keep it on the same day
-        if (startHour >= 17) { // 5 PM = 17:00
+        // If the original START time was 5 PM or later, subtract 24 hours to keep it on the same day
+        // This prevents events from shifting to the next day when converted to UTC
+        if (startHour >= 17) { // Start time is 5 PM or later
           startDate.setUTCHours(startDate.getUTCHours() - 24);
-        }
-        if (endHour >= 17) { // 5 PM = 17:00
           endDate.setUTCHours(endDate.getUTCHours() - 24);
         }
         
