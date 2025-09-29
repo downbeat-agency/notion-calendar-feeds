@@ -337,13 +337,13 @@ app.get('/calendar/:personId', async (req, res) => {
 
             allCalendarEvents.push({
               type: 'rehearsal',
-              title: `🎵 Rehearsal - ${event.event_name}`,
+              title: `🎤 Rehearsal - ${event.event_name}`,
               start: rehearsalTimes.start,
               end: rehearsalTimes.end,
               description: `Rehearsal for ${event.event_name}`,
               location: location,
               mainEvent: event.event_name
-    });
+            });
   }
 });
       }
