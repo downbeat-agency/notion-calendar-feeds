@@ -394,6 +394,32 @@ app.get('/calendar/:personId', async (req, res) => {
           }
         });
       }
+
+      // Add ground transport events
+      if (event.ground_transport && Array.isArray(event.ground_transport)) {
+        event.ground_transport.forEach(transport => {
+          if (transport.start && transport.end) {
+            let transportTimes = parseUnifiedDateTime(transport.start);
+            if (!transportTimes) {
+              // Fallback: treat as single time point
+              transportTimes = {
+                start: transport.start,
+                end: transport.end || transport.start
+              };
+            }
+
+            allCalendarEvents.push({
+              type: transport.type || 'ground_transport',
+              title: transport.title || 'Ground Transport',
+              start: transportTimes.start,
+              end: transportTimes.end,
+              description: transport.description || 'Ground transportation details',
+              location: transport.location || '',
+              mainEvent: event.event_name
+            });
+          }
+        });
+      }
     });
     
     if (format === 'ics') {
@@ -430,7 +456,8 @@ app.get('/calendar/:personId', async (req, res) => {
         mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
         rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
-        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length
+        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport').length
       },
       events: allCalendarEvents
     });
