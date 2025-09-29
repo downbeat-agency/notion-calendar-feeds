@@ -245,7 +245,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
           allCalendarEvents.push({
             type: 'main_event',
-            title: event.event_name,
+            title: `🎸 ${event.event_name}`,
             start: eventTimes.start,
             end: eventTimes.end,
             description: payrollInfo + (event.general_info || ''),
@@ -418,7 +418,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
-              title: `🚗 ${formattedTitle}`,
+              title: `🚙 ${formattedTitle}`,
               start: startTime.toISOString(),
               end: endTime.toISOString(),
               description: transport.description || 'Ground transportation details',
