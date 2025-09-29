@@ -62,15 +62,21 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Create dates in Pacific timezone to avoid UTC conversion issues
-        const startDate = new Date(`${dateStr} ${startTimeStr} PST`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr} PST`);
+        // Create dates and adjust for Pacific timezone
+        const startDate = new Date(`${dateStr} ${startTimeStr}`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        // Adjust for Pacific timezone offset (UTC-8 for PST, UTC-7 for PDT)
+        // We'll assume PST for now and let the calendar handle DST
+        const pacificOffset = 8 * 60; // 8 hours in minutes
+        const adjustedStart = new Date(startDate.getTime() + (pacificOffset * 60 * 1000));
+        const adjustedEnd = new Date(endDate.getTime() + (pacificOffset * 60 * 1000));
+        
+        if (!isNaN(adjustedStart.getTime()) && !isNaN(adjustedEnd.getTime())) {
           // Return Date objects
           return {
-            start: startDate,
-            end: endDate
+            start: adjustedStart,
+            end: adjustedEnd
           };
         }
       } catch (e) {
@@ -83,11 +89,14 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(`${dateStr} PST`);
-        if (!isNaN(date.getTime())) {
+        const date = new Date(dateStr);
+        // Adjust for Pacific timezone offset
+        const pacificOffset = 8 * 60; // 8 hours in minutes
+        const adjustedDate = new Date(date.getTime() + (pacificOffset * 60 * 1000));
+        if (!isNaN(adjustedDate.getTime())) {
           return {
-            start: date,
-            end: date
+            start: adjustedDate,
+            end: adjustedDate
           };
         }
       } catch (e) {
