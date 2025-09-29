@@ -306,7 +306,7 @@ app.get('/calendar/:personId', async (req, res) => {
 
           allCalendarEvents.push({
             type: 'main_event',
-            title: `🎸 ${event.event_name}`,
+            title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
             description: payrollInfo + (event.general_info || ''),
