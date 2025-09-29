@@ -66,10 +66,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-          // Return local date strings without UTC conversion
+          // Return Date objects (same as new ISO format)
           return {
-            start: `${dateStr} ${startTimeStr}`,
-            end: `${endDateStr} ${endTimeStr}`
+            start: startDate,
+            end: endDate
           };
         }
       } catch (e) {
@@ -85,8 +85,8 @@ function parseUnifiedDateTime(dateTimeStr) {
         const date = new Date(dateStr);
         if (!isNaN(date.getTime())) {
           return {
-            start: dateStr,
-            end: dateStr
+            start: date,
+            end: date
           };
         }
       } catch (e) {
@@ -100,8 +100,8 @@ function parseUnifiedDateTime(dateTimeStr) {
     const date = new Date(cleanStr);
     if (!isNaN(date.getTime())) {
       return {
-        start: cleanStr,
-        end: cleanStr
+        start: date,
+        end: date
       };
     }
   } catch (e) {
