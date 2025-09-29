@@ -9,6 +9,28 @@ const notion = new Client({ auth: process.env.NOTION_API_KEY });
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
+// Helper function to convert timezone-aware ISO 8601 to Pacific time
+function convertToPacific(isoString) {
+  if (!isoString) return null;
+  
+  try {
+    // Parse the ISO string with timezone offset (e.g., -07:00, -08:00)
+    const date = new Date(isoString);
+    
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date string:', isoString);
+      return null;
+    }
+    
+    // The date is already correctly parsed with timezone information
+    // Just return it as-is since it's already in the correct timezone
+    return date;
+  } catch (e) {
+    console.warn('Failed to parse ISO date:', isoString, e);
+    return null;
+  }
+}
+
 // Helper function to parse unified date/time format: "@Month DD, YYYY H:MM AM/PM → H:MM AM/PM"
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -214,17 +236,23 @@ app.get('/calendar/:personId', async (req, res) => {
     
     events.forEach(event => {
       // Add main event
-      if (event.event_name && (event.event_date || event.event_start)) {
-        // Parse event date/time (prefer new event_date format)
+      if (event.event_name && (event.event_start || event.event_date)) {
+        // Parse event date/time (prefer new ISO 8601 format)
         let eventTimes = null;
-        if (event.event_date) {
+        if (event.event_start && event.event_end) {
+          // New ISO 8601 format with timezone offset - already in Pacific time
+          const startPacific = convertToPacific(event.event_start);
+          const endPacific = convertToPacific(event.event_end);
+          
+          if (startPacific && endPacific) {
+            eventTimes = {
+              start: startPacific.toISOString(),
+              end: endPacific.toISOString()
+            };
+          }
+        } else if (event.event_date) {
+          // Fallback to old @ format
           eventTimes = parseUnifiedDateTime(event.event_date);
-        } else if (event.event_start) {
-          // Fallback to old format
-          eventTimes = {
-            start: event.event_start,
-            end: event.event_end || event.event_start
-          };
         }
 
         if (eventTimes) {
@@ -435,7 +463,7 @@ app.get('/calendar/:personId', async (req, res) => {
       const calendar = ical({ name: 'My Downbeat Events' });
 
       allCalendarEvents.forEach(event => {
-        // Create Date objects but treat them as local time (no timezone conversion)
+        // Create Date objects from the ISO strings
         const startDate = new Date(event.start);
         const endDate = new Date(event.end);
         
