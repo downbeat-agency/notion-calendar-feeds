@@ -96,9 +96,13 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // Create UTC dates that represent the Pacific times
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour, endMinute));
+        // Create UTC dates that, when interpreted as local time, show the correct Pacific times
+        // We need to add the timezone offset to get UTC times that represent Pacific times
+        const isPDT = startMonth >= 2 && startMonth <= 10; // March to November
+        const offsetHours = isPDT ? 7 : 8; // PDT is UTC-7, PST is UTC-8
+        
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
