@@ -164,6 +164,7 @@ app.get('/', (_req, res) => {
   res.json({
     status: 'Calendar Feed Server Running (Updated)',
     endpoints: {
+      subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
       ics: '/calendar/:personId?format=ics',
       debug: '/debug/simple-test/:personId'
@@ -215,6 +216,104 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
   } catch (error) {
     console.error('Simple test error:', error);
     res.status(500).json({ error: 'Error in simple test', details: error.message });
+  }
+});
+
+// Calendar subscription endpoint with proper headers
+app.get('/subscribe/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+    
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Get person from Personnel database
+    const person = await notion.pages.retrieve({ page_id: personId });
+    
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+
+    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const subscriptionUrl = `${req.protocol}://${req.get('host')}/calendar/${personId}`;
+    
+    // Check if this is a calendar app request
+    const userAgent = req.headers['user-agent'] || '';
+    const isCalendarApp = userAgent.toLowerCase().includes('calendar') || 
+                         userAgent.toLowerCase().includes('caldav') ||
+                         req.headers.accept?.includes('text/calendar');
+    
+    if (isCalendarApp) {
+      // Redirect calendar apps directly to the calendar feed
+      return res.redirect(302, `/calendar/${personId}`);
+    }
+    
+    // For web browsers, show a subscription page with instructions
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Subscribe to ${personName}'s Calendar</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; margin-bottom: 20px; }
+        .url-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; margin: 20px 0; word-break: break-all; font-family: monospace; }
+        .copy-btn { background: #007AFF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin: 10px 0; }
+        .copy-btn:hover { background: #0056b3; }
+        .instructions { background: #e7f3ff; padding: 15px; border-radius: 8px; border-left: 4px solid #007AFF; margin: 20px 0; }
+        .app-links { display: flex; gap: 10px; margin: 20px 0; }
+        .app-link { flex: 1; padding: 12px; text-align: center; background: #007AFF; color: white; text-decoration: none; border-radius: 6px; }
+        .app-link:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📅 Subscribe to ${personName}'s Calendar</h1>
+        
+        <div class="instructions">
+            <strong>Quick Subscribe:</strong> Click one of the buttons below to automatically open your calendar app with this calendar pre-loaded.
+        </div>
+        
+        <div class="app-links">
+            <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">📱 Mobile Calendar</a>
+            <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
+        </div>
+        
+        <p><strong>Or copy this URL manually:</strong></p>
+        <div class="url-box" id="urlBox">${subscriptionUrl}</div>
+        <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
+        
+        <div class="instructions">
+            <strong>Manual Instructions:</strong><br>
+            • <strong>iPhone/Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br>
+            • <strong>Android/Google Calendar:</strong> Copy URL → Google Calendar → Settings → Add calendar → From URL → Paste URL<br>
+            • <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
+        </div>
+    </div>
+    
+    <script>
+        function copyUrl() {
+            const urlBox = document.getElementById('urlBox');
+            navigator.clipboard.writeText(urlBox.textContent).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => btn.textContent = originalText, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
+    `);
+    
+  } catch (error) {
+    console.error('Subscription page error:', error);
+    res.status(500).json({ error: 'Error loading subscription page' });
   }
 });
 
