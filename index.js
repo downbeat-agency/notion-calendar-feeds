@@ -588,12 +588,46 @@ app.get('/calendar/:personId', async (req, res) => {
             let formattedTitle = transport.title || 'Ground Transport';
             formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:');
 
+            // Build description with formatted driver and passenger lists
+            let description = '';
+            
+            // Add driver info
+            if (transport.description) {
+              // Extract driver and passenger info from description
+              const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+              const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              
+              if (driverMatch) {
+                description += `Driver: ${driverMatch[1]}\n\n`;
+              }
+              
+              if (passengerMatch) {
+                // Split passengers by comma and format each on a new line
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p);
+                if (passengers.length > 0) {
+                  description += 'Passengers:\n';
+                  passengers.forEach(passenger => {
+                    description += `• ${passenger}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              
+              // Add confirmation info if present
+              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
+              if (confirmationMatch) {
+                description += `Confirmation: ${confirmationMatch[1]}\n`;
+              }
+            } else {
+              description = 'Ground transportation details';
+            }
+
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
               title: `🚙 ${formattedTitle}`,
               start: startTime.toISOString(),
               end: endTime.toISOString(),
-              description: transport.description || 'Ground transportation details',
+              description: description.trim(),
               location: transport.location || '',
               mainEvent: event.event_name
             });
