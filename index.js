@@ -96,10 +96,21 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // Use the times directly without timezone conversion
-        // This ensures the calendar displays the exact times from the JSON
-        const startDate = new Date(startYear, startMonth, startDay, startHour, startMinute);
-        const endDate = new Date(endYear, endMonth, endDay, endHour, endMinute);
+        // Create UTC dates that, when interpreted as local time, show the correct Pacific times
+        // We need to add the timezone offset to get UTC times that represent Pacific times
+        const isPDT = startMonth >= 2 && startMonth <= 10; // March to November
+        const offsetHours = isPDT ? 7 : 8; // PDT is UTC-7, PST is UTC-8
+        
+        // Convert to UTC normally first
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
+        
+        // If the original START time was 5 PM or later, subtract 24 hours to keep it on the same day
+        // This prevents events from shifting to the next day when converted to UTC
+        if (startHour >= 17) { // Start time is 5 PM or later
+          startDate.setUTCHours(startDate.getUTCHours() - 24);
+          endDate.setUTCHours(endDate.getUTCHours() - 24);
+        }
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -570,23 +581,8 @@ app.get('/calendar/:personId', async (req, res) => {
             }
 
             // For ground transport, make events 30 minutes long
-            // Parse the start time directly without timezone conversion
-            let startTime, endTime;
-            if (transport.start && transport.start.startsWith('@')) {
-              // Parse the @ format time directly
-              const parsed = parseUnifiedDateTime(transport.start);
-              if (parsed) {
-                startTime = parsed.start;
-                endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
-              } else {
-                // Fallback to direct parsing
-                startTime = new Date(transport.start.replace('@', ''));
-                endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
-              }
-            } else {
-              startTime = new Date(transportTimes.start);
-              endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
-            }
+            const startTime = new Date(transportTimes.start);
+            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
 
             // Format title to replace PICKUP/DROPOFF with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
@@ -628,9 +624,35 @@ app.get('/calendar/:personId', async (req, res) => {
                   driverInfoLines.forEach(line => {
                     const trimmedLine = line.trim();
                     if (trimmedLine) {
-                      // Check if line already has a colon (like "Vehicle Type: Black Passenger Sprinter")
-                      if (trimmedLine.includes(':')) {
-                        description += `• ${trimmedLine}\n`;
+                      // Check if this line contains a date/time that needs parsing
+                      const dateTimeMatch = trimmedLine.match(/(.+?):\s*(.+)/);
+                      if (dateTimeMatch) {
+                        const label = dateTimeMatch[1];
+                        const timeStr = dateTimeMatch[2];
+                        
+                        // Check if this looks like a date/time (contains MM/DD/YYYY and AM/PM)
+                        if (timeStr.match(/\d{2}\/\d{2}\/\d{4}.*(?:AM|PM)/i)) {
+                          // Parse the time using the same logic as ground transport
+                          const parsed = parseUnifiedDateTime(`@${timeStr}`);
+                          if (parsed) {
+                            // Format the time nicely for display
+                            const timeDisplay = parsed.start.toLocaleString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              hour12: true,
+                              timeZone: 'America/Los_Angeles'
+                            });
+                            description += `• ${label}: ${timeDisplay}\n`;
+                          } else {
+                            description += `• ${trimmedLine}\n`;
+                          }
+                        } else {
+                          description += `• ${trimmedLine}\n`;
+                        }
                       } else {
                         description += `• ${trimmedLine}\n`;
                       }
@@ -651,9 +673,35 @@ app.get('/calendar/:personId', async (req, res) => {
                   passengerInfoLines.forEach(line => {
                     const trimmedLine = line.trim();
                     if (trimmedLine) {
-                      // Check if line already has a colon (like "Meetup Location: Sierra Madre Villa")
-                      if (trimmedLine.includes(':')) {
-                        description += `• ${trimmedLine}\n`;
+                      // Check if this line contains a date/time that needs parsing
+                      const dateTimeMatch = trimmedLine.match(/(.+?):\s*(.+)/);
+                      if (dateTimeMatch) {
+                        const label = dateTimeMatch[1];
+                        const timeStr = dateTimeMatch[2];
+                        
+                        // Check if this looks like a date/time (contains MM/DD/YYYY and AM/PM)
+                        if (timeStr.match(/\d{2}\/\d{2}\/\d{4}.*(?:AM|PM)/i)) {
+                          // Parse the time using the same logic as ground transport
+                          const parsed = parseUnifiedDateTime(`@${timeStr}`);
+                          if (parsed) {
+                            // Format the time nicely for display
+                            const timeDisplay = parsed.start.toLocaleString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              hour12: true,
+                              timeZone: 'America/Los_Angeles'
+                            });
+                            description += `• ${label}: ${timeDisplay}\n`;
+                          } else {
+                            description += `• ${trimmedLine}\n`;
+                          }
+                        } else {
+                          description += `• ${trimmedLine}\n`;
+                        }
                       } else {
                         description += `• ${trimmedLine}\n`;
                       }
