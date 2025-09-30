@@ -733,6 +733,62 @@ app.get('/calendar/:personId', async (req, res) => {
               location: transport.location || '',
               mainEvent: event.event_name
             });
+
+            // Check if there's a meetup location in Passenger Info and create separate meetup event
+            if (transport.description) {
+              const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+              if (passengerInfoMatch) {
+                const passengerInfo = passengerInfoMatch[1].trim();
+                
+                // Extract meetup location and time
+                const meetupLocationMatch = passengerInfo.match(/Meetup Location:\s*([^\n]+)/);
+                const meetupTimeMatch = passengerInfo.match(/Meetup Time:\s*([^\n]+)/);
+                
+                // Find address (usually the line after meetup location)
+                const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
+                let meetupAddress = '';
+                if (meetupLocationMatch) {
+                  const locationLineIndex = passengerInfoLines.findIndex(line => line.includes('Meetup Location:'));
+                  if (locationLineIndex >= 0 && locationLineIndex + 1 < passengerInfoLines.length) {
+                    const nextLine = passengerInfoLines[locationLineIndex + 1].trim();
+                    // Check if next line looks like an address (contains numbers, street, city, state)
+                    if (nextLine.match(/\d+.*(?:St|Ave|Blvd|Rd|Dr|Way).*(?:CA|NY|TX|FL)/)) {
+                      meetupAddress = nextLine;
+                    }
+                  }
+                }
+                
+                if (meetupLocationMatch && meetupTimeMatch) {
+                  const meetupLocation = meetupLocationMatch[1].trim();
+                  const meetupTime = meetupTimeMatch[1].trim();
+                  
+                  // Parse the meetup time using the same logic as ground transport
+                  const parsedMeetupTime = parseUnifiedDateTime(`@${meetupTime}`);
+                  if (parsedMeetupTime) {
+                    const meetupStartTime = parsedMeetupTime.start;
+                    const meetupEndTime = new Date(meetupStartTime.getTime() + 30 * 60 * 1000); // 30 minutes
+                    
+                    // Create meetup event description
+                    let meetupDescription = `Meetup Location: ${meetupLocation}\n`;
+                    if (meetupAddress) {
+                      meetupDescription += `Address: ${meetupAddress}\n`;
+                    }
+                    meetupDescription += `\nBand members should meet here for pickup.`;
+                    
+                    // Add the meetup event
+                    allCalendarEvents.push({
+                      type: 'meetup',
+                      title: `🚌 Meetup: Band (${event.event_name})`,
+                      start: meetupStartTime.toISOString(),
+                      end: meetupEndTime.toISOString(),
+                      description: meetupDescription,
+                      location: meetupAddress || meetupLocation,
+                      mainEvent: event.event_name
+                    });
+                  }
+                }
+              }
+            }
           }
         });
       }
