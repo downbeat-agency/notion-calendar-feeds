@@ -652,7 +652,7 @@ app.get('/calendar/:personId', async (req, res) => {
             let formattedTitle = transport.title || 'Ground Transport';
             formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
 
-            // Build description based on event type
+            // Build description based on event type using new property structure
             let description = '';
             
             if (transport.description) {
@@ -678,38 +678,55 @@ app.get('/calendar/:personId', async (req, res) => {
                 }
               }
               
-              // Extract Driver Info section
-              const driverInfoMatch = transport.description.match(/Driver Info:\s*([\s\S]*?)(?=\nPassenger Info:|Confirmation:|$)/);
-              if (driverInfoMatch) {
-                const driverInfo = driverInfoMatch[1].trim();
-                if (driverInfo) {
-                  description += 'Driver Info:\n';
-                  // Format driver info with bullet points for each line
-                  const driverInfoLines = driverInfo.split('\n').filter(line => line.trim());
-                  driverInfoLines.forEach(line => {
-                    const trimmedLine = line.trim();
-                    if (trimmedLine) {
-                      // Just display the original text as-is, no time parsing
-                      description += `• ${trimmedLine}\n`;
-                    }
-                  });
-                  description += '\n';
-                }
-              }
-              
-              // Only add Passenger Info section for meeting events (ground_transport_meeting)
+              // Extract event-specific info sections based on event type
               if (transport.type === 'ground_transport_meeting') {
-                const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (passengerInfoMatch) {
-                  const passengerInfo = passengerInfoMatch[1].trim();
-                  if (passengerInfo) {
-                    description += 'Passenger Info:\n';
-                    // Format passenger info with bullet points for each line
-                    const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
-                    passengerInfoLines.forEach(line => {
+                // For meeting events, look for "Meet Up Info" section
+                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (meetupInfoMatch) {
+                  const meetupInfo = meetupInfoMatch[1].trim();
+                  if (meetupInfo) {
+                    description += 'Meet Up Info:\n';
+                    // Format meetup info with bullet points for each line
+                    const meetupInfoLines = meetupInfo.split('\n').filter(line => line.trim());
+                    meetupInfoLines.forEach(line => {
                       const trimmedLine = line.trim();
                       if (trimmedLine) {
-                        // Just display the original text as-is, no time parsing
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_pickup') {
+                // For pickup events, look for "Pick Up Info" section
+                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (pickupInfoMatch) {
+                  const pickupInfo = pickupInfoMatch[1].trim();
+                  if (pickupInfo) {
+                    description += 'Pick Up Info:\n';
+                    // Format pickup info with bullet points for each line
+                    const pickupInfoLines = pickupInfo.split('\n').filter(line => line.trim());
+                    pickupInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_dropoff') {
+                // For dropoff events, look for "Drop Off Info" section
+                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (dropoffInfoMatch) {
+                  const dropoffInfo = dropoffInfoMatch[1].trim();
+                  if (dropoffInfo) {
+                    description += 'Drop Off Info:\n';
+                    // Format dropoff info with bullet points for each line
+                    const dropoffInfoLines = dropoffInfo.split('\n').filter(line => line.trim());
+                    dropoffInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
                         description += `• ${trimmedLine}\n`;
                       }
                     });
