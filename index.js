@@ -734,71 +734,8 @@ app.get('/calendar/:personId', async (req, res) => {
               mainEvent: event.event_name
             });
 
-            // Check if there's a meetup location in Passenger Info and create separate meetup event
-            if (transport.description) {
-              const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-              if (passengerInfoMatch) {
-                const passengerInfo = passengerInfoMatch[1].trim();
-                
-                // Extract meetup location and time
-                const meetupLocationMatch = passengerInfo.match(/Meetup Location:\s*([^\n]+)/);
-                const meetupTimeMatch = passengerInfo.match(/Meetup Time:\s*([^\n]+)/);
-                
-                // Find address (usually the line after meetup location)
-                const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
-                let meetupAddress = '';
-                if (meetupLocationMatch) {
-                  const locationLineIndex = passengerInfoLines.findIndex(line => line.includes('Meetup Location:'));
-                  if (locationLineIndex >= 0 && locationLineIndex + 1 < passengerInfoLines.length) {
-                    const nextLine = passengerInfoLines[locationLineIndex + 1].trim();
-                    // Check if next line looks like an address (contains numbers, street, city, state)
-                    if (nextLine.match(/\d+.*(?:St|Ave|Blvd|Rd|Dr|Way).*(?:CA|NY|TX|FL)/)) {
-                      meetupAddress = nextLine;
-                    }
-                  }
-                }
-                
-                if (meetupLocationMatch && meetupTimeMatch) {
-                  const meetupLocation = meetupLocationMatch[1].trim();
-                  const meetupTime = meetupTimeMatch[1].trim();
-                  
-                  // Parse the meetup time using the same logic as ground transport
-                  const parsedMeetupTime = parseUnifiedDateTime(`@${meetupTime}`);
-                  if (parsedMeetupTime) {
-                    const meetupStartTime = parsedMeetupTime.start;
-                    const meetupEndTime = new Date(meetupStartTime.getTime() + 30 * 60 * 1000); // 30 minutes
-                    
-                    // Create meetup event description
-                    let meetupDescription = `Meetup Location: ${meetupLocation}\n`;
-                    if (meetupAddress) {
-                      meetupDescription += `Address: ${meetupAddress}\n`;
-                    }
-                    meetupDescription += `\nBand members should meet here for pickup.`;
-                    
-                    // Add the meetup event - drivers see this as "Pickup Passengers", passengers see as "Meetup"
-                    // Check if current person is the driver by looking for their name in the driver line
-                    const personFullName = person.properties?.['Full Name']?.formula?.string || '';
-                    const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
-                    const isDriver = driverMatch && driverMatch[1].includes(personFullName);
-                    
-                    const meetupTitle = isDriver ? `🚌 Pickup Passengers: Band (${event.event_name})` : `🚌 Meetup: Band (${event.event_name})`;
-                    const meetupDesc = isDriver ? 
-                      `${meetupDescription}\n\nDriver: Go here to pick up the band members.` :
-                      `${meetupDescription}\n\nBand members: Meet here for pickup.`;
-                    
-                    allCalendarEvents.push({
-                      type: 'meetup',
-                      title: meetupTitle,
-                      start: meetupStartTime.toISOString(),
-                      end: meetupEndTime.toISOString(),
-                      description: meetupDesc,
-                      location: meetupAddress || meetupLocation,
-                      mainEvent: event.event_name
-                    });
-                  }
-                }
-              }
-            }
+            // Note: Meetup events are now handled directly by the Notion formula as ground_transport_meeting events
+            // No need to parse Passenger Info for meetup events anymore
           }
         });
       }
