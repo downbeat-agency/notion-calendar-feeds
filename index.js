@@ -613,6 +613,52 @@ app.get('/calendar/:personId', async (req, res) => {
                 }
               }
               
+              // Extract Driver Info section
+              const driverInfoMatch = transport.description.match(/Driver Info:\s*([\s\S]*?)(?=\nPassenger Info:|Confirmation:|$)/);
+              if (driverInfoMatch) {
+                const driverInfo = driverInfoMatch[1].trim();
+                if (driverInfo) {
+                  description += 'Driver Info:\n';
+                  // Format driver info with bullet points for each line
+                  const driverInfoLines = driverInfo.split('\n').filter(line => line.trim());
+                  driverInfoLines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine) {
+                      // Check if line already has a colon (like "Vehicle Type: Black Passenger Sprinter")
+                      if (trimmedLine.includes(':')) {
+                        description += `• ${trimmedLine}\n`;
+                      } else {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    }
+                  });
+                  description += '\n';
+                }
+              }
+              
+              // Extract Passenger Info section
+              const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+              if (passengerInfoMatch) {
+                const passengerInfo = passengerInfoMatch[1].trim();
+                if (passengerInfo) {
+                  description += 'Passenger Info:\n';
+                  // Format passenger info with bullet points for each line
+                  const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
+                  passengerInfoLines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine) {
+                      // Check if line already has a colon (like "Meetup Location: Sierra Madre Villa")
+                      if (trimmedLine.includes(':')) {
+                        description += `• ${trimmedLine}\n`;
+                      } else {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    }
+                  });
+                  description += '\n';
+                }
+              }
+              
               // Add confirmation info if present
               const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
               if (confirmationMatch) {
