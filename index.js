@@ -648,9 +648,9 @@ app.get('/calendar/:personId', async (req, res) => {
             const startTime = new Date(transportTimes.start);
             const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
 
-            // Format title to replace PICKUP/DROPOFF with proper capitalization
+            // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
-            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:');
+            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
 
             // Build description with formatted driver and passenger lists
             let description = '';
@@ -841,7 +841,7 @@ app.get('/calendar/:personId', async (req, res) => {
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
         rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
         hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport').length
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
       },
       events: allCalendarEvents
     });
