@@ -248,7 +248,7 @@ app.get('/subscribe/:personId', async (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Subscribe to ${personName}'s Calendar</title>
+    <title>Subscribe to Downbeat Calendar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { 
@@ -775,13 +775,23 @@ app.get('/calendar/:personId', async (req, res) => {
                     }
                     meetupDescription += `\nBand members should meet here for pickup.`;
                     
-                    // Add the meetup event
+                    // Add the meetup event - drivers see this as "Pickup Passengers", passengers see as "Meetup"
+                    // Check if current person is the driver by looking for their name in the driver line
+                    const personFullName = person.properties?.['Full Name']?.formula?.string || '';
+                    const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+                    const isDriver = driverMatch && driverMatch[1].includes(personFullName);
+                    
+                    const meetupTitle = isDriver ? `🚌 Pickup Passengers: Band (${event.event_name})` : `🚌 Meetup: Band (${event.event_name})`;
+                    const meetupDesc = isDriver ? 
+                      `${meetupDescription}\n\nDriver: Go here to pick up the band members.` :
+                      `${meetupDescription}\n\nBand members: Meet here for pickup.`;
+                    
                     allCalendarEvents.push({
                       type: 'meetup',
-                      title: `🚌 Meetup: Band (${event.event_name})`,
+                      title: meetupTitle,
                       start: meetupStartTime.toISOString(),
                       end: meetupEndTime.toISOString(),
-                      description: meetupDescription,
+                      description: meetupDesc,
                       location: meetupAddress || meetupLocation,
                       mainEvent: event.event_name
                     });
