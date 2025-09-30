@@ -251,24 +251,104 @@ app.get('/subscribe/:personId', async (req, res) => {
     <title>Subscribe to ${personName}'s Calendar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-bottom: 20px; }
-        .url-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; margin: 20px 0; word-break: break-all; font-family: monospace; }
-        .copy-btn { background: #007AFF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin: 10px 0; }
-        .copy-btn:hover { background: #0056b3; }
-        .instructions { background: #e7f3ff; padding: 15px; border-radius: 8px; border-left: 4px solid #007AFF; margin: 20px 0; }
-        .app-links { display: flex; gap: 10px; margin: 20px 0; }
-        .app-link { flex: 1; padding: 12px; text-align: center; background: #007AFF; color: white; text-decoration: none; border-radius: 6px; }
-        .app-link:hover { background: #0056b3; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            padding: 40px 20px; 
+            background: #000; 
+            color: #fff; 
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #111; 
+            padding: 50px; 
+            border-radius: 8px; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        }
+        h1 { 
+            color: #fff; 
+            margin-bottom: 30px; 
+            font-size: 2.5rem; 
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-align: center;
+        }
+        .url-box { 
+            background: #1a1a1a; 
+            padding: 20px; 
+            border-radius: 6px; 
+            border: 1px solid #333; 
+            margin: 25px 0; 
+            word-break: break-all; 
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #ccc;
+            font-size: 14px;
+        }
+        .copy-btn { 
+            background: #000; 
+            color: #fff; 
+            border: 1px solid #333; 
+            padding: 15px 30px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            margin: 15px 0; 
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .copy-btn:hover { 
+            background: #333; 
+            border-color: #555;
+        }
+        .instructions { 
+            background: #1a1a1a; 
+            padding: 25px; 
+            border-radius: 6px; 
+            border-left: 3px solid #333; 
+            margin: 30px 0; 
+            color: #ccc;
+        }
+        .instructions strong {
+            color: #fff;
+        }
+        .app-links { 
+            display: flex; 
+            gap: 15px; 
+            margin: 30px 0; 
+        }
+        .app-link { 
+            flex: 1; 
+            padding: 20px; 
+            text-align: center; 
+            background: #000; 
+            color: #fff; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            border: 1px solid #333;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        .app-link:hover { 
+            background: #1a1a1a; 
+            border-color: #555;
+        }
+        .section-title {
+            color: #fff;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📅 Subscribe to ${personName}'s Calendar</h1>
+        <h1>Subscribe to ${personName}</h1>
         
         <div class="instructions">
-            <strong>Quick Subscribe:</strong> Click one of the buttons below to automatically open your calendar app with this calendar pre-loaded.
+            <div class="section-title">Quick Subscribe</div>
+            Click one of the options below to automatically open your calendar app with this calendar pre-loaded.
         </div>
         
         <div class="app-links">
@@ -276,15 +356,16 @@ app.get('/subscribe/:personId', async (req, res) => {
             <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
         </div>
         
-        <p><strong>Or copy this URL manually:</strong></p>
+        <div class="section-title">Manual Setup</div>
+        <p>Copy this URL to add the calendar manually:</p>
         <div class="url-box" id="urlBox">${subscriptionUrl}</div>
         <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
         
         <div class="instructions">
-            <strong>Manual Instructions:</strong><br>
-            • <strong>iPhone/Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br>
-            • <strong>Android/Google Calendar:</strong> Copy URL → Google Calendar → Settings → Add calendar → From URL → Paste URL<br>
-            • <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
+            <div class="section-title">Setup Instructions</div>
+            <strong>iPhone/Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br><br>
+            <strong>Android/Google Calendar:</strong> Copy URL → Google Calendar → Settings → Add calendar → From URL → Paste URL<br><br>
+            <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
         </div>
     </div>
     
@@ -607,38 +688,8 @@ app.get('/calendar/:personId', async (req, res) => {
                   driverInfoLines.forEach(line => {
                     const trimmedLine = line.trim();
                     if (trimmedLine) {
-                      // Check if this line contains a date/time that needs parsing
-                      const dateTimeMatch = trimmedLine.match(/(.+?):\s*(.+)/);
-                      if (dateTimeMatch) {
-                        const label = dateTimeMatch[1];
-                        const timeStr = dateTimeMatch[2];
-                        
-                        // Check if this looks like a date/time (contains MM/DD/YYYY and AM/PM)
-                        if (timeStr.match(/\d{2}\/\d{2}\/\d{4}.*(?:AM|PM)/i)) {
-                          // Parse the time using the same logic as ground transport
-                          const parsed = parseUnifiedDateTime(`@${timeStr}`);
-                          if (parsed) {
-                            // Format the time nicely for display
-                            const timeDisplay = parsed.start.toLocaleString('en-US', {
-                              weekday: 'short',
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              hour12: true,
-                              timeZone: 'America/Los_Angeles'
-                            });
-                            description += `• ${label}: ${timeDisplay}\n`;
-                          } else {
-                            description += `• ${trimmedLine}\n`;
-                          }
-                        } else {
-                          description += `• ${trimmedLine}\n`;
-                        }
-                      } else {
-                        description += `• ${trimmedLine}\n`;
-                      }
+                      // Just display the original text as-is, no time parsing
+                      description += `• ${trimmedLine}\n`;
                     }
                   });
                   description += '\n';
@@ -656,38 +707,8 @@ app.get('/calendar/:personId', async (req, res) => {
                   passengerInfoLines.forEach(line => {
                     const trimmedLine = line.trim();
                     if (trimmedLine) {
-                      // Check if this line contains a date/time that needs parsing
-                      const dateTimeMatch = trimmedLine.match(/(.+?):\s*(.+)/);
-                      if (dateTimeMatch) {
-                        const label = dateTimeMatch[1];
-                        const timeStr = dateTimeMatch[2];
-                        
-                        // Check if this looks like a date/time (contains MM/DD/YYYY and AM/PM)
-                        if (timeStr.match(/\d{2}\/\d{2}\/\d{4}.*(?:AM|PM)/i)) {
-                          // Parse the time using the same logic as ground transport
-                          const parsed = parseUnifiedDateTime(`@${timeStr}`);
-                          if (parsed) {
-                            // Format the time nicely for display
-                            const timeDisplay = parsed.start.toLocaleString('en-US', {
-                              weekday: 'short',
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              hour12: true,
-                              timeZone: 'America/Los_Angeles'
-                            });
-                            description += `• ${label}: ${timeDisplay}\n`;
-                          } else {
-                            description += `• ${trimmedLine}\n`;
-                          }
-                        } else {
-                          description += `• ${trimmedLine}\n`;
-                        }
-                      } else {
-                        description += `• ${trimmedLine}\n`;
-                      }
+                      // Just display the original text as-is, no time parsing
+                      description += `• ${trimmedLine}\n`;
                     }
                   });
                   description += '\n';
