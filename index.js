@@ -227,8 +227,11 @@ app.get('/subscribe/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Get person from Personnel database
-    const person = await notion.pages.retrieve({ page_id: personId });
+    // Get person from Personnel database - only fetch the name we need
+    const person = await notion.pages.retrieve({ 
+      page_id: personId,
+      properties: ['Full Name']
+    });
     
     if (!person) {
       return res.status(404).json({ error: 'Person not found' });
