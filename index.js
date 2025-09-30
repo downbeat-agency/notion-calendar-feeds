@@ -652,20 +652,21 @@ app.get('/calendar/:personId', async (req, res) => {
             let formattedTitle = transport.title || 'Ground Transport';
             formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
 
-            // Build description with formatted driver and passenger lists
+            // Build description based on event type
             let description = '';
             
-            // Add driver info
             if (transport.description) {
               // Extract driver and passenger info from description
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
               const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
               
+              // Add driver info for all event types
               if (driverMatch) {
                 description += `Driver: ${driverMatch[1]}\n\n`;
               }
               
-              if (passengerMatch) {
+              // Only add passenger list for meeting events (ground_transport_meeting)
+              if (passengerMatch && transport.type === 'ground_transport_meeting') {
                 // Split passengers by comma and format each on a new line
                 const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p);
                 if (passengers.length > 0) {
@@ -696,22 +697,24 @@ app.get('/calendar/:personId', async (req, res) => {
                 }
               }
               
-              // Extract Passenger Info section
-              const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-              if (passengerInfoMatch) {
-                const passengerInfo = passengerInfoMatch[1].trim();
-                if (passengerInfo) {
-                  description += 'Passenger Info:\n';
-                  // Format passenger info with bullet points for each line
-                  const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
-                  passengerInfoLines.forEach(line => {
-                    const trimmedLine = line.trim();
-                    if (trimmedLine) {
-                      // Just display the original text as-is, no time parsing
-                      description += `• ${trimmedLine}\n`;
-                    }
-                  });
-                  description += '\n';
+              // Only add Passenger Info section for meeting events (ground_transport_meeting)
+              if (transport.type === 'ground_transport_meeting') {
+                const passengerInfoMatch = transport.description.match(/Passenger Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (passengerInfoMatch) {
+                  const passengerInfo = passengerInfoMatch[1].trim();
+                  if (passengerInfo) {
+                    description += 'Passenger Info:\n';
+                    // Format passenger info with bullet points for each line
+                    const passengerInfoLines = passengerInfo.split('\n').filter(line => line.trim());
+                    passengerInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
+                        // Just display the original text as-is, no time parsing
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
                 }
               }
               
