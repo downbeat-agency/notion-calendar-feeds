@@ -208,9 +208,7 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
       testCalendarFeedPreview: person.properties?.['Test Calendar Feed']?.formula?.string?.substring(0, 200) || 'null'
     };
 
-    console.log('=== SIMPLE TEST DEBUG ===');
-    console.log('Test Results:', JSON.stringify(testResults, null, 2));
-    console.log('=== END SIMPLE TEST ===');
+    // Debug logging removed for performance
 
     res.json(testResults);
   } catch (error) {
@@ -347,16 +345,7 @@ app.get('/calendar/:personId', async (req, res) => {
     // Also get Hotels JSON if it exists (for testing)
     const hotelsJson = person.properties?.['Hotels JSON']?.formula?.string;
     
-    // Add comprehensive debugging
-    console.log('=== API DEBUG INFO ===');
-    console.log('PersonId:', personId);
-    console.log('Person Full Name:', person.properties?.['Full Name']?.formula?.string);
-    console.log('Raw Calendar Feed JSON length:', calendarFeedJson?.length || 0);
-    console.log('Raw Calendar Feed JSON preview (first 500 chars):', calendarFeedJson?.substring(0, 500) || 'NULL');
-    console.log('Hotels JSON length:', hotelsJson?.length || 0);
-    console.log('Hotels JSON preview:', hotelsJson?.substring(0, 200) || 'NULL');
-    console.log('Available properties:', Object.keys(person.properties || {}));
-    console.log('=== END DEBUG INFO ===');
+    // Debug logging removed for performance
     
     if (!calendarFeedJson) {
       return res.status(404).json({ error: 'No calendar feed data found' });
