@@ -344,7 +344,7 @@ app.get('/subscribe/:personId', async (req, res) => {
 </head>
 <body>
     <div class="container">
-        <h1>Subscribe to ${personName}</h1>
+        <h1>Subscribe to Downbeat Calendar</h1>
         
         <div class="instructions">
             <div class="section-title">Quick Subscribe</div>
