@@ -55,6 +55,29 @@ function parseUnifiedDateTime(dateTimeStr) {
   
   // Check if it's the unified format with @
   if (cleanStr.startsWith('@')) {
+    // First, try to match date-only format (for hotels): "@November 1, 2025 → November 2, 2025"
+    const dateOnlyMatch = cleanStr.match(/@([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+→\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i);
+    if (dateOnlyMatch) {
+      try {
+        const startDateStr = dateOnlyMatch[1].trim();
+        const endDateStr = dateOnlyMatch[2].trim();
+        
+        // Parse dates and set to midnight (for all-day events)
+        const startDate = new Date(startDateStr);
+        const endDate = new Date(endDateStr);
+        
+        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          return {
+            start: startDate,
+            end: endDate
+          };
+        }
+      } catch (e) {
+        console.warn('Failed to parse date-only format:', cleanStr, e);
+      }
+    }
+    
+    // Try to match format with times
     const match = cleanStr.match(/@(.+?)\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s+→\s+(.+)/i);
     if (match) {
       const dateStr = match[1].trim();
