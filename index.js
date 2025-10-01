@@ -367,9 +367,9 @@ app.get('/subscribe/:personId', async (req, res) => {
             font-weight: 500;
         }
         .app-logo {
-            width: 20px;
-            height: 20px;
-            margin-right: 10px;
+            width: 32px;
+            height: 32px;
+            margin-right: 12px;
             vertical-align: middle;
         }
     </style>
