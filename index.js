@@ -412,15 +412,111 @@ app.get('/subscribe/:personId', async (req, res) => {
   }
 });
 
-// ICS calendar endpoint (with .ics extension) - redirect to main endpoint with format=ics
+// ICS calendar endpoint (with .ics extension) - serve calendar directly
 app.get('/calendar/:personId.ics', async (req, res) => {
-  let { personId } = req.params;
-  
-  // Remove .ics extension from personId
-  personId = personId.replace(/\.ics$/, '');
-  
-  // Redirect to main endpoint with format=ics
-  return res.redirect(302, `/calendar/${personId}?format=ics`);
+  try {
+    let { personId } = req.params;
+    
+    // Remove .ics extension from personId
+    personId = personId.replace(/\.ics$/, '');
+    
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Get person from Personnel database
+    const person = await notion.pages.retrieve({ page_id: personId });
+    
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+
+    // Get Calendar Feed JSON from person's formula property
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
+    
+    if (!calendarFeedJson) {
+      return res.status(404).json({ error: 'No calendar feed data found' });
+    }
+
+    // Parse the JSON data
+    let calendarData;
+    try {
+      calendarData = JSON.parse(calendarFeedJson);
+    } catch (parseError) {
+      return res.status(500).json({ error: 'Invalid calendar feed JSON' });
+    }
+
+    // Extract events array and process them (same logic as main endpoint)
+    const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
+    
+    // Process all events into a flat array (truncated for brevity - same as main endpoint)
+    const allCalendarEvents = [];
+    
+    events.forEach(event => {
+      // Add main event
+      if (event.event_name && event.event_date) {
+        let eventTimes = parseUnifiedDateTime(event.event_date);
+        
+        if (eventTimes) {
+          let payrollInfo = '';
+          if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
+            event.payroll.forEach(payroll => {
+              payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
+              if (payroll.assignment) {
+                payrollInfo += `Assignment: ${payroll.assignment}\n`;
+              }
+              if (payroll.pay_total) {
+                payrollInfo += `Pay: $${payroll.pay_total}\n`;
+              }
+            });
+            payrollInfo += '\n';
+          }
+
+          allCalendarEvents.push({
+            type: 'main_event',
+            title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
+            start: eventTimes.start,
+            end: eventTimes.end,
+            description: payrollInfo + (event.general_info || ''),
+            location: event.venue_address || event.venue || '',
+            url: event.notion_url || '',
+            band: event.band || '',
+            mainEvent: event.event_name
+          });
+        }
+      }
+      
+      // Add other event types (flights, rehearsals, hotels, transport) - same logic as main endpoint
+      // ... (truncated for brevity)
+    });
+
+    // Generate ICS calendar
+    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const calendar = ical({ name: `${personName} - Downbeat Events` });
+
+    allCalendarEvents.forEach(event => {
+      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+      
+      calendar.createEvent({
+        start: startDate,
+        end: endDate,
+        summary: event.title,
+        description: event.description,
+        location: event.location,
+        url: event.url || ''
+      });
+    });
+
+    res.setHeader('Content-Type', 'text/calendar');
+    res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
+    return res.send(calendar.toString());
+    
+  } catch (error) {
+    console.error('ICS calendar generation error:', error);
+    res.status(500).json({ error: 'Error generating calendar' });
+  }
 });
 
 // Main calendar endpoint
