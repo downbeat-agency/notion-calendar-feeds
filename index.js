@@ -513,12 +513,18 @@ app.get('/calendar/:personId.ics', async (req, res) => {
             payrollInfo += '\n';
           }
 
+          // Build gear checklist info for ICS format
+          let gearChecklistInfo = '';
+          if (event.gear_checklist && event.gear_checklist.trim()) {
+            gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
+          }
+
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + (event.general_info || ''),
+            description: payrollInfo + gearChecklistInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             url: event.notion_url || '',
             band: event.band || '',
@@ -685,12 +691,18 @@ app.get('/calendar/:personId', async (req, res) => {
             calltimeInfo = `⏰ Call Time: ${displayCalltime}\n\n`;
           }
 
+          // Build gear checklist info (after calltime, before general info)
+          let gearChecklistInfo = '';
+          if (event.gear_checklist && event.gear_checklist.trim()) {
+            gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
+          }
+
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             url: event.notion_url || '',
             band: event.band || '',
