@@ -355,10 +355,17 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin-bottom: 15px;
             font-weight: 500;
         }
+        .downbeat-logo {
+            width: 200px;
+            height: 80px;
+            margin: 0 auto 30px auto;
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div class="container">
+        <img src="downbeat-logo.svg" alt="Downbeat" class="downbeat-logo">
         <h1>Subscribe to Downbeat Calendar</h1>
         
         <div class="instructions">
