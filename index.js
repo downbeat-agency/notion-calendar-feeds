@@ -499,8 +499,7 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     });
 
     // Generate ICS calendar
-    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
-    const calendar = ical({ name: `${personName} - Downbeat Events` });
+    const calendar = ical({ name: 'My Downbeat Calendar' });
 
     allCalendarEvents.forEach(event => {
       const startDate = event.start instanceof Date ? event.start : new Date(event.start);
@@ -952,8 +951,7 @@ app.get('/calendar/:personId', async (req, res) => {
     
     if (shouldReturnICS) {
       // Generate ICS calendar with all events
-      const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
-      const calendar = ical({ name: `${personName} - Downbeat Events` });
+      const calendar = ical({ name: 'My Downbeat Calendar' });
 
       allCalendarEvents.forEach(event => {
         // event.start and event.end are already Date objects for new format
