@@ -49,6 +49,24 @@ function getPacificOffset(date) {
   return '-08:00'; // PST
 }
 
+// Helper function to check if a date is in DST period
+function isDSTDate(date) {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+  
+  // DST starts second Sunday in March at 2 AM
+  const marchFirst = new Date(year, 2, 1); // March 1
+  const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7); // Second Sunday
+  
+  // DST ends first Sunday in November at 2 AM
+  const novFirst = new Date(year, 10, 1); // November 1
+  const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7); // First Sunday
+  
+  const checkDate = new Date(year, month, day);
+  return checkDate >= dstStart && checkDate < dstEnd;
+}
+
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -103,9 +121,17 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Parse dates as-is without any timezone conversion
+        // Parse dates as Pacific time and add offset to create floating times
         const startDate = new Date(`${dateStr} ${startTimeStr}`);
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        
+        // Add Pacific offset to create floating times that display correctly
+        // DST: +7 hours (PDT), Standard: +8 hours (PST)
+        const isDST = isDSTDate(startDate);
+        const offsetHours = isDST ? 7 : 8;
+        
+        startDate.setHours(startDate.getHours() + offsetHours);
+        endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
