@@ -6,6 +6,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
+// Serve static files from public directory
+app.use(express.static('public'));
+
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
@@ -363,6 +366,12 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin-bottom: 15px;
             font-weight: 500;
         }
+        .app-logo {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -375,8 +384,12 @@ app.get('/subscribe/:personId', async (req, res) => {
         </div>
         
         <div class="app-links">
-            <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">📱 Mobile Calendar</a>
-            <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
+            <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
+                <img src="Apple Logo.png" alt="Apple" class="app-logo"> Apple Calendar
+            </a>
+            <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">
+                <img src="Google Logo.png" alt="Google" class="app-logo"> Google Calendar
+            </a>
         </div>
         
         <div class="section-title">Manual Setup</div>
