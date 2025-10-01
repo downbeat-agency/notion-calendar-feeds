@@ -366,12 +366,6 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin-bottom: 15px;
             font-weight: 500;
         }
-        .app-logo {
-            width: 32px;
-            height: 32px;
-            margin-right: 12px;
-            vertical-align: middle;
-        }
     </style>
 </head>
 <body>
@@ -385,10 +379,10 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
-                <img src="Apple Logo.png" alt="Apple" class="app-logo"> Apple Calendar
+                🍎 Apple Calendar
             </a>
             <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">
-                <img src="Google Logo.png" alt="Google" class="app-logo"> Google Calendar
+                📅 Google Calendar
             </a>
         </div>
         
