@@ -122,10 +122,19 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // Notion API converts PST times to UTC, need to compensate
-        // Testing with 17 hour offset to correct the times
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour - 17, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour - 17, endMinute));
+        // Convert Pacific time to UTC by adding offset
+        const isPDT = startMonth >= 2 && startMonth <= 10; // March to November
+        const offsetHours = isPDT ? 7 : 8;
+        
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
+        
+        // If event starts at 5 PM or later, adding offset pushes to next day
+        // Subtract 24 hours to keep on correct date
+        if (startHour >= 17) { // 5 PM or later
+          startDate.setUTCHours(startDate.getUTCHours() - 24);
+          endDate.setUTCHours(endDate.getUTCHours() - 24);
+        }
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
