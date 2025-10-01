@@ -1,10 +1,10 @@
 <svg width="200" height="80" viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg">
-  <!-- Large incomplete circle (brush stroke) -->
-  <path d="M 20 40 A 30 30 0 1 1 180 40" stroke="#000" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <!-- Large incomplete circle (brush stroke effect) -->
+  <path d="M 30 40 A 35 35 0 1 1 170 40" stroke="#000" stroke-width="10" fill="none" stroke-linecap="round"/>
   
-  <!-- Small D/spiral inside -->
-  <path d="M 85 25 Q 95 20 100 30 Q 95 40 85 35 Q 80 30 85 25" stroke="#000" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- Small D/spiral inside the circle -->
+  <path d="M 95 25 Q 105 20 110 30 Q 105 40 95 35 Q 90 30 95 25" stroke="#000" stroke-width="8" fill="none" stroke-linecap="round"/>
   
   <!-- DOWNBEAT text -->
-  <text x="100" y="50" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000">DOWNBEAT</text>
+  <text x="100" y="60" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#000">DOWNBEAT</text>
 </svg>
