@@ -89,6 +89,13 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDate = new Date(startDateStr);
         const endDate = new Date(endDateStr);
         
+        // Add Pacific offset for floating times
+        const isDST = isDSTDate(startDate);
+        const offsetHours = isDST ? 7 : 8;
+        
+        startDate.setHours(startDate.getHours() + offsetHours);
+        endDate.setHours(endDate.getHours() + offsetHours);
+        
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
             start: startDate,
@@ -150,6 +157,12 @@ function parseUnifiedDateTime(dateTimeStr) {
       try {
         const dateStr = singleMatch[1].trim();
         const date = new Date(dateStr);
+        
+        // Add Pacific offset for floating times
+        const isDST = isDSTDate(date);
+        const offsetHours = isDST ? 7 : 8;
+        date.setHours(date.getHours() + offsetHours);
+        
         if (!isNaN(date.getTime())) {
           return {
             start: date,
@@ -165,6 +178,12 @@ function parseUnifiedDateTime(dateTimeStr) {
   // Fallback: try to parse as regular ISO date
   try {
     const date = new Date(cleanStr);
+    
+    // Add Pacific offset for floating times
+    const isDST = isDSTDate(date);
+    const offsetHours = isDST ? 7 : 8;
+    date.setHours(date.getHours() + offsetHours);
+    
     if (!isNaN(date.getTime())) {
       return {
         start: date,
@@ -809,12 +828,26 @@ app.get('/calendar/:personId', async (req, res) => {
           if (hotel.dates_booked) {
             hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
           } else if (hotel.check_in && hotel.check_out) {
-            // Fallback to old format - keep local time
+            // Fallback to old format - try to parse with unified function
             try {
-              hotelTimes = {
-                start: hotel.check_in,
-                end: hotel.check_out
-              };
+              // Try to parse as unified format first
+              hotelTimes = parseUnifiedDateTime(hotel.check_in);
+              if (!hotelTimes) {
+                // If that fails, create dates and apply Pacific offset
+                const startDate = new Date(hotel.check_in);
+                const endDate = new Date(hotel.check_out);
+                
+                const isDST = isDSTDate(startDate);
+                const offsetHours = isDST ? 7 : 8;
+                
+                startDate.setHours(startDate.getHours() + offsetHours);
+                endDate.setHours(endDate.getHours() + offsetHours);
+                
+                hotelTimes = {
+                  start: startDate,
+                  end: endDate
+                };
+              }
             } catch (e) {
               console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
               return;
@@ -863,6 +896,16 @@ app.get('/calendar/:personId', async (req, res) => {
             // For ground transport, make events 30 minutes long
             const startTime = new Date(transportTimes.start);
             const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
+            
+            // Ensure both times have the same Pacific offset applied
+            const isDST = isDSTDate(startTime);
+            const offsetHours = isDST ? 7 : 8;
+            
+            // Only apply offset if not already applied (check if time looks like it needs offset)
+            if (startTime.getHours() < 12) { // If it's before noon, likely needs offset
+              startTime.setHours(startTime.getHours() + offsetHours);
+              endTime.setHours(endTime.getHours() + offsetHours);
+            }
 
             // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
