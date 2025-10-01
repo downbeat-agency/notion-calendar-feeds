@@ -366,11 +366,16 @@ app.get('/subscribe/:personId', async (req, res) => {
             Click one of the options below to automatically open your calendar app with this calendar pre-loaded.
         </div>
         
+        <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
+            <div class="section-title">📝 Google Calendar Note</div>
+            The Google Calendar button will open Google Calendar's settings page. From there, click "From URL" in the left menu, then paste the URL below to add the calendar.
+        </div>
+        
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
                 🍎 Apple Calendar
             </a>
-            <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">
+            <a href="https://calendar.google.com/calendar/u/0/r/settings/addcalendar" class="app-link">
                 📅 Google Calendar
             </a>
         </div>
@@ -382,8 +387,8 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="instructions">
             <div class="section-title">Setup Instructions</div>
-            <strong>iPhone/Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br><br>
-            <strong>Android/Google Calendar:</strong> Copy URL → Google Calendar → Settings → Add calendar → From URL → Paste URL<br><br>
+            <strong>Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br><br>
+            <strong>Google Calendar:</strong> Click the Google Calendar button above → Click "From URL" in the left menu → Paste the URL below → Click "Add calendar"<br><br>
             <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
         </div>
     </div>
