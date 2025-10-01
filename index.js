@@ -376,12 +376,12 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">📱 Mobile Calendar</a>
-            <a href="https://www.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
+            <a href="https://www.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl + '?format=ics')}" class="app-link">📅 Google Calendar</a>
         </div>
         
         <div class="section-title">Manual Setup</div>
         <p>Copy this URL to add the calendar manually:</p>
-        <div class="url-box" id="urlBox">${subscriptionUrl}</div>
+        <div class="url-box" id="urlBox">${subscriptionUrl}?format=ics</div>
         <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
         
         <div class="instructions">
