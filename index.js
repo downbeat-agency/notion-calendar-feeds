@@ -659,7 +659,7 @@ app.get('/calendar/:personId', async (req, res) => {
               displayCalltime = `${displayHours}:${minutes} ${newPeriod}`;
             }
             
-            calltimeInfo = `⏰ Call Time: ${displayCalltime}\n\n`;
+            calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
           }
 
           // Build gear checklist info (after calltime, before general info)
