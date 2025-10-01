@@ -366,24 +366,29 @@ app.get('/subscribe/:personId', async (req, res) => {
             Click one of the options below to automatically open your calendar app with this calendar pre-loaded.
         </div>
         
-        <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
-            <div class="section-title">📝 Google Calendar Note</div>
-            The Google Calendar button will open Google Calendar's settings page. From there, click "From URL" in the left menu, then paste the URL below to add the calendar.
-        </div>
-        
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
                 🍎 Apple Calendar
             </a>
-            <a href="https://calendar.google.com/calendar/u/0/r/settings/addcalendar" class="app-link">
+        </div>
+        
+        <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
+            <div class="section-title">📝 Google Calendar Note</div>
+            The Google Calendar button will open Google Calendar's settings page in a new tab. From there, click "From URL" in the left menu, then paste the URL below to add the calendar.
+        </div>
+        
+        <div class="app-links">
+            <a href="https://calendar.google.com/calendar/u/0/r/settings/addcalendar" class="app-link" target="_blank">
                 📅 Google Calendar
             </a>
         </div>
         
-        <div class="section-title">Manual Setup</div>
-        <p>Copy this URL to add the calendar manually:</p>
-        <div class="url-box" id="urlBox">${subscriptionUrl}</div>
-        <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
+        <div class="instructions">
+            <div class="section-title">Manual Setup</div>
+            <p>Copy this URL to add the calendar manually:</p>
+            <div class="url-box" id="urlBox">${subscriptionUrl}</div>
+            <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
+        </div>
         
         <div class="instructions">
             <div class="section-title">Setup Instructions</div>
