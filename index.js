@@ -392,7 +392,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="instructions">
             <div class="section-title">Setup Instructions</div>
-            <strong>Apple Calendar:</strong> Copy URL → Calendar app → File → New Calendar Subscription → Paste URL<br><br>
+            <strong>Apple Calendar:</strong> Just press the Apple Calendar button.<br><br>
             <strong>Google Calendar:</strong> Click the Google Calendar button above → Click "From URL" in the left menu → Paste the URL below → Click "Add calendar"<br><br>
             <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
         </div>
