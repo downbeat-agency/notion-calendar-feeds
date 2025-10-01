@@ -252,7 +252,7 @@ app.get('/subscribe/:personId', async (req, res) => {
 
     // No need to fetch person data - just use generic title for speed
     const personName = 'Downbeat Calendar';
-    const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}`;
+    const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -376,12 +376,12 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">📱 Mobile Calendar</a>
-            <a href="https://www.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl + '?format=ics')}" class="app-link">📅 Google Calendar</a>
+            <a href="https://calendar.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
         </div>
         
         <div class="section-title">Manual Setup</div>
         <p>Copy this URL to add the calendar manually:</p>
-        <div class="url-box" id="urlBox">${subscriptionUrl}?format=ics</div>
+        <div class="url-box" id="urlBox">${subscriptionUrl}</div>
         <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
         
         <div class="instructions">
@@ -411,6 +411,17 @@ app.get('/subscribe/:personId', async (req, res) => {
     console.error('Subscription page error:', error);
     res.status(500).json({ error: 'Error loading subscription page' });
   }
+});
+
+// ICS calendar endpoint (with .ics extension) - redirect to main endpoint with format=ics
+app.get('/calendar/:personId.ics', async (req, res) => {
+  let { personId } = req.params;
+  
+  // Remove .ics extension from personId
+  personId = personId.replace(/\.ics$/, '');
+  
+  // Redirect to main endpoint with format=ics
+  return res.redirect(302, `/calendar/${personId}?format=ics`);
 });
 
 // Main calendar endpoint
