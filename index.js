@@ -520,12 +520,18 @@ app.get('/calendar/:personId', async (req, res) => {
             payrollInfo += '\n'; // Add spacing after position info
           }
 
+          // Build calltime info (after payroll, before general info)
+          let calltimeInfo = '';
+          if (event.calltime && event.calltime.trim()) {
+            calltimeInfo = `Call Time: ${event.calltime}\n\n`;
+          }
+
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             url: event.notion_url || '',
             band: event.band || '',
