@@ -523,7 +523,7 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            calltimeInfo = `Call Time: ${event.calltime}\n\n`;
+            calltimeInfo = `⏰ Call Time: ${event.calltime}\n\n`;
           }
 
           allCalendarEvents.push({
