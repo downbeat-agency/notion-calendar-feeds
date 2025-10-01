@@ -374,7 +374,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
             <div class="section-title">📝 Google Calendar Note</div>
-            The Google Calendar button will open Google Calendar's settings page in a new tab. From there, click "From URL" in the left menu, then paste the URL below to add the calendar.
+            The Google Calendar button will open Google Calendar's settings page in a new tab. From there, click "From URL" in the left menu, then paste the URL below in the "URL of the calendar" field (NOT the email field).
         </div>
         
         <div class="app-links">
@@ -393,7 +393,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         <div class="instructions">
             <div class="section-title">Setup Instructions</div>
             <strong>Apple Calendar:</strong> Just press the Apple Calendar button.<br><br>
-            <strong>Google Calendar:</strong> Click the Google Calendar button above → Click "From URL" in the left menu → Paste the URL below → Click "Add calendar"<br><br>
+            <strong>Google Calendar:</strong> Click the Google Calendar button above → Click "From URL" in the left menu → Paste the URL below in the "URL of the calendar" field → Click "Add calendar"<br><br>
             <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
         </div>
     </div>
