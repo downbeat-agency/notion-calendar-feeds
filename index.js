@@ -638,12 +638,21 @@ app.get('/calendar/:personId', async (req, res) => {
           }
 
           if (hotelTimes) {
+            // Format names on reservation - each name on a separate line
+            let namesFormatted = 'N/A';
+            if (hotel.names_on_reservation) {
+              const names = hotel.names_on_reservation.split(',').map(n => n.trim()).filter(n => n);
+              if (names.length > 0) {
+                namesFormatted = '\n' + names.map(name => `${name}`).join('\n');
+              }
+            }
+
             allCalendarEvents.push({
               type: 'hotel',
               title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
               start: hotelTimes.start,
               end: hotelTimes.end,
-              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation: ${hotel.names_on_reservation || 'N/A'}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
+              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
               location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
               url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
               confirmation: hotel.confirmation || '',
