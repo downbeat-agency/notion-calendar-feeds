@@ -103,64 +103,9 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Create UTC dates that represent the correct Pacific times
-        // We need to create dates that, when interpreted as local time, show the correct Pacific times
-        
-        // Parse the date and time components manually
-        const startDateObj = new Date(`${dateStr} ${startTimeStr}`);
-        const endDateObj = new Date(`${endDateStr} ${endTimeStr}`);
-        
-        // Create UTC dates by manually constructing them
-        // For Pacific time, we need to create UTC dates that represent the Pacific times
-        const startYear = startDateObj.getFullYear();
-        const startMonth = startDateObj.getMonth();
-        const startDay = startDateObj.getDate();
-        const startHour = startDateObj.getHours();
-        const startMinute = startDateObj.getMinutes();
-        
-        const endYear = endDateObj.getFullYear();
-        const endMonth = endDateObj.getMonth();
-        const endDay = endDateObj.getDate();
-        const endHour = endDateObj.getHours();
-        const endMinute = endDateObj.getMinutes();
-        
-        // Convert Pacific time to UTC by adding offset
-        // DST in US: Second Sunday in March to First Sunday in November
-        // For 2025: March 9 - November 2
-        
-        // Check if date is in DST period
-        function isDST(year, month, day) {
-          // Create date in Pacific time
-          const date = new Date(year, month, day);
-          
-          // DST starts second Sunday in March at 2 AM
-          const marchFirst = new Date(year, 2, 1); // March 1
-          const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7); // Second Sunday
-          
-          // DST ends first Sunday in November at 2 AM
-          const novFirst = new Date(year, 10, 1); // November 1
-          const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7); // First Sunday
-          
-          return date >= dstStart && date < dstEnd;
-        }
-        
-        const isPDT = isDST(startYear, startMonth, startDay);
-        const offsetHours = isPDT ? 7 : 8;
-        
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
-        
-        // If event starts at 5 PM or later, adding offset pushes to next day
-        // Subtract 24 hours to keep on correct date
-        if (startHour >= 17) { // 5 PM or later
-          startDate.setUTCHours(startDate.getUTCHours() - 24);
-          endDate.setUTCHours(endDate.getUTCHours() - 24);
-        } else if (!isPDT) {
-          // For events before 5 PM in PST only, subtract 1 day
-          startDate.setUTCDate(startDate.getUTCDate() - 1);
-          endDate.setUTCDate(endDate.getUTCDate() - 1);
-        }
-        // Events before 5 PM in PDT: no adjustment needed
+        // Parse dates as-is without any timezone conversion
+        const startDate = new Date(`${dateStr} ${startTimeStr}`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -178,9 +123,7 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const tempDate = new Date(dateStr);
-        const offset = getPacificOffset(tempDate);
-        const date = new Date(`${dateStr}${offset}`);
+        const date = new Date(dateStr);
         if (!isNaN(date.getTime())) {
           return {
             start: date,
