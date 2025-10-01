@@ -122,13 +122,13 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // JSON times are in Pacific timezone, need to convert to UTC by adding offset
+        // Notion API converts PST times to UTC, so we need to subtract offset to get back to PST
         // PDT (Mar-Nov) is UTC-7, PST (Nov-Mar) is UTC-8
         const isPDT = startMonth >= 2 && startMonth <= 10; // March to November (approximate)
         const offsetHours = isPDT ? 7 : 8;
         
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour - offsetHours, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour - offsetHours, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
