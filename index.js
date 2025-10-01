@@ -523,7 +523,45 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            calltimeInfo = `⏰ Call Time: ${event.calltime}\n\n`;
+            // Compensate for timezone: if calltime looks like a time (e.g., "3:00 PM"),
+            // it may have been converted to UTC, so we need to subtract 7-8 hours
+            let displayCalltime = event.calltime;
+            
+            // Try to parse the time and adjust for timezone
+            const timeMatch = event.calltime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+            if (timeMatch) {
+              let hours = parseInt(timeMatch[1]);
+              const minutes = timeMatch[2];
+              const period = timeMatch[3].toUpperCase();
+              
+              // Convert to 24-hour format
+              if (period === 'PM' && hours !== 12) hours += 12;
+              if (period === 'AM' && hours === 12) hours = 0;
+              
+              // Subtract 7 hours to convert from UTC back to Pacific (PDT)
+              // Use 7 for PDT (most of the year), 8 for PST (winter)
+              hours -= 7;
+              
+              // Handle negative hours (wrap to previous day)
+              if (hours < 0) hours += 24;
+              if (hours >= 24) hours -= 24;
+              
+              // Convert back to 12-hour format
+              let newPeriod = 'AM';
+              let displayHours = hours;
+              if (hours === 0) {
+                displayHours = 12;
+              } else if (hours === 12) {
+                newPeriod = 'PM';
+              } else if (hours > 12) {
+                displayHours = hours - 12;
+                newPeriod = 'PM';
+              }
+              
+              displayCalltime = `${displayHours}:${minutes} ${newPeriod}`;
+            }
+            
+            calltimeInfo = `⏰ Call Time: ${displayCalltime}\n\n`;
           }
 
           allCalendarEvents.push({
