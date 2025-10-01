@@ -355,46 +355,10 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin-bottom: 15px;
             font-weight: 500;
         }
-        .downbeat-logo {
-            text-align: center;
-            margin: 0 auto 30px auto;
-        }
-        .logo-circle {
-            width: 60px;
-            height: 60px;
-            border: 6px solid #fff;
-            border-radius: 50%;
-            border-top: none;
-            border-bottom: none;
-            margin: 0 auto 10px auto;
-            position: relative;
-        }
-        .logo-d {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 24px;
-            font-weight: bold;
-            color: #fff;
-        }
-        .logo-text {
-            font-family: Arial, sans-serif;
-            font-size: 18px;
-            font-weight: bold;
-            color: #fff;
-            letter-spacing: 2px;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="downbeat-logo">
-            <div class="logo-circle">
-                <div class="logo-d">D</div>
-            </div>
-            <div class="logo-text">DOWNBEAT</div>
-        </div>
         <h1>Subscribe to Downbeat Calendar</h1>
         
         <div class="instructions">
