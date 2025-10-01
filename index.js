@@ -122,9 +122,22 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // Use plain Date objects (no UTC conversion) - floating time
-        const startDate = new Date(startYear, startMonth, startDay, startHour, startMinute);
-        const endDate = new Date(endYear, endMonth, endDay, endHour, endMinute);
+        // Add offset to compensate for timezone difference
+        // Check if DST is active
+        function isDST(year, month, day) {
+          const date = new Date(year, month, day);
+          const marchFirst = new Date(year, 2, 1);
+          const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7);
+          const novFirst = new Date(year, 10, 1);
+          const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7);
+          return date >= dstStart && date < dstEnd;
+        }
+        
+        const isPDT = isDST(startYear, startMonth, startDay);
+        const offsetHours = isPDT ? 7 : 8;
+        
+        const startDate = new Date(startYear, startMonth, startDay, startHour + offsetHours, startMinute);
+        const endDate = new Date(endYear, endMonth, endDay, endHour + offsetHours, endMinute);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
