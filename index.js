@@ -153,11 +153,12 @@ function parseUnifiedDateTime(dateTimeStr) {
         if (startHour >= 17) { // 5 PM or later
           startDate.setUTCHours(startDate.getUTCHours() - 24);
           endDate.setUTCHours(endDate.getUTCHours() - 24);
-        } else {
-          // For events before 5 PM, subtract 1 day to compensate for date shift
+        } else if (!isPDT) {
+          // For events before 5 PM in PST only, subtract 1 day
           startDate.setUTCDate(startDate.getUTCDate() - 1);
           endDate.setUTCDate(endDate.getUTCDate() - 1);
         }
+        // Events before 5 PM in PDT: no adjustment needed
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
