@@ -122,9 +122,30 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // NO TIMEZONE ADJUSTMENTS - Testing raw behavior
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour, endMinute));
+        // Convert Pacific time to UTC by adding offset
+        // DST in US: Second Sunday in March to First Sunday in November
+        
+        // Check if date is in DST period
+        function isDST(year, month, day) {
+          const date = new Date(year, month, day);
+          
+          // DST starts second Sunday in March at 2 AM
+          const marchFirst = new Date(year, 2, 1);
+          const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7);
+          
+          // DST ends first Sunday in November at 2 AM
+          const novFirst = new Date(year, 10, 1);
+          const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7);
+          
+          return date >= dstStart && date < dstEnd;
+        }
+        
+        const isPDT = isDST(startYear, startMonth, startDay);
+        const offsetHours = isPDT ? 7 : 8;
+        
+        // Add offset to convert Pacific time to UTC
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
