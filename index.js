@@ -122,38 +122,9 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endHour = endDateObj.getHours();
         const endMinute = endDateObj.getMinutes();
         
-        // Convert Pacific time to UTC by adding offset
-        // DST in US: Second Sunday in March to First Sunday in November
-        // For 2025: March 9 - November 2
-        
-        // Check if date is in DST period
-        function isDST(year, month, day) {
-          // Create date in Pacific time
-          const date = new Date(year, month, day);
-          
-          // DST starts second Sunday in March at 2 AM
-          const marchFirst = new Date(year, 2, 1); // March 1
-          const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7); // Second Sunday
-          
-          // DST ends first Sunday in November at 2 AM
-          const novFirst = new Date(year, 10, 1); // November 1
-          const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7); // First Sunday
-          
-          return date >= dstStart && date < dstEnd;
-        }
-        
-        const isPDT = isDST(startYear, startMonth, startDay);
-        const offsetHours = isPDT ? 7 : 8;
-        
-        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour + offsetHours, startMinute));
-        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour + offsetHours, endMinute));
-        
-        // If event starts at 5 PM or later, adding offset pushes to next day
-        // Subtract 24 hours to keep on correct date
-        if (startHour >= 17) { // 5 PM or later
-          startDate.setUTCHours(startDate.getUTCHours() - 24);
-          endDate.setUTCHours(endDate.getUTCHours() - 24);
-        }
+        // NO TIMEZONE ADJUSTMENTS - Testing raw behavior
+        const startDate = new Date(Date.UTC(startYear, startMonth, startDay, startHour, startMinute));
+        const endDate = new Date(Date.UTC(endYear, endMonth, endDay, endHour, endMinute));
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
