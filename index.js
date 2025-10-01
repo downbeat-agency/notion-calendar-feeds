@@ -252,7 +252,7 @@ app.get('/subscribe/:personId', async (req, res) => {
 
     // No need to fetch person data - just use generic title for speed
     const personName = 'Downbeat Calendar';
-    const subscriptionUrl = `${req.protocol}://${req.get('host')}/calendar/${personId}`;
+    const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}`;
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -376,7 +376,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="app-links">
             <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">📱 Mobile Calendar</a>
-            <a href="https://calendar.google.com/calendar/r?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
+            <a href="https://www.google.com/calendar/render?cid=${encodeURIComponent(subscriptionUrl)}" class="app-link">📅 Google Calendar</a>
         </div>
         
         <div class="section-title">Manual Setup</div>
