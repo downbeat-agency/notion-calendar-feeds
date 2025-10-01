@@ -2,6 +2,8 @@ import express from 'express';
 import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 
+// Server refresh - October 1, 2025
+
 const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
