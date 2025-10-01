@@ -374,7 +374,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         
         <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
             <div class="section-title">📝 Google Calendar Note</div>
-            The Google Calendar button will open Google Calendar's settings page in a new tab. From there, click "From URL" in the left menu, then paste the URL below in the "URL of the calendar" field (NOT the email field).
+            <strong>Select "From URL" in the left menu, then paste the URL below to add the calendar.</strong>
         </div>
         
         <div class="app-links">
