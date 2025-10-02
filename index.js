@@ -509,7 +509,7 @@ app.get('/calendar/:personId.ics', async (req, res) => {
             gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
           }
 
-          // Build Notion URL info
+          // Build Notion URL info for ICS format
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
             notionUrlInfo = `📋 Notion Link: ${event.notion_url}\n\n`;
@@ -522,7 +522,6 @@ app.get('/calendar/:personId.ics', async (req, res) => {
             end: eventTimes.end,
             description: payrollInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
-            url: event.notion_url || '',
             band: event.band || '',
             mainEvent: event.event_name
           });
@@ -693,7 +692,7 @@ app.get('/calendar/:personId', async (req, res) => {
             gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
           }
 
-          // Build Notion URL info
+          // Build Notion URL info (after gear checklist, before general info)
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
             notionUrlInfo = `📋 Notion Link: ${event.notion_url}\n\n`;
@@ -706,7 +705,6 @@ app.get('/calendar/:personId', async (req, res) => {
             end: eventTimes.end,
             description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
-            url: event.notion_url || '',
             band: event.band || '',
             mainEvent: event.event_name
         });
