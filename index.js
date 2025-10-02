@@ -89,8 +89,12 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDate = new Date(startDateStr);
         const endDate = new Date(endDateStr);
         
-        // Parse as floating times (no timezone conversion needed)
-        // The times are already in Pacific time from Notion
+        // Add Pacific offset for floating times
+        const isDST = isDSTDate(startDate);
+        const offsetHours = isDST ? 7 : 8;
+        
+        startDate.setHours(startDate.getHours() + offsetHours);
+        endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -128,8 +132,13 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDate = new Date(`${dateStr} ${startTimeStr}`);
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
         
-        // Parse as floating times (no timezone conversion needed)
-        // The times are already in Pacific time from Notion
+        // Add Pacific offset to create floating times that display correctly
+        // DST: +7 hours (PDT), Standard: +8 hours (PST)
+        const isDST = isDSTDate(startDate);
+        const offsetHours = isDST ? 7 : 8;
+        
+        startDate.setHours(startDate.getHours() + offsetHours);
+        endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -149,8 +158,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         const dateStr = singleMatch[1].trim();
         const date = new Date(dateStr);
         
-        // Parse as floating times (no timezone conversion needed)
-        // The times are already in Pacific time from Notion
+        // Add Pacific offset for floating times
+        const isDST = isDSTDate(date);
+        const offsetHours = isDST ? 7 : 8;
+        date.setHours(date.getHours() + offsetHours);
         
         if (!isNaN(date.getTime())) {
           return {
@@ -168,8 +179,10 @@ function parseUnifiedDateTime(dateTimeStr) {
   try {
     const date = new Date(cleanStr);
     
-    // Parse as floating times (no timezone conversion needed)
-    // The times are already in Pacific time from Notion
+    // Add Pacific offset for floating times
+    const isDST = isDSTDate(date);
+    const offsetHours = isDST ? 7 : 8;
+    date.setHours(date.getHours() + offsetHours);
     
     if (!isNaN(date.getTime())) {
       return {
@@ -824,8 +837,11 @@ app.get('/calendar/:personId', async (req, res) => {
                 const startDate = new Date(hotel.check_in);
                 const endDate = new Date(hotel.check_out);
                 
-                // Parse as floating times (no timezone conversion needed)
-                // The times are already in Pacific time from Notion
+                const isDST = isDSTDate(startDate);
+                const offsetHours = isDST ? 7 : 8;
+                
+                startDate.setHours(startDate.getHours() + offsetHours);
+                endDate.setHours(endDate.getHours() + offsetHours);
                 
                 hotelTimes = {
                   start: startDate,
@@ -882,8 +898,14 @@ app.get('/calendar/:personId', async (req, res) => {
             const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
             
             // Ensure both times have the same Pacific offset applied
-            // Parse as floating times (no timezone conversion needed)
-            // The times are already in Pacific time from Notion
+            const isDST = isDSTDate(startTime);
+            const offsetHours = isDST ? 7 : 8;
+            
+            // Only apply offset if not already applied (check if time looks like it needs offset)
+            if (startTime.getHours() < 12) { // If it's before noon, likely needs offset
+              startTime.setHours(startTime.getHours() + offsetHours);
+              endTime.setHours(endTime.getHours() + offsetHours);
+            }
 
             // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
