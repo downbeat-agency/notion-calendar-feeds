@@ -912,9 +912,17 @@ app.get('/calendar/:personId', async (req, res) => {
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
               const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
               
-              // Add driver info for all event types
+              // Add driver info for all event types (formatted like rehearsals)
               if (driverMatch) {
-                description += `Driver: ${driverMatch[1]}\n\n`;
+                // Split drivers by comma and format each on a new line like rehearsals
+                const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
+                if (drivers.length > 0) {
+                  description += 'Drivers:\n';
+                  drivers.forEach(driver => {
+                    description += `• ${driver}\n`;
+                  });
+                  description += '\n';
+                }
               }
               
               // Only add passenger list for meeting events (ground_transport_meeting)
