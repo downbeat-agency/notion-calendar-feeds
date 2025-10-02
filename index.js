@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
