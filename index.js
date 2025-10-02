@@ -86,16 +86,9 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDateStr = dateOnlyMatch[1].trim();
         const endDateStr = dateOnlyMatch[2].trim();
         
-        // Parse dates and set to midnight (for all-day events)
+        // Parse dates as floating times (no timezone conversion)
         const startDate = new Date(startDateStr);
         const endDate = new Date(endDateStr);
-        
-        // Add Pacific offset for floating times
-        const isDST = isDSTDate(startDate);
-        const offsetHours = isDST ? 7 : 8;
-        
-        startDate.setHours(startDate.getHours() + offsetHours);
-        endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -129,17 +122,9 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Parse dates as Pacific time and add offset to create floating times
+        // Parse dates as floating times (no timezone conversion)
         const startDate = new Date(`${dateStr} ${startTimeStr}`);
         const endDate = new Date(`${endDateStr} ${endTimeStr}`);
-        
-        // Add Pacific offset to create floating times that display correctly
-        // DST: +7 hours (PDT), Standard: +8 hours (PST)
-        const isDST = isDSTDate(startDate);
-        const offsetHours = isDST ? 7 : 8;
-        
-        startDate.setHours(startDate.getHours() + offsetHours);
-        endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -159,11 +144,6 @@ function parseUnifiedDateTime(dateTimeStr) {
         const dateStr = singleMatch[1].trim();
         const date = new Date(dateStr);
         
-        // Add Pacific offset for floating times
-        const isDST = isDSTDate(date);
-        const offsetHours = isDST ? 7 : 8;
-        date.setHours(date.getHours() + offsetHours);
-        
         if (!isNaN(date.getTime())) {
           return {
             start: date,
@@ -179,11 +159,6 @@ function parseUnifiedDateTime(dateTimeStr) {
   // Fallback: try to parse as regular ISO date
   try {
     const date = new Date(cleanStr);
-    
-    // Add Pacific offset for floating times
-    const isDST = isDSTDate(date);
-    const offsetHours = isDST ? 7 : 8;
-    date.setHours(date.getHours() + offsetHours);
     
     if (!isNaN(date.getTime())) {
       return {
@@ -832,15 +807,9 @@ app.get('/calendar/:personId', async (req, res) => {
               // Try to parse as unified format first
               hotelTimes = parseUnifiedDateTime(hotel.check_in);
               if (!hotelTimes) {
-                // If that fails, create dates and apply Pacific offset
+                // If that fails, create dates as floating times (no timezone conversion)
                 const startDate = new Date(hotel.check_in);
                 const endDate = new Date(hotel.check_out);
-                
-                const isDST = isDSTDate(startDate);
-                const offsetHours = isDST ? 7 : 8;
-                
-                startDate.setHours(startDate.getHours() + offsetHours);
-                endDate.setHours(endDate.getHours() + offsetHours);
                 
                 hotelTimes = {
                   start: startDate,
