@@ -68,6 +68,67 @@ function isDSTDate(date) {
   return checkDate >= dstStart && checkDate < dstEnd;
 }
 
+// Helper function to create timezone-naive Date objects for floating events
+function createFloatingDate(dateTimeStr) {
+  if (!dateTimeStr) return null;
+  
+  try {
+    // Parse the date string manually to avoid timezone conversion
+    // Expected format: "October 4, 2025 3:00 PM" or "October 4, 2025 3:00 PM"
+    const match = dateTimeStr.match(/([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}):(\d{2})\s+(AM|PM)/i);
+    if (!match) {
+      // Fallback to regular Date parsing
+      const date = new Date(dateTimeStr);
+      if (isNaN(date.getTime())) return null;
+      
+      // Create a new Date object with the local components (no timezone conversion)
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const day = date.getDate();
+      const hours = date.getHours();
+      const minutes = date.getMinutes();
+      const seconds = date.getSeconds();
+      
+      return new Date(year, month, day, hours, minutes, seconds);
+    }
+    
+    // Extract components from the match
+    const monthName = match[1];
+    const day = parseInt(match[2]);
+    const year = parseInt(match[3]);
+    let hours = parseInt(match[4]);
+    const minutes = parseInt(match[5]);
+    const period = match[6].toUpperCase();
+    
+    // Convert to 24-hour format
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    
+    // Convert month name to number (0-based)
+    const monthMap = {
+      'january': 0, 'february': 1, 'march': 2, 'april': 3, 'may': 4, 'june': 5,
+      'july': 6, 'august': 7, 'september': 8, 'october': 9, 'november': 10, 'december': 11
+    };
+    const month = monthMap[monthName.toLowerCase()];
+    if (month === undefined) return null;
+    
+    // Create a new Date object with these exact components (no timezone conversion)
+    // Use UTC methods to avoid timezone interpretation
+    const date = new Date();
+    date.setUTCFullYear(year);
+    date.setUTCMonth(month);
+    date.setUTCDate(day);
+    date.setUTCHours(hours);
+    date.setUTCMinutes(minutes);
+    date.setUTCSeconds(0);
+    date.setUTCMilliseconds(0);
+    return date;
+  } catch (e) {
+    console.warn('Failed to create floating date:', dateTimeStr, e);
+    return null;
+  }
+}
+
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -87,10 +148,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         const endDateStr = dateOnlyMatch[2].trim();
         
         // Parse dates as floating times (no timezone conversion)
-        const startDate = new Date(startDateStr);
-        const endDate = new Date(endDateStr);
+        const startDate = createFloatingDate(startDateStr);
+        const endDate = createFloatingDate(endDateStr);
         
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (startDate && endDate) {
           return {
             start: startDate,
             end: endDate
@@ -123,10 +184,11 @@ function parseUnifiedDateTime(dateTimeStr) {
       
       try {
         // Parse dates as floating times (no timezone conversion)
-        const startDate = new Date(`${dateStr} ${startTimeStr}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        // Create timezone-naive Date objects by manually setting components
+        const startDate = createFloatingDate(`${dateStr} ${startTimeStr}`);
+        const endDate = createFloatingDate(`${endDateStr} ${endTimeStr}`);
         
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (startDate && endDate) {
           return {
             start: startDate,
             end: endDate
@@ -142,9 +204,9 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(dateStr);
+        const date = createFloatingDate(dateStr);
         
-        if (!isNaN(date.getTime())) {
+        if (date) {
           return {
             start: date,
             end: date
@@ -158,9 +220,9 @@ function parseUnifiedDateTime(dateTimeStr) {
   
   // Fallback: try to parse as regular ISO date
   try {
-    const date = new Date(cleanStr);
+    const date = createFloatingDate(cleanStr);
     
-    if (!isNaN(date.getTime())) {
+    if (date) {
       return {
         start: date,
         end: date
