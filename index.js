@@ -897,15 +897,8 @@ app.get('/calendar/:personId', async (req, res) => {
             const startTime = new Date(transportTimes.start);
             const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
             
-            // Ensure both times have the same Pacific offset applied
-            const isDST = isDSTDate(startTime);
-            const offsetHours = isDST ? 7 : 8;
-            
-            // Only apply offset if not already applied (check if time looks like it needs offset)
-            if (startTime.getHours() < 12) { // If it's before noon, likely needs offset
-              startTime.setHours(startTime.getHours() + offsetHours);
-              endTime.setHours(endTime.getHours() + offsetHours);
-            }
+            // Ground transport times are already processed by parseUnifiedDateTime
+            // No additional offset needed - same logic as main events
 
             // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
