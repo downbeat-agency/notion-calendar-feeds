@@ -795,7 +795,7 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     });
 
     // Generate ICS calendar
-    const calendar = ical({ name: 'My Downbeat Calendar' });
+    const calendar = ical({ name: 'Downbeat iCal' });
 
     allCalendarEvents.forEach(event => {
       const startDate = event.start instanceof Date ? event.start : new Date(event.start);
@@ -1246,7 +1246,7 @@ app.get('/calendar/:personId', async (req, res) => {
     
     if (shouldReturnICS) {
       // Generate ICS calendar with all events
-      const calendar = ical({ name: 'My Downbeat Calendar' });
+      const calendar = ical({ name: 'Downbeat iCal' });
 
       allCalendarEvents.forEach(event => {
         // event.start and event.end are already Date objects for new format
