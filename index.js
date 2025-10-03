@@ -113,15 +113,22 @@ function createFloatingDate(dateTimeStr) {
     if (month === undefined) return null;
     
     // Create a new Date object with these exact components (no timezone conversion)
-    // Use UTC methods to avoid timezone interpretation
-    const date = new Date();
-    date.setUTCFullYear(year);
-    date.setUTCMonth(month);
-    date.setUTCDate(day);
-    date.setUTCHours(hours);
-    date.setUTCMinutes(minutes);
-    date.setUTCSeconds(0);
-    date.setUTCMilliseconds(0);
+    // For floating times, we need to create a date that when converted to UTC
+    // represents the correct local time. We do this by calculating the exact UTC time
+    // that represents the local time we want.
+    
+    // First, create the date as local time to get the correct timezone offset
+    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+    
+    // Get the timezone offset in milliseconds
+    const timezoneOffset = localDate.getTimezoneOffset() * 60000;
+    
+    // Calculate the UTC time that represents this local time
+    const utcTime = localDate.getTime() - timezoneOffset;
+    
+    // Create a new date from the calculated UTC time
+    const date = new Date(utcTime);
+    
     return date;
   } catch (e) {
     console.warn('Failed to create floating date:', dateTimeStr, e);
