@@ -155,13 +155,36 @@ function parseUnifiedDateTime(dateTimeStr) {
         return null;
       }
       
-      const start = new Date(startStr.trim());
-      const end = new Date(endStr.trim());
+      // Parse the dates (they already include timezone info)
+      const startUTC = new Date(startStr.trim());
+      const endUTC = new Date(endStr.trim());
       
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      if (isNaN(startUTC.getTime()) || isNaN(endUTC.getTime())) {
         console.warn('Invalid date parsing:', { startStr, endStr });
         return null;
       }
+      
+      // The dates already have timezone info, so we just need to create floating times
+      // that represent the local time without timezone conversion
+      // Extract the local time components and create floating dates
+      
+      const startYear = startUTC.getFullYear();
+      const startMonth = startUTC.getMonth();
+      const startDate = startUTC.getDate();
+      const startHours = startUTC.getHours();
+      const startMinutes = startUTC.getMinutes();
+      const startSeconds = startUTC.getSeconds();
+      
+      const endYear = endUTC.getFullYear();
+      const endMonth = endUTC.getMonth();
+      const endDate = endUTC.getDate();
+      const endHours = endUTC.getHours();
+      const endMinutes = endUTC.getMinutes();
+      const endSeconds = endUTC.getSeconds();
+      
+      // Create floating dates (no timezone conversion)
+      const start = new Date(startYear, startMonth, startDate, startHours, startMinutes, startSeconds);
+      const end = new Date(endYear, endMonth, endDate, endHours, endMinutes, endSeconds);
       
       return { start, end };
     } catch (e) {
