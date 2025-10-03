@@ -164,27 +164,36 @@ function parseUnifiedDateTime(dateTimeStr) {
         return null;
       }
       
-      // The dates already have timezone info, so we just need to create floating times
-      // that represent the local time without timezone conversion
-      // Extract the local time components and create floating dates
+      // For floating times, we want to create dates that represent the local time
+      // without any timezone conversion. The ISO string already contains the local time.
       
-      const startYear = startUTC.getFullYear();
-      const startMonth = startUTC.getMonth();
-      const startDate = startUTC.getDate();
-      const startHours = startUTC.getHours();
-      const startMinutes = startUTC.getMinutes();
-      const startSeconds = startUTC.getSeconds();
+      // Extract the date and time components directly from the ISO string
+      const startMatch = startStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+      const endMatch = endStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
       
-      const endYear = endUTC.getFullYear();
-      const endMonth = endUTC.getMonth();
-      const endDate = endUTC.getDate();
-      const endHours = endUTC.getHours();
-      const endMinutes = endUTC.getMinutes();
-      const endSeconds = endUTC.getSeconds();
+      if (!startMatch || !endMatch) {
+        console.warn('Could not parse date components from ISO strings');
+        return null;
+      }
       
-      // Create floating dates (no timezone conversion)
-      const start = new Date(startYear, startMonth, startDate, startHours, startMinutes, startSeconds);
-      const end = new Date(endYear, endMonth, endDate, endHours, endMinutes, endSeconds);
+      // Create floating dates using the local time components directly
+      const start = new Date(
+        parseInt(startMatch[1]), // year
+        parseInt(startMatch[2]) - 1, // month (0-indexed)
+        parseInt(startMatch[3]), // day
+        parseInt(startMatch[4]), // hour
+        parseInt(startMatch[5]), // minute
+        parseInt(startMatch[6])  // second
+      );
+      
+      const end = new Date(
+        parseInt(endMatch[1]), // year
+        parseInt(endMatch[2]) - 1, // month (0-indexed)
+        parseInt(endMatch[3]), // day
+        parseInt(endMatch[4]), // hour
+        parseInt(endMatch[5]), // minute
+        parseInt(endMatch[6])  // second
+      );
       
       return { start, end };
     } catch (e) {
