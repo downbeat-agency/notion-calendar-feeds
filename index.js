@@ -526,9 +526,12 @@ app.get('/subscribe/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // No need to fetch person data - just use generic title for speed
-    const personName = 'Downbeat Calendar';
-    const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
+    // Extract name parameter for personalization
+    const name = req.query.name;
+    const greeting = name ? `Hello ${name}!` : 'Subscribe to Downbeat Calendar';
+    const subtitle = name ? 'Subscribe to Downbeat Calendar' : '';
+    
+    const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics${name ? `?name=${encodeURIComponent(name)}` : ''}`;
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -643,7 +646,8 @@ app.get('/subscribe/:personId', async (req, res) => {
 </head>
 <body>
     <div class="container">
-        <h1>Subscribe to Downbeat Calendar</h1>
+        <h1>${greeting}</h1>
+        ${subtitle ? `<h2 style="color: #ccc; font-size: 1.5rem; font-weight: 300; text-align: center; margin-top: -10px; margin-bottom: 30px;">${subtitle}</h2>` : ''}
         
         <div class="instructions">
             <div class="section-title">Quick Subscribe</div>
@@ -651,7 +655,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         </div>
         
         <div class="app-links">
-            <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
+            <a href="webcal://${req.get('host')}/calendar/${personId}${name ? `?name=${encodeURIComponent(name)}` : ''}" class="app-link">
                 🍎 Apple Calendar
             </a>
         </div>
@@ -715,6 +719,10 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
+
+    // Extract name parameter for personalization
+    const name = req.query.name;
+    const calendarName = name ? `Downbeat iCal (${name})` : 'Downbeat iCal';
 
     // Get person from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
@@ -795,7 +803,7 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     });
 
     // Generate ICS calendar
-    const calendar = ical({ name: 'Downbeat iCal' });
+    const calendar = ical({ name: calendarName });
 
     allCalendarEvents.forEach(event => {
       const startDate = event.start instanceof Date ? event.start : new Date(event.start);
@@ -838,6 +846,10 @@ app.get('/calendar/:personId', async (req, res) => {
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
+
+    // Extract name parameter for personalization
+    const name = req.query.name;
+    const calendarName = name ? `Downbeat iCal (${name})` : 'Downbeat iCal';
 
     // Get person from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
@@ -1246,7 +1258,7 @@ app.get('/calendar/:personId', async (req, res) => {
     
     if (shouldReturnICS) {
       // Generate ICS calendar with all events
-      const calendar = ical({ name: 'Downbeat iCal' });
+      const calendar = ical({ name: calendarName });
 
       allCalendarEvents.forEach(event => {
         // event.start and event.end are already Date objects for new format
