@@ -1,0 +1,32 @@
+@September 7, 2025 7:00 PM → 11:00 PM
+@September 8, 2025 7:00 PM → 11:00 PM
+@September 14, 2025 5:00 PM → 11:00 PM
+@September 15, 2025 7:00 PM → 11:00 PM
+@September 20, 2025 7:15 PM → 11:30 PM
+@September 20, 2025 4:00 PM → 10:00 PM
+@September 26, 2025 4:00 PM → 11:00 PM
+@September 27, 2025 4:30 PM → 10:30 PM
+@October 4, 2025 10:00 PM → October 5, 2025 10:00 PM
+@October 11, 2025 9:00 PM → October 13, 2025 12:30 AM
+@October 19, 2025 12:30 AM → 11:00 PM
+@October 25, 2025 7:30 PM → 10:00 PM
+@November 2, 2025 1:00 AM → 11:00 PM
+@November 7, 2025 8:00 PM → 10:00 PM
+@November 9, 2025 12:00 AM → November 10, 2025 1:00 AM
+@November 15, 2025 10:00 PM → November 16, 2025 10:00 PM
+@November 23, 2025 12:30 AM → 11:30 PM
+@December 6, 2025 10:00 PM → December 7, 2025 10:00 PM
+@February 14, 2026 9:00 PM → 10:00 PM
+@April 11, 2026 9:00 PM → April 13, 2026 12:30 AM
+@April 25, 2026 9:00 PM → 11:00 PM
+@May 9, 2026 12:30 PM → May 11, 2026 1:00 AM
+@May 16, 2026 7:30 PM → May 17, 2026 10:00 PM
+@May 17, 2026 7:30 PM → 11:30 PM
+@June 6, 2026 9:30 PM → June 7, 2026 12:00 AM
+@June 28, 2026 1:00 AM → June 29, 2026 12:00 AM
+@July 26, 2026 6:45 PM → July 27, 2026 1:15 AM
+@August 8, 2026 11:00 PM → August 10, 2026 12:30 AM
+@August 29, 2026 12:00 AM → August 30, 2026 12:00 AM
+@September 19, 2026 5:30 PM → 10:30 PM
+@September 25, 2026 9:00 PM → September 27, 2026 1:00 AM
+@October 10, 2026 3:30 PM → October 11, 2026 12:00 AM
