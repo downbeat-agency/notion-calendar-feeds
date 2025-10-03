@@ -15,24 +15,83 @@ app.use(express.static('public'));
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 
-// Helper function to convert timezone-aware ISO 8601 to Pacific time (updated v2)
-function convertToPacific(isoString) {
+// Helper function to convert UTC ISO string to Pacific floating time
+function convertUTCToPacificFloating(isoString) {
   if (!isoString) return null;
   
   try {
-    // Parse the ISO string with timezone offset (e.g., -07:00, -08:00)
-    const date = new Date(isoString);
+    // Parse the UTC ISO string
+    const utcDate = new Date(isoString);
     
-    if (isNaN(date.getTime())) {
-      console.warn('Invalid date string:', isoString);
+    if (isNaN(utcDate.getTime())) {
+      console.warn('Invalid UTC ISO string:', isoString);
       return null;
     }
     
-    // The date is already correctly parsed with timezone information
-    // Just return it as-is since it's already in the correct timezone
-    return date;
-  } catch (e) {
-    console.warn('Failed to parse ISO date:', isoString, e);
+    // Determine Pacific timezone offset (PST = UTC-8, PDT = UTC-7)
+    const isDST = isDSTDate(utcDate);
+    const pacificOffset = isDST ? -7 : -8; // PDT = -7, PST = -8
+    
+    // Calculate Pacific time components
+    const pacificHours = utcDate.getUTCHours() + pacificOffset;
+    const pacificDate = new Date(utcDate.getUTCFullYear(), utcDate.getUTCMonth(), utcDate.getUTCDate());
+    
+    // Handle day overflow/underflow
+    if (pacificHours < 0) {
+      pacificDate.setUTCDate(pacificDate.getUTCDate() - 1);
+      const adjustedHours = pacificHours + 24;
+      pacificDate.setUTCHours(adjustedHours, utcDate.getUTCMinutes(), utcDate.getUTCSeconds());
+    } else if (pacificHours >= 24) {
+      pacificDate.setUTCDate(pacificDate.getUTCDate() + 1);
+      const adjustedHours = pacificHours - 24;
+      pacificDate.setUTCHours(adjustedHours, utcDate.getUTCMinutes(), utcDate.getUTCSeconds());
+    } else {
+      pacificDate.setUTCHours(pacificHours, utcDate.getUTCMinutes(), utcDate.getUTCSeconds());
+    }
+    
+    // Create floating time by extracting the Pacific time components (use local, not UTC)
+    const floatingDate = new Date(
+      pacificDate.getFullYear(),
+      pacificDate.getMonth(),
+      pacificDate.getDate(),
+      pacificDate.getHours(),
+      pacificDate.getMinutes(),
+      pacificDate.getSeconds()
+    );
+    
+    return floatingDate;
+  } catch (error) {
+    console.warn('Error converting UTC to Pacific floating time:', isoString, error);
+    return null;
+  }
+}
+
+// Helper function to parse ISO date range and convert to Pacific floating time
+function parseISODateRangeToPacific(isoDateRange) {
+  if (!isoDateRange || !isoDateRange.includes('/')) {
+    return null;
+  }
+  
+  try {
+    const [startStr, endStr] = isoDateRange.split('/');
+    
+    if (!startStr || !endStr) {
+      console.warn('Invalid ISO date range format:', isoDateRange);
+      return null;
+    }
+    
+    // Convert both start and end times from UTC to Pacific floating time
+    const start = convertUTCToPacificFloating(startStr.trim());
+    const end = convertUTCToPacificFloating(endStr.trim());
+    
+    if (!start || !end) {
+      console.warn('Failed to convert ISO dates to Pacific floating time:', { startStr, endStr });
+      return null;
+    }
+    
+    return { start, end };
+  } catch (error) {
+    console.warn('Error parsing ISO date range:', isoDateRange, error);
     return null;
   }
 }
@@ -636,7 +695,8 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     events.forEach(event => {
       // Add main event
       if (event.event_name && event.event_date) {
-        let eventTimes = parseUnifiedDateTime(event.event_date);
+        // Use direct ISO date range parsing for event dates (UTC to Pacific floating)
+        let eventTimes = parseISODateRangeToPacific(event.event_date);
         
         if (eventTimes) {
           let payrollInfo = '';
@@ -772,10 +832,10 @@ app.get('/calendar/:personId', async (req, res) => {
     const allCalendarEvents = [];
     
     events.forEach(event => {
-      // Add main event (using same logic as rehearsals)
+      // Add main event (using direct ISO date range parsing for event dates)
       if (event.event_name && event.event_date) {
-        // Parse event date/time using the same logic as rehearsal_time
-        let eventTimes = parseUnifiedDateTime(event.event_date);
+        // Use direct ISO date range parsing for event dates (UTC to Pacific floating)
+        let eventTimes = parseISODateRangeToPacific(event.event_date);
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
