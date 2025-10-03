@@ -108,8 +108,8 @@ function convertCalltimeToPacific(calltimeStr) {
       return calltimeStr;
     }
     
-    // If it's an ISO format, convert from UTC to Pacific floating time
-    if (calltimeStr.includes('T') && calltimeStr.includes('Z')) {
+    // If it's a UTC ISO format (ends with Z), convert from UTC to Pacific floating time
+    if (calltimeStr.includes('T') && calltimeStr.endsWith('Z')) {
       const pacificTime = convertUTCToPacificFloating(calltimeStr);
       if (pacificTime) {
         // Format as readable time (e.g., "3:00 PM")
@@ -126,6 +126,7 @@ function convertCalltimeToPacific(calltimeStr) {
     if (calltimeStr.includes('T') && (calltimeStr.includes('+') || calltimeStr.includes('-'))) {
       const utcDate = new Date(calltimeStr);
       if (!isNaN(utcDate.getTime())) {
+        // Convert to UTC first, then to Pacific floating time
         const pacificTime = convertUTCToPacificFloating(utcDate.toISOString());
         if (pacificTime) {
           // Format as readable time (e.g., "3:00 PM")
@@ -1016,10 +1017,13 @@ app.get('/calendar/:personId', async (req, res) => {
               location = rehearsal.rehearsal_address;
             }
 
-            // Build description with band personnel
+            // Build description with band personnel and PCO link
             let description = `Rehearsal for ${event.event_name}`;
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
+            }
+            if (rehearsal.rehearsal_pco && rehearsal.rehearsal_pco.trim()) {
+              description += `\n\nPCO Link: ${rehearsal.rehearsal_pco}`;
             }
 
             allCalendarEvents.push({
