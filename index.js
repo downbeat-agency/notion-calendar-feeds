@@ -49,14 +49,14 @@ function convertUTCToPacificFloating(isoString) {
       pacificDate.setUTCHours(pacificHours, utcDate.getUTCMinutes(), utcDate.getUTCSeconds());
     }
     
-    // Create floating time by extracting the Pacific time components (use local, not UTC)
+    // Create floating time by extracting the Pacific time components (use UTC methods to avoid timezone conversion)
     const floatingDate = new Date(
-      pacificDate.getFullYear(),
-      pacificDate.getMonth(),
-      pacificDate.getDate(),
-      pacificDate.getHours(),
-      pacificDate.getMinutes(),
-      pacificDate.getSeconds()
+      pacificDate.getUTCFullYear(),
+      pacificDate.getUTCMonth(),
+      pacificDate.getUTCDate(),
+      pacificDate.getUTCHours(),
+      pacificDate.getUTCMinutes(),
+      pacificDate.getUTCSeconds()
     );
     
     return floatingDate;
@@ -93,6 +93,57 @@ function parseISODateRangeToPacific(isoDateRange) {
   } catch (error) {
     console.warn('Error parsing ISO date range:', isoDateRange, error);
     return null;
+  }
+}
+
+// Helper function to convert calltime from UTC ISO to Pacific floating time
+function convertCalltimeToPacific(calltimeStr) {
+  if (!calltimeStr || calltimeStr.trim() === '') {
+    return null;
+  }
+  
+  try {
+    // If it's already in a simple time format (like "3:00 PM"), return as-is
+    if (calltimeStr.match(/^\d{1,2}:\d{2}\s*(AM|PM)$/i)) {
+      return calltimeStr;
+    }
+    
+    // If it's an ISO format, convert from UTC to Pacific floating time
+    if (calltimeStr.includes('T') && calltimeStr.includes('Z')) {
+      const pacificTime = convertUTCToPacificFloating(calltimeStr);
+      if (pacificTime) {
+        // Format as readable time (e.g., "3:00 PM")
+        const hours = pacificTime.getHours();
+        const minutes = pacificTime.getMinutes();
+        const period = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+        const displayMinutes = minutes.toString().padStart(2, '0');
+        return `${displayHours}:${displayMinutes} ${period}`;
+      }
+    }
+    
+    // If it's an ISO format with timezone offset, convert to Pacific floating time
+    if (calltimeStr.includes('T') && (calltimeStr.includes('+') || calltimeStr.includes('-'))) {
+      const utcDate = new Date(calltimeStr);
+      if (!isNaN(utcDate.getTime())) {
+        const pacificTime = convertUTCToPacificFloating(utcDate.toISOString());
+        if (pacificTime) {
+          // Format as readable time (e.g., "3:00 PM")
+          const hours = pacificTime.getHours();
+          const minutes = pacificTime.getMinutes();
+          const period = hours >= 12 ? 'PM' : 'AM';
+          const displayHours = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+          const displayMinutes = minutes.toString().padStart(2, '0');
+          return `${displayHours}:${displayMinutes} ${period}`;
+        }
+      }
+    }
+    
+    // Fallback: return as-is if we can't parse it
+    return calltimeStr;
+  } catch (error) {
+    console.warn('Error converting calltime to Pacific:', calltimeStr, error);
+    return calltimeStr; // Return original if conversion fails
   }
 }
 
@@ -856,7 +907,10 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            calltimeInfo = `➡️ Call Time: ${event.calltime}\n\n`;
+            const convertedCalltime = convertCalltimeToPacific(event.calltime);
+            if (convertedCalltime) {
+              calltimeInfo = `➡️ Call Time: ${convertedCalltime}\n\n`;
+            }
           }
 
           // Build gear checklist info (after calltime, before general info)
