@@ -145,6 +145,31 @@ function parseUnifiedDateTime(dateTimeStr) {
   // Clean up the string
   const cleanStr = dateTimeStr.replace(/[']/g, '').trim();
   
+  // Check if it's the new ISO format (contains / and T)
+  if (cleanStr.includes('/') && cleanStr.includes('T')) {
+    try {
+      const [startStr, endStr] = cleanStr.split('/');
+      
+      if (!startStr || !endStr) {
+        console.warn('Invalid ISO date format:', cleanStr);
+        return null;
+      }
+      
+      const start = new Date(startStr.trim());
+      const end = new Date(endStr.trim());
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        console.warn('Invalid date parsing:', { startStr, endStr });
+        return null;
+      }
+      
+      return { start, end };
+    } catch (e) {
+      console.warn('Failed to parse ISO date:', cleanStr, e);
+      return null;
+    }
+  }
+  
   // Check if it's the unified format with @
   if (cleanStr.startsWith('@')) {
     // First, try to match date-only format (for hotels): "@November 1, 2025 → November 2, 2025"
