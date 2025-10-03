@@ -250,9 +250,57 @@ app.get('/', (_req, res) => {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
       ics: '/calendar/:personId?format=ics',
-      debug: '/debug/simple-test/:personId'
+      debug: '/debug/simple-test/:personId',
+      rawCalendarFeed: '/debug/raw-calendar-feed/:personId'
     }
   });
+});
+
+// Raw Calendar Feed JSON endpoint
+app.get('/debug/raw-calendar-feed/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Get person from Personnel database
+    const person = await notion.pages.retrieve({ page_id: personId });
+    
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+
+    // Get the raw Calendar Feed JSON
+    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
+    
+    if (!calendarFeedJson) {
+      return res.status(404).json({ error: 'No calendar feed data found' });
+    }
+
+    // Parse and return the complete JSON data
+    try {
+      const parsedData = JSON.parse(calendarFeedJson);
+      res.json({
+        personId: personId,
+        fullName: person.properties?.['Full Name']?.formula?.string,
+        timestamp: new Date().toISOString(),
+        calendarFeedJson: parsedData,
+        totalEvents: Array.isArray(parsedData) ? parsedData.length : (parsedData.events ? parsedData.events.length : 0)
+      });
+    } catch (parseError) {
+      res.status(500).json({ 
+        error: 'Failed to parse calendar feed JSON', 
+        rawData: calendarFeedJson,
+        parseError: parseError.message 
+      });
+    }
+  } catch (error) {
+    console.error('Raw calendar feed error:', error);
+    res.status(500).json({ error: 'Error fetching raw calendar feed', details: error.message });
+  }
 });
 
 // Simple formula test endpoint
