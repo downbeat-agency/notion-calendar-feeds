@@ -748,7 +748,7 @@ app.get('/calendar/:personId.ics', async (req, res) => {
     }
 
     // Extract events array and process them (same logic as main endpoint)
-    const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
+    const events = Array.isArray(calendarData) ? calendarData : (calendarData.events || []);
     
     // Process all events into a flat array (truncated for brevity - same as main endpoint)
     const allCalendarEvents = [];
@@ -879,8 +879,8 @@ app.get('/calendar/:personId', async (req, res) => {
       return res.status(500).json({ error: 'Invalid calendar feed JSON' });
     }
 
-    // Extract events array
-    const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
+    // Extract events array - handle new formula format that returns array directly
+    const events = Array.isArray(calendarData) ? calendarData : (calendarData.events || []);
 
     // Parse separate Hotels JSON if it exists
     let hotelsData = null;
