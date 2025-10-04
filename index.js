@@ -4,6 +4,7 @@ import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 
 // Server refresh - October 1, 2025
+// Redeploy - October 4, 2025 - Fix blank calendar issue
 
 const app = express();
 const port = process.env.PORT || 3000;
