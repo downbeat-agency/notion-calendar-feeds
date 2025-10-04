@@ -61,3 +61,4 @@ console.log('=== SUMMARY ===');
 console.log(`Total events with dates: ${data.filter(e => e.event_date).length}`);
 console.log('All dates are already in Pacific Time format with timezone offset (-07:00 or -08:00)');
 console.log('The conversion creates floating times that represent the local Pacific time without timezone conversion.');
+

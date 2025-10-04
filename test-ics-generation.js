@@ -92,3 +92,4 @@ if (dtstartMatch) {
   console.log('Expected: 20251004T173000 (October 4, 2025 17:30:00)');
   console.log('Match:', dtstart === '20251004T173000' ? '✅ CORRECT' : '❌ INCORRECT');
 }
+

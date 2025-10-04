@@ -104,3 +104,4 @@ if (newParsed) {
   console.log('New format start:', newParsed.start.toString());
   console.log('New format end:', newParsed.end.toString());
 }
+

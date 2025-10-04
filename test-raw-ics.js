@@ -231,3 +231,4 @@ console.log('  DTEND:', dtend3 ? dtend3[1] : 'NOT FOUND');
 
 console.log('\n=== FULL ICS OUTPUT (Current Approach) ===');
 console.log(ics1);
+
