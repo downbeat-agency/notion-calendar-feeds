@@ -91,13 +91,50 @@ async function getCalendarDataFromDatabase(personId) {
 
   const calendarData = response.results[0].properties;
   
-  // Parse all the JSON strings
-  const events = JSON.parse(calendarData.Events?.formula?.string || '[]');
-  const flights = JSON.parse(calendarData.Flights?.formula?.string || '[]');
-  const transportation = JSON.parse(calendarData.Transportation?.formula?.string || '[]');
-  const hotels = JSON.parse(calendarData.Hotels?.formula?.string || '[]');
-  const rehearsals = JSON.parse(calendarData.Rehearsals?.formula?.string || '[]');
-  const teamCalendar = JSON.parse(calendarData['Team Calendar']?.formula?.string || '[]');
+  // Parse all the JSON strings with better error handling
+  let events, flights, transportation, hotels, rehearsals, teamCalendar;
+  
+  try {
+    events = JSON.parse(calendarData.Events?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Events JSON:', calendarData.Events?.formula?.string?.substring(0, 100));
+    throw new Error(`Events JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    flights = JSON.parse(calendarData.Flights?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Flights JSON:', calendarData.Flights?.formula?.string?.substring(0, 100));
+    throw new Error(`Flights JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    transportation = JSON.parse(calendarData.Transportation?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Transportation JSON:', calendarData.Transportation?.formula?.string?.substring(0, 100));
+    throw new Error(`Transportation JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    hotels = JSON.parse(calendarData.Hotels?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Hotels JSON:', calendarData.Hotels?.formula?.string?.substring(0, 100));
+    throw new Error(`Hotels JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    rehearsals = JSON.parse(calendarData.Rehearsals?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Rehearsals JSON:', calendarData.Rehearsals?.formula?.string?.substring(0, 100));
+    throw new Error(`Rehearsals JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    teamCalendar = JSON.parse(calendarData['Team Calendar']?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Team Calendar JSON:', calendarData['Team Calendar']?.formula?.string?.substring(0, 100));
+    throw new Error(`Team Calendar JSON parse error: ${e.message}`);
+  }
 
   // Transform into the same format as the old system
   // Return events with shared flights, hotels, rehearsals, and transportation
