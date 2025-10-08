@@ -258,6 +258,24 @@ function parseUnifiedDateTime(dateTimeStr) {
     console.warn('Failed to parse as ISO date:', cleanStr, e);
   }
   
+  // Special handling for date range format: "2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00"
+  if (cleanStr.includes('/')) {
+    try {
+      const [startStr, endStr] = cleanStr.split('/');
+      const startDate = new Date(startStr.trim());
+      const endDate = new Date(endStr.trim());
+      
+      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        return {
+          start: startDate,
+          end: endDate
+        };
+      }
+    } catch (e) {
+      console.warn('Failed to parse date range format:', cleanStr, e);
+    }
+  }
+  
   return null;
 }
 
@@ -319,7 +337,7 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
         allProperties: Object.keys(props)
       };
     });
-
+    
     res.json({
       personId: personId,
       totalEvents: response.results.length,
@@ -697,7 +715,7 @@ app.get('/calendar/:personId', async (req, res) => {
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
-
+    
     let events = [];
     let personName = 'Unknown';
 
@@ -1643,7 +1661,7 @@ app.get('/calendar-legacy/:personId', async (req, res) => {
               if (confirmationMatch) {
                 description += `Confirmation: ${confirmationMatch[1]}\n`;
               }
-            } else {
+    } else {
               description = 'Ground transportation details';
             }
 
