@@ -125,7 +125,10 @@ async function getCalendarDataFromDatabase(personId) {
     });
   });
 
-  return allEvents;
+  return {
+    personName: 'Unknown', // Will be updated by the calling function
+    events: allEvents
+  };
 }
 
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
@@ -701,16 +704,18 @@ app.get('/calendar/:personId', async (req, res) => {
     if (useNewData && CALENDAR_DATA_DB) {
       // Try new Calendar Data database first
       try {
-        events = await getCalendarDataFromDatabase(personId);
-        if (!events || events.length === 0) {
+        const calendarData = await getCalendarDataFromDatabase(personId);
+        if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
           throw new Error('No events found in Calendar Data database');
         }
+        
+        events = calendarData;
         
         // Get person name from Personnel database
         const person = await notion.pages.retrieve({ page_id: personId });
         personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
         
-        console.log(`Using new Calendar Data database for ${personName} (${events.length} events)`);
+        console.log(`Using new Calendar Data database for ${personName} (${calendarData.events.length} events)`);
       } catch (newDataError) {
         console.warn('New data source failed, falling back to old method:', newDataError.message);
         // Fall back to old method
