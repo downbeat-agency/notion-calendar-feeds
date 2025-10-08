@@ -1509,7 +1509,7 @@ app.get('/calendar/:personId', async (req, res) => {
       personName: personName,
       totalMainEvents: eventsArray.length,
       totalCalendarEvents: allCalendarEvents.length,
-      dataSource: useNewData && CALENDAR_DATA_DB ? 'new' : 'old',
+      dataSource: 'calendar_data_database',
       breakdown: {
         mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
