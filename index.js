@@ -971,7 +971,8 @@ app.get('/calendar/:personId', async (req, res) => {
                 const startLaMinutes = startUtc.getUTCMinutes();
                 const startLaSeconds = startUtc.getUTCSeconds();
                 
-                const startLa = new Date(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds);
+                // Create date using UTC methods to prevent double conversion
+                const startLa = new Date(Date.UTC(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds));
                 
                 // Parse end time - convert UTC to LA time
                 const endUtc = new Date(endTime);
@@ -982,7 +983,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 const endLaMinutes = endUtc.getUTCMinutes();
                 const endLaSeconds = endUtc.getUTCSeconds();
                 
-                const endLa = new Date(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds);
+                const endLa = new Date(Date.UTC(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds));
                 
                 rehearsalTimes = {
                   start: startLa,
@@ -998,7 +999,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 const laMinutes = utcDate.getUTCMinutes();
                 const laSeconds = utcDate.getUTCSeconds();
                 
-                const laDateTime = new Date(laYear, laMonth, laDate, laHours, laMinutes, laSeconds);
+                const laDateTime = new Date(Date.UTC(laYear, laMonth, laDate, laHours, laMinutes, laSeconds));
                 
                 rehearsalTimes = {
                   start: laDateTime,
@@ -1304,8 +1305,8 @@ app.get('/calendar/:personId', async (req, res) => {
               const startLaMinutes = startUtc.getUTCMinutes();
               const startLaSeconds = startUtc.getUTCSeconds();
               
-              // Create floating time (no timezone)
-              const startLa = new Date(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds);
+              // Create date using UTC methods to prevent double conversion
+              const startLa = new Date(Date.UTC(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds));
               
               // Parse end time - convert UTC to LA time
               const endUtc = new Date(endTime);
@@ -1316,7 +1317,7 @@ app.get('/calendar/:personId', async (req, res) => {
               const endLaMinutes = endUtc.getUTCMinutes();
               const endLaSeconds = endUtc.getUTCSeconds();
               
-              const endLa = new Date(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds);
+              const endLa = new Date(Date.UTC(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds));
               
               rehearsalTimes = {
                 start: startLa,
@@ -1332,7 +1333,7 @@ app.get('/calendar/:personId', async (req, res) => {
               const laMinutes = utcDate.getUTCMinutes();
               const laSeconds = utcDate.getUTCSeconds();
               
-              const laDateTime = new Date(laYear, laMonth, laDate, laHours, laMinutes, laSeconds);
+              const laDateTime = new Date(Date.UTC(laYear, laMonth, laDate, laHours, laMinutes, laSeconds));
               
               rehearsalTimes = {
                 start: laDateTime,
