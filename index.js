@@ -786,7 +786,7 @@ app.get('/calendar/:personId', async (req, res) => {
             let displayCalltime = event.calltime;
             
             // Check if calltime is an ISO timestamp (UTC)
-            if (event.calltime.includes('T') && event.calltime.includes('Z')) {
+            if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 // Parse the UTC timestamp
                 const utcDate = new Date(event.calltime);
@@ -1532,7 +1532,7 @@ app.get('/calendar-legacy/:personId', async (req, res) => {
             let displayCalltime = event.calltime;
             
             // Check if calltime is an ISO timestamp (UTC)
-            if (event.calltime.includes('T') && event.calltime.includes('Z')) {
+            if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 // Parse the UTC timestamp
                 const utcDate = new Date(event.calltime);
