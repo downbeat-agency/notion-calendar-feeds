@@ -13,6 +13,7 @@ app.use(express.static('public'));
 
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
+const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 
 // Helper function to convert timezone-aware ISO 8601 to Pacific time (updated v2)
 function convertToPacific(isoString) {
@@ -205,9 +206,66 @@ app.get('/', (_req, res) => {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
       ics: '/calendar/:personId?format=ics',
-      debug: '/debug/simple-test/:personId'
+      debug: '/debug/simple-test/:personId',
+      debug_calendar_data: '/debug/calendar-data/:personId'
     }
   });
+});
+
+// Debug endpoint to explore Calendar Data database
+app.get('/debug/calendar-data/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    if (!CALENDAR_DATA_DB) {
+      return res.status(500).json({ error: 'CALENDAR_DATA_DATABASE_ID not configured' });
+    }
+
+    // Query Calendar Data database for events related to this person
+    const response = await notion.databases.query({
+      database_id: CALENDAR_DATA_DB,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    });
+
+    // Return structured data for inspection
+    const events = response.results.map(page => {
+      const props = page.properties;
+      return {
+        id: page.id,
+        name: props.Name?.title?.[0]?.text?.content || 'No name',
+        personnel: props.Personnel?.relation || [],
+        url: props.URL?.url || 'No URL',
+        // Show the key event properties we need
+        events: props.Events?.formula?.string || props.Events?.rich_text?.[0]?.text?.content || 'No events',
+        flights: props.Flights?.formula?.string || props.Flights?.rich_text?.[0]?.text?.content || 'No flights',
+        rehearsals: props.Rehearsals?.formula?.string || props.Rehearsals?.rich_text?.[0]?.text?.content || 'No rehearsals',
+        transportation: props.Transportation?.formula?.string || props.Transportation?.rich_text?.[0]?.text?.content || 'No transportation',
+        hotels: props.Hotels?.formula?.string || props.Hotels?.rich_text?.[0]?.text?.content || 'No hotels',
+        teamCalendar: props['Team Calendar']?.formula?.string || props['Team Calendar']?.rich_text?.[0]?.text?.content || 'No team calendar',
+        // Show all available properties for debugging
+        allProperties: Object.keys(props)
+      };
+    });
+
+    res.json({
+      personId: personId,
+      totalEvents: response.results.length,
+      events: events
+    });
+  } catch (error) {
+    console.error('Calendar Data debug error:', error);
+    res.status(500).json({ error: 'Error querying Calendar Data', details: error.message });
+  }
 });
 
 // Simple formula test endpoint
@@ -570,12 +628,12 @@ app.get('/calendar/:personId', async (req, res) => {
     const shouldReturnICS = format === 'ics' || 
                            acceptHeader.includes('text/calendar') || 
                            acceptHeader.includes('application/calendar');
-
+    
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
-
+    
     // Get person from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
     
@@ -842,7 +900,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 endDate.setHours(endDate.getHours() + offsetHours);
                 
                 hotelTimes = {
-                  start: startDate,
+            start: startDate,
                   end: endDate
                 };
               }
@@ -1028,10 +1086,10 @@ app.get('/calendar/:personId', async (req, res) => {
         // or strings for old format
         const startDate = event.start instanceof Date ? event.start : new Date(event.start);
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-        
-        calendar.createEvent({
-          start: startDate,
-          end: endDate,
+          
+          calendar.createEvent({
+            start: startDate,
+            end: endDate,
           summary: event.title,
           description: event.description,
           location: event.location,
