@@ -954,61 +954,8 @@ app.get('/calendar/:personId', async (req, res) => {
       if (event.rehearsals && Array.isArray(event.rehearsals)) {
         event.rehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-            let rehearsalTimes = null;
-            
-            // Simple UTC to America/Los_Angeles conversion with floating time zone
-            try {
-              // Check if it's a date range (contains '/')
-              if (rehearsal.rehearsal_time.includes('/')) {
-                const [startTime, endTime] = rehearsal.rehearsal_time.split('/');
-                
-                // Parse start time - convert UTC to LA time
-                const startUtc = new Date(startTime);
-                const startLaYear = startUtc.getUTCFullYear();
-                const startLaMonth = startUtc.getUTCMonth();
-                const startLaDate = startUtc.getUTCDate();
-                const startLaHours = startUtc.getUTCHours() - 7; // PDT offset
-                const startLaMinutes = startUtc.getUTCMinutes();
-                const startLaSeconds = startUtc.getUTCSeconds();
-                
-                // Create date using UTC methods to prevent double conversion
-                const startLa = new Date(Date.UTC(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds));
-                
-                // Parse end time - convert UTC to LA time
-                const endUtc = new Date(endTime);
-                const endLaYear = endUtc.getUTCFullYear();
-                const endLaMonth = endUtc.getUTCMonth();
-                const endLaDate = endUtc.getUTCDate();
-                const endLaHours = endUtc.getUTCHours() - 7; // PDT offset
-                const endLaMinutes = endUtc.getUTCMinutes();
-                const endLaSeconds = endUtc.getUTCSeconds();
-                
-                const endLa = new Date(Date.UTC(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds));
-                
-                rehearsalTimes = {
-                  start: startLa,
-                  end: endLa
-                };
-              } else {
-                // Single timestamp
-                const utcDate = new Date(rehearsal.rehearsal_time);
-                const laYear = utcDate.getUTCFullYear();
-                const laMonth = utcDate.getUTCMonth();
-                const laDate = utcDate.getUTCDate();
-                const laHours = utcDate.getUTCHours() - 7; // PDT offset
-                const laMinutes = utcDate.getUTCMinutes();
-                const laSeconds = utcDate.getUTCSeconds();
-                
-                const laDateTime = new Date(Date.UTC(laYear, laMonth, laDate, laHours, laMinutes, laSeconds));
-                
-                rehearsalTimes = {
-                  start: laDateTime,
-                  end: laDateTime
-                };
-              }
-            } catch (e) {
-              console.warn('Failed to parse rehearsal time:', rehearsal.rehearsal_time, e);
-            }
+            // Use the same parseUnifiedDateTime function as other event types
+            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
 
             // Build location string
             let location = 'TBD';
@@ -1288,61 +1235,8 @@ app.get('/calendar/:personId', async (req, res) => {
     if (topLevelRehearsals.length > 0) {
       topLevelRehearsals.forEach(rehearsal => {
         if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-          let rehearsalTimes = null;
-          
-          // Simple UTC to America/Los_Angeles conversion with floating time zone
-          try {
-            // Check if it's a date range (contains '/')
-            if (rehearsal.rehearsal_time.includes('/')) {
-              const [startTime, endTime] = rehearsal.rehearsal_time.split('/');
-              
-              // Parse start time - convert UTC to LA time
-              const startUtc = new Date(startTime);
-              const startLaYear = startUtc.getUTCFullYear();
-              const startLaMonth = startUtc.getUTCMonth();
-              const startLaDate = startUtc.getUTCDate();
-              const startLaHours = startUtc.getUTCHours() - 7; // PDT offset
-              const startLaMinutes = startUtc.getUTCMinutes();
-              const startLaSeconds = startUtc.getUTCSeconds();
-              
-              // Create date using UTC methods to prevent double conversion
-              const startLa = new Date(Date.UTC(startLaYear, startLaMonth, startLaDate, startLaHours, startLaMinutes, startLaSeconds));
-              
-              // Parse end time - convert UTC to LA time
-              const endUtc = new Date(endTime);
-              const endLaYear = endUtc.getUTCFullYear();
-              const endLaMonth = endUtc.getUTCMonth();
-              const endLaDate = endUtc.getUTCDate();
-              const endLaHours = endUtc.getUTCHours() - 7; // PDT offset
-              const endLaMinutes = endUtc.getUTCMinutes();
-              const endLaSeconds = endUtc.getUTCSeconds();
-              
-              const endLa = new Date(Date.UTC(endLaYear, endLaMonth, endLaDate, endLaHours, endLaMinutes, endLaSeconds));
-              
-              rehearsalTimes = {
-                start: startLa,
-                end: endLa
-              };
-    } else {
-              // Single timestamp
-              const utcDate = new Date(rehearsal.rehearsal_time);
-              const laYear = utcDate.getUTCFullYear();
-              const laMonth = utcDate.getUTCMonth();
-              const laDate = utcDate.getUTCDate();
-              const laHours = utcDate.getUTCHours() - 7; // PDT offset
-              const laMinutes = utcDate.getUTCMinutes();
-              const laSeconds = utcDate.getUTCSeconds();
-              
-              const laDateTime = new Date(Date.UTC(laYear, laMonth, laDate, laHours, laMinutes, laSeconds));
-              
-              rehearsalTimes = {
-                start: laDateTime,
-                end: laDateTime
-              };
-            }
-          } catch (e) {
-            console.warn('Failed to parse rehearsal time:', rehearsal.rehearsal_time, e);
-          }
+          // Use the same parseUnifiedDateTime function as other event types
+          let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
           
           if (rehearsalTimes) {
             let location = 'TBD';
