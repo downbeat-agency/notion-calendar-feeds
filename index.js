@@ -338,9 +338,28 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
       };
     });
     
+    // Count actual events from all JSON arrays
+    let totalActualEvents = 0;
+    events.forEach(event => {
+      try {
+        const eventsArray = JSON.parse(event.events || '[]');
+        const flightsArray = JSON.parse(event.flights || '[]');
+        const rehearsalsArray = JSON.parse(event.rehearsals || '[]');
+        const transportationArray = JSON.parse(event.transportation || '[]');
+        const hotelsArray = JSON.parse(event.hotels || '[]');
+        const teamCalendarArray = JSON.parse(event.teamCalendar || '[]');
+        
+        totalActualEvents += eventsArray.length + flightsArray.length + rehearsalsArray.length + 
+                           transportationArray.length + hotelsArray.length + teamCalendarArray.length;
+      } catch (e) {
+        console.warn('Error parsing JSON in debug endpoint:', e);
+      }
+    });
+    
     res.json({
       personId: personId,
-      totalEvents: response.results.length,
+      totalDatabaseRows: response.results.length,
+      totalActualEvents: totalActualEvents,
       events: events
     });
   } catch (error) {
