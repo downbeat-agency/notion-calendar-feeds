@@ -875,7 +875,8 @@ app.get('/calendar/:personId', async (req, res) => {
             description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
-            mainEvent: event.event_name
+            mainEvent: event.event_name,
+            calltime: displayCalltime || null
         });
         }
       }
@@ -1621,7 +1622,8 @@ app.get('/calendar-legacy/:personId', async (req, res) => {
             description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
-            mainEvent: event.event_name
+            mainEvent: event.event_name,
+            calltime: displayCalltime || null
         });
         }
       }
