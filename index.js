@@ -656,104 +656,10 @@ app.get('/calendar/:personId.ics', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Get person from Personnel database
-    const person = await notion.pages.retrieve({ page_id: personId });
-    
-    if (!person) {
-      return res.status(404).json({ error: 'Person not found' });
-    }
-
-    // Get Calendar Feed JSON from person's formula property
-    const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
-    
-    if (!calendarFeedJson) {
-      return res.status(404).json({ error: 'No calendar feed data found' });
-    }
-
-    // Parse the JSON data
-    let calendarData;
-    try {
-      calendarData = JSON.parse(calendarFeedJson);
-    } catch (parseError) {
-      return res.status(500).json({ error: 'Invalid calendar feed JSON' });
-    }
-
-    // Extract events array and process them (same logic as main endpoint)
-    const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
-    
-    // Process all events into a flat array (truncated for brevity - same as main endpoint)
-    const allCalendarEvents = [];
-    
-    events.forEach(event => {
-      // Add main event
-      if (event.event_name && event.event_date) {
-        let eventTimes = parseUnifiedDateTime(event.event_date);
-        
-        if (eventTimes) {
-          let payrollInfo = '';
-          if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
-            event.payroll.forEach(payroll => {
-              payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
-              if (payroll.assignment) {
-                payrollInfo += `Assignment: ${payroll.assignment}\n`;
-              }
-              if (payroll.pay_total) {
-                payrollInfo += `Pay: $${payroll.pay_total}\n`;
-              }
-            });
-            payrollInfo += '\n';
-          }
-
-          // Build gear checklist info for ICS format
-          let gearChecklistInfo = '';
-          if (event.gear_checklist && event.gear_checklist.trim()) {
-            gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
-          }
-
-          // Build Notion URL info for ICS format
-          let notionUrlInfo = '';
-          if (event.notion_url && event.notion_url.trim()) {
-            notionUrlInfo = `📋 Notion Link: ${event.notion_url}\n\n`;
-          }
-
-          allCalendarEvents.push({
-            type: 'main_event',
-            title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
-            start: eventTimes.start,
-            end: eventTimes.end,
-            description: payrollInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
-            location: event.venue_address || event.venue || '',
-            band: event.band || '',
-            mainEvent: event.event_name
-          });
-        }
-      }
-      
-      // Add other event types (flights, rehearsals, hotels, transport) - same logic as main endpoint
-      // ... (truncated for brevity)
-    });
-
-    // Generate ICS calendar
-    const calendar = ical({ name: 'My Downbeat Calendar' });
-
-    allCalendarEvents.forEach(event => {
-      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-      
-      calendar.createEvent({
-        start: startDate,
-        end: endDate,
-        summary: event.title,
-        description: event.description,
-        location: event.location,
-        url: event.url || ''
-      });
-    });
-
-    res.setHeader('Content-Type', 'text/calendar');
-    res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
-    return res.send(calendar.toString());
-    
+    // Redirect to main calendar endpoint with format=ics
+    // This ensures we use the new Calendar Data database
+    return res.redirect(301, `/calendar/${personId}?format=ics`);
+  
   } catch (error) {
     console.error('ICS calendar generation error:', error);
     res.status(500).json({ error: 'Error generating calendar' });
