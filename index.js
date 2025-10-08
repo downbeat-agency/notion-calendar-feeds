@@ -770,6 +770,8 @@ app.get('/calendar/:personId', async (req, res) => {
     const topLevelRehearsals = events.rehearsals || [];
     const topLevelHotels = events.hotels || [];
     const topLevelTransport = events.ground_transport || [];
+    
+    console.log(`DEBUG: topLevelRehearsals count: ${topLevelRehearsals.length}`);
     const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
@@ -1061,7 +1063,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 endDate.setHours(endDate.getHours() + offsetHours);
                 
                 hotelTimes = {
-                  start: startDate,
+            start: startDate,
                   end: endDate
                 };
               }
@@ -1217,7 +1219,7 @@ app.get('/calendar/:personId', async (req, res) => {
               if (confirmationMatch) {
                 description += `Confirmation: ${confirmationMatch[1]}\n`;
               }
-            } else {
+        } else {
               description = 'Ground transportation details';
             }
 
@@ -1320,7 +1322,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 start: startLa,
                 end: endLa
               };
-            } else {
+    } else {
               // Single timestamp
               const utcDate = new Date(rehearsal.rehearsal_time);
               const laYear = utcDate.getUTCFullYear();
