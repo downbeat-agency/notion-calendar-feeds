@@ -68,6 +68,66 @@ function isDSTDate(date) {
   return checkDate >= dstStart && checkDate < dstEnd;
 }
 
+// Helper function to get calendar data from Calendar Data database
+async function getCalendarDataFromDatabase(personId) {
+  if (!CALENDAR_DATA_DB) {
+    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  // Query Calendar Data database for events related to this person
+  const response = await notion.databases.query({
+    database_id: CALENDAR_DATA_DB,
+    filter: {
+      property: 'Personnel',
+      relation: {
+        contains: personId
+      }
+    }
+  });
+
+  if (response.results.length === 0) {
+    return null;
+  }
+
+  const calendarData = response.results[0].properties;
+  
+  // Parse all the JSON strings
+  const events = JSON.parse(calendarData.Events?.formula?.string || '[]');
+  const flights = JSON.parse(calendarData.Flights?.formula?.string || '[]');
+  const transportation = JSON.parse(calendarData.Transportation?.formula?.string || '[]');
+  const hotels = JSON.parse(calendarData.Hotels?.formula?.string || '[]');
+  const rehearsals = JSON.parse(calendarData.Rehearsals?.formula?.string || '[]');
+  const teamCalendar = JSON.parse(calendarData['Team Calendar']?.formula?.string || '[]');
+
+  // Transform into the same format as the old system
+  const allEvents = [];
+
+  // Process main events
+  events.forEach(event => {
+    allEvents.push({
+      event_name: event.event_name,
+      event_date: event.event_date,
+      band: event.band,
+      calltime: event.calltime,
+      gear_checklist: event.gear_checklist,
+      general_info: event.general_info,
+      venue: event.venue,
+      venue_address: event.venue_address,
+      notion_url: event.notion_url,
+      pay_total: event.pay_total,
+      position: event.position,
+      assignments: event.assignments,
+      // Add flights, rehearsals, hotels, transportation as nested arrays
+      flights: flights,
+      rehearsals: rehearsals,
+      hotels: hotels,
+      ground_transport: transportation
+    });
+  });
+
+  return allEvents;
+}
+
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -617,8 +677,530 @@ app.get('/calendar/:personId.ics', async (req, res) => {
   }
 });
 
-// Main calendar endpoint
+// New calendar endpoint using Calendar Data database (with fallback)
 app.get('/calendar/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+    const format = req.query.format;
+    const useNewData = req.query.source === 'new'; // Add ?source=new to test new data source
+    
+    // Auto-detect format from Accept header for calendar subscriptions
+    const acceptHeader = req.headers.accept || '';
+    const shouldReturnICS = format === 'ics' || 
+                           acceptHeader.includes('text/calendar') || 
+                           acceptHeader.includes('application/calendar');
+
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    let events = [];
+    let personName = 'Unknown';
+
+    if (useNewData && CALENDAR_DATA_DB) {
+      // Try new Calendar Data database first
+      try {
+        events = await getCalendarDataFromDatabase(personId);
+        if (!events || events.length === 0) {
+          throw new Error('No events found in Calendar Data database');
+        }
+        
+        // Get person name from Personnel database
+        const person = await notion.pages.retrieve({ page_id: personId });
+        personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+        
+        console.log(`Using new Calendar Data database for ${personName} (${events.length} events)`);
+      } catch (newDataError) {
+        console.warn('New data source failed, falling back to old method:', newDataError.message);
+        // Fall back to old method
+        events = await getCalendarDataFromOldMethod(personId);
+        personName = events.personName || 'Unknown';
+      }
+    } else {
+      // Use old method
+      events = await getCalendarDataFromOldMethod(personId);
+      personName = events.personName || 'Unknown';
+    }
+
+    // Process events into calendar format (same logic as before)
+    const allCalendarEvents = [];
+    
+    // Handle both array format and object with events property
+    const eventsArray = Array.isArray(events) ? events : events.events || [];
+    
+    eventsArray.forEach(event => {
+      // Add main event (using same logic as before)
+      if (event.event_name && event.event_date) {
+        let eventTimes = parseUnifiedDateTime(event.event_date);
+        
+        if (eventTimes) {
+          // Build payroll info for description (put at TOP)
+          let payrollInfo = '';
+          if (event.payroll && Array.isArray(event.payroll) && event.payroll.length > 0) {
+            event.payroll.forEach(payroll => {
+              payrollInfo += `Position: ${payroll.position || 'N/A'}\n`;
+              if (payroll.assignment) {
+                payrollInfo += `Assignment: ${payroll.assignment}\n`;
+              }
+              if (payroll.pay_total) {
+                payrollInfo += `Pay: $${payroll.pay_total}\n`;
+              }
+            });
+            payrollInfo += '\n'; // Add spacing after position info
+          }
+
+          // Build calltime info (after payroll, before general info)
+          let calltimeInfo = '';
+          if (event.calltime && event.calltime.trim()) {
+            // Compensate for timezone: if calltime looks like a time (e.g., "3:00 PM"),
+            // it may have been converted to UTC, so we need to subtract 7-8 hours
+            let displayCalltime = event.calltime;
+            
+            // Try to parse the time and adjust for timezone
+            const timeMatch = event.calltime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+            if (timeMatch) {
+              let hours = parseInt(timeMatch[1]);
+              const minutes = timeMatch[2];
+              const period = timeMatch[3].toUpperCase();
+              
+              // Convert to 24-hour format
+              if (period === 'PM' && hours !== 12) hours += 12;
+              if (period === 'AM' && hours === 12) hours = 0;
+              
+              // Subtract 7 hours to convert from UTC back to Pacific (PDT)
+              // Use 7 for PDT (most of the year), 8 for PST (winter)
+              hours -= 7;
+              
+              // Handle negative hours (wrap to previous day)
+              if (hours < 0) hours += 24;
+              if (hours >= 24) hours -= 24;
+              
+              // Convert back to 12-hour format
+              let newPeriod = 'AM';
+              let displayHours = hours;
+              if (hours === 0) {
+                displayHours = 12;
+              } else if (hours === 12) {
+                newPeriod = 'PM';
+              } else if (hours > 12) {
+                displayHours = hours - 12;
+                newPeriod = 'PM';
+              }
+              
+              displayCalltime = `${displayHours}:${minutes} ${newPeriod}`;
+            }
+            
+            calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
+          }
+
+          // Build gear checklist info (after calltime, before general info)
+          let gearChecklistInfo = '';
+          if (event.gear_checklist && event.gear_checklist.trim()) {
+            gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
+          }
+
+          // Build Notion URL info (after gear checklist, before general info)
+          let notionUrlInfo = '';
+          if (event.notion_url && event.notion_url.trim()) {
+            notionUrlInfo = `📋 Notion Link: ${event.notion_url}\n\n`;
+          }
+
+          allCalendarEvents.push({
+            type: 'main_event',
+            title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
+            start: eventTimes.start,
+            end: eventTimes.end,
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
+            location: event.venue_address || event.venue || '',
+            band: event.band || '',
+            mainEvent: event.event_name
+        });
+        }
+      }
+      
+      // Add flight events (same logic as before)
+      if (event.flights && Array.isArray(event.flights)) {
+        event.flights.forEach(flight => {
+          // Departure flight
+          if (flight.departure_time && flight.departure_name) {
+            let departureTimes = parseUnifiedDateTime(flight.departure_time);
+            if (!departureTimes) {
+              // Fallback to old format
+              departureTimes = {
+                start: flight.departure_time,
+                end: flight.departure_arrival_time || flight.departure_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_departure',
+              title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
+              start: departureTimes.start,
+              end: departureTimes.end,
+              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
+              location: flight.departure_airport || '',
+              airline: flight.departure_airline || '',
+              flightNumber: flight.departure_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+            });
+          }
+
+          // Return flight
+          if (flight.return_time && flight.return_name) {
+            let returnTimes = parseUnifiedDateTime(flight.return_time);
+            if (!returnTimes) {
+              // Fallback to old format
+              returnTimes = {
+                start: flight.return_time,
+                end: flight.return_arrival_time || flight.return_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_return',
+              title: `✈️ ${flight.return_name || 'Flight Return'}`,
+              start: returnTimes.start,
+              end: returnTimes.end,
+              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
+              location: flight.return_airport || '',
+              airline: flight.return_airline || '',
+              flightNumber: flight.return_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+    });
+  }
+});
+      }
+
+      // Add rehearsal events (same logic as before)
+      if (event.rehearsals && Array.isArray(event.rehearsals)) {
+        event.rehearsals.forEach(rehearsal => {
+          if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
+            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+            if (!rehearsalTimes) {
+              // Fallback: treat as single time point
+              rehearsalTimes = {
+                start: rehearsal.rehearsal_time,
+                end: rehearsal.rehearsal_time
+              };
+            }
+
+            // Build location string
+            let location = 'TBD';
+            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
+              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
+            } else if (rehearsal.rehearsal_location) {
+              location = rehearsal.rehearsal_location;
+            } else if (rehearsal.rehearsal_address) {
+              location = rehearsal.rehearsal_address;
+            }
+
+            // Build description with band personnel
+            let description = `Rehearsal for ${event.event_name}`;
+            if (rehearsal.rehearsal_band) {
+              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
+            }
+
+            allCalendarEvents.push({
+              type: 'rehearsal',
+              title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
+              start: rehearsalTimes.start,
+              end: rehearsalTimes.end,
+              description: description,
+              location: location,
+              mainEvent: event.event_name
+            });
+  }
+});
+      }
+
+      // Add hotel events (same logic as before)
+      if (event.hotels && Array.isArray(event.hotels)) {
+        event.hotels.forEach(hotel => {
+          // Try new dates_booked format first, then fallback to old check_in/check_out
+          let hotelTimes = null;
+          
+          if (hotel.dates_booked) {
+            hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
+          } else if (hotel.check_in && hotel.check_out) {
+            // Fallback to old format - try to parse with unified function
+            try {
+              // Try to parse as unified format first
+              hotelTimes = parseUnifiedDateTime(hotel.check_in);
+              if (!hotelTimes) {
+                // If that fails, create dates and apply Pacific offset
+                const startDate = new Date(hotel.check_in);
+                const endDate = new Date(hotel.check_out);
+                
+                const isDST = isDSTDate(startDate);
+                const offsetHours = isDST ? 7 : 8;
+                
+                startDate.setHours(startDate.getHours() + offsetHours);
+                endDate.setHours(endDate.getHours() + offsetHours);
+                
+                hotelTimes = {
+                  start: startDate,
+                  end: endDate
+                };
+              }
+            } catch (e) {
+              console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
+              return;
+            }
+          }
+
+          if (hotelTimes) {
+            // Format names on reservation - each name on a separate line
+            let namesFormatted = 'N/A';
+            if (hotel.names_on_reservation) {
+              const names = hotel.names_on_reservation.split(',').map(n => n.trim()).filter(n => n);
+              if (names.length > 0) {
+                namesFormatted = '\n' + names.map(name => `${name}`).join('\n');
+              }
+            }
+
+            allCalendarEvents.push({
+              type: 'hotel',
+              title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
+              start: hotelTimes.start,
+              end: hotelTimes.end,
+              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
+              location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
+              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              confirmation: hotel.confirmation || '',
+              hotelName: hotel.hotel_name || '',
+              mainEvent: event.event_name
+            });
+          }
+        });
+      }
+
+      // Add ground transport events (same logic as before)
+      if (event.ground_transport && Array.isArray(event.ground_transport)) {
+        event.ground_transport.forEach(transport => {
+          if (transport.start && transport.end) {
+            let transportTimes = parseUnifiedDateTime(transport.start);
+            if (!transportTimes) {
+              // Fallback: treat as single time point
+              transportTimes = {
+                start: transport.start,
+                end: transport.end || transport.start
+              };
+            }
+
+            // For ground transport, make events 30 minutes long
+            const startTime = new Date(transportTimes.start);
+            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
+            
+            // Ground transport times are already processed by parseUnifiedDateTime
+            // No additional offset needed - same logic as main events
+
+            // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
+            let formattedTitle = transport.title || 'Ground Transport';
+            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
+
+            // Build description based on event type using new property structure
+            let description = '';
+            
+            if (transport.description) {
+              // Extract driver and passenger info from description
+              const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+              const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              
+              // Add driver info for all event types (formatted like rehearsals)
+              if (driverMatch) {
+                // Split drivers by comma and format each on a new line like rehearsals
+                const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
+                if (drivers.length > 0) {
+                  description += 'Drivers:\n';
+                  drivers.forEach(driver => {
+                    description += `• ${driver}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              
+              // Only add passenger list for meeting events (ground_transport_meeting)
+              if (passengerMatch && transport.type === 'ground_transport_meeting') {
+                // Split passengers by comma and format each on a new line
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p);
+                if (passengers.length > 0) {
+                  description += 'Passengers:\n';
+                  passengers.forEach(passenger => {
+                    description += `• ${passenger}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              
+              // Extract event-specific info sections based on event type
+              if (transport.type === 'ground_transport_meeting') {
+                // For meeting events, look for "Meet Up Info" section
+                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (meetupInfoMatch) {
+                  const meetupInfo = meetupInfoMatch[1].trim();
+                  if (meetupInfo) {
+                    description += 'Meet Up Info:\n';
+                    // Format meetup info with bullet points for each line
+                    const meetupInfoLines = meetupInfo.split('\n').filter(line => line.trim());
+                    meetupInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_pickup') {
+                // For pickup events, look for "Pick Up Info" section
+                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (pickupInfoMatch) {
+                  const pickupInfo = pickupInfoMatch[1].trim();
+                  if (pickupInfo) {
+                    description += 'Pick Up Info:\n';
+                    // Format pickup info with bullet points for each line
+                    const pickupInfoLines = pickupInfo.split('\n').filter(line => line.trim());
+                    pickupInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_dropoff') {
+                // For dropoff events, look for "Drop Off Info" section
+                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (dropoffInfoMatch) {
+                  const dropoffInfo = dropoffInfoMatch[1].trim();
+                  if (dropoffInfo) {
+                    description += 'Drop Off Info:\n';
+                    // Format dropoff info with bullet points for each line
+                    const dropoffInfoLines = dropoffInfo.split('\n').filter(line => line.trim());
+                    dropoffInfoLines.forEach(line => {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine) {
+                        description += `• ${trimmedLine}\n`;
+                      }
+                    });
+                    description += '\n';
+                  }
+                }
+              }
+              
+              // Add confirmation info if present
+              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
+              if (confirmationMatch) {
+                description += `Confirmation: ${confirmationMatch[1]}\n`;
+              }
+            } else {
+              description = 'Ground transportation details';
+            }
+
+            allCalendarEvents.push({
+              type: transport.type || 'ground_transport',
+              title: `🚙 ${formattedTitle}`,
+              start: startTime.toISOString(),
+              end: endTime.toISOString(),
+              description: description.trim(),
+              location: transport.location || '',
+              mainEvent: event.event_name
+            });
+
+            // Note: Meetup events are now handled directly by the Notion formula as ground_transport_meeting events
+            // No need to parse Passenger Info for meetup events anymore
+          }
+        });
+      }
+    });
+    
+    if (shouldReturnICS) {
+      // Generate ICS calendar with all events
+      const calendar = ical({ name: 'My Downbeat Calendar' });
+
+      allCalendarEvents.forEach(event => {
+        // event.start and event.end are already Date objects for new format
+        // or strings for old format
+        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+        
+        calendar.createEvent({
+          start: startDate,
+          end: endDate,
+          summary: event.title,
+          description: event.description,
+          location: event.location,
+          url: event.url || ''
+          // No timezone - let calendar apps interpret UTC times as local
+        });
+      });
+
+      res.setHeader('Content-Type', 'text/calendar');
+      res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
+      return res.send(calendar.toString());
+    }
+
+    // Return JSON format with expanded events
+    res.json({
+      personName: personName,
+      totalMainEvents: eventsArray.length,
+      totalCalendarEvents: allCalendarEvents.length,
+      dataSource: useNewData && CALENDAR_DATA_DB ? 'new' : 'old',
+      breakdown: {
+        mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
+        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
+        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
+        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
+      },
+      events: allCalendarEvents
+    });
+    
+  } catch (error) {
+    console.error('Calendar generation error:', error);
+    res.status(500).json({ error: 'Error generating calendar' });
+  }
+});
+
+// Helper function to get calendar data from old method (for fallback)
+async function getCalendarDataFromOldMethod(personId) {
+  // Get person from Personnel database
+  const person = await notion.pages.retrieve({ page_id: personId });
+  
+  if (!person) {
+    throw new Error('Person not found');
+  }
+
+  // Get Calendar Feed JSON from person's formula property
+  const calendarFeedJson = person.properties?.['Calendar Feed JSON']?.formula?.string;
+  
+  if (!calendarFeedJson) {
+    throw new Error('No calendar feed data found');
+  }
+
+  // Parse the JSON data
+  let calendarData;
+  try {
+    calendarData = JSON.parse(calendarFeedJson);
+  } catch (parseError) {
+    throw new Error('Invalid calendar feed JSON');
+  }
+
+  // Extract events array
+  const events = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
+  
+  return {
+    personName: person.properties?.['Full Name']?.formula?.string || 'Unknown',
+    events: events
+  };
+}
+
+// Legacy calendar endpoint (kept for backward compatibility)
+app.get('/calendar-legacy/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     const format = req.query.format;
