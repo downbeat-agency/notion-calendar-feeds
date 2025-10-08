@@ -100,11 +100,10 @@ async function getCalendarDataFromDatabase(personId) {
   const teamCalendar = JSON.parse(calendarData['Team Calendar']?.formula?.string || '[]');
 
   // Transform into the same format as the old system
-  const allEvents = [];
-
-  // Process main events
-  events.forEach(event => {
-    allEvents.push({
+  // Return events with shared flights, hotels, rehearsals, and transportation
+  return {
+    personName: 'Unknown', // Will be updated by the calling function
+    events: events.map(event => ({
       event_name: event.event_name,
       event_date: event.event_date,
       band: event.band,
@@ -117,17 +116,18 @@ async function getCalendarDataFromDatabase(personId) {
       pay_total: event.pay_total,
       position: event.position,
       assignments: event.assignments,
-      // Add flights, rehearsals, hotels, transportation as nested arrays
-      flights: flights,
-      rehearsals: rehearsals,
-      hotels: hotels,
-      ground_transport: transportation
-    });
-  });
-
-  return {
-    personName: 'Unknown', // Will be updated by the calling function
-    events: allEvents
+      // Don't nest these - they will be added at the top level
+      flights: [],
+      rehearsals: [],
+      hotels: [],
+      ground_transport: []
+    })),
+    // Add shared data at the top level
+    flights: flights,
+    rehearsals: rehearsals,
+    hotels: hotels,
+    ground_transport: transportation,
+    team_calendar: teamCalendar
   };
 }
 
@@ -752,6 +752,13 @@ app.get('/calendar/:personId', async (req, res) => {
     // Handle both array format and object with events property
     const eventsArray = Array.isArray(events) ? events : events.events || [];
     
+    // Extract top-level arrays for new data source (if available)
+    const topLevelFlights = events.flights || [];
+    const topLevelRehearsals = events.rehearsals || [];
+    const topLevelHotels = events.hotels || [];
+    const topLevelTransport = events.ground_transport || [];
+    const topLevelTeamCalendar = events.team_calendar || [];
+    
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
@@ -1140,6 +1147,189 @@ app.get('/calendar/:personId', async (req, res) => {
         });
       }
     });
+    
+    // Process top-level arrays (for new data source)
+    // These arrays are shared across all events and should only be processed once
+    if (topLevelFlights.length > 0) {
+      topLevelFlights.forEach(flight => {
+        // Departure flight
+        if (flight.departure_time && flight.departure_name) {
+          let departureTimes = parseUnifiedDateTime(flight.departure_time);
+          if (departureTimes) {
+            allCalendarEvents.push({
+              type: 'flight_departure',
+              title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
+              start: departureTimes.start,
+              end: departureTimes.end,
+              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
+              location: flight.departure_airport || '',
+              airline: flight.departure_airline || '',
+              flightNumber: flight.departure_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: '' // Top-level flights aren't tied to a specific event
+            });
+          }
+        }
+
+        // Return flight
+        if (flight.return_time && flight.return_name) {
+          let returnTimes = parseUnifiedDateTime(flight.return_time);
+          if (returnTimes) {
+            allCalendarEvents.push({
+              type: 'flight_return',
+              title: `✈️ ${flight.return_name || 'Flight Return'}`,
+              start: returnTimes.start,
+              end: returnTimes.end,
+              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
+              location: flight.return_airport || '',
+              airline: flight.return_airline || '',
+              flightNumber: flight.return_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: '' // Top-level flights aren't tied to a specific event
+            });
+          }
+        }
+      });
+    }
+
+    if (topLevelRehearsals.length > 0) {
+      topLevelRehearsals.forEach(rehearsal => {
+        if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
+          let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+          if (rehearsalTimes) {
+            let location = 'TBD';
+            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
+              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
+            } else if (rehearsal.rehearsal_location) {
+              location = rehearsal.rehearsal_location;
+            } else if (rehearsal.rehearsal_address) {
+              location = rehearsal.rehearsal_address;
+            }
+
+            let description = `Rehearsal`;
+            if (rehearsal.rehearsal_band) {
+              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
+            }
+
+            allCalendarEvents.push({
+              type: 'rehearsal',
+              title: `🎤 Rehearsal`,
+              start: rehearsalTimes.start,
+              end: rehearsalTimes.end,
+              description: description,
+              location: location,
+              mainEvent: '' // Top-level rehearsals aren't tied to a specific event
+            });
+          }
+        }
+      });
+    }
+
+    if (topLevelHotels.length > 0) {
+      topLevelHotels.forEach(hotel => {
+        let hotelTimes = null;
+        
+        if (hotel.dates_booked) {
+          hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
+        }
+
+        if (hotelTimes) {
+          let namesFormatted = 'N/A';
+          if (hotel.names_on_reservation) {
+            const names = hotel.names_on_reservation.split(',').map(n => n.trim()).filter(n => n);
+            if (names.length > 0) {
+              namesFormatted = '\n' + names.map(name => `${name}`).join('\n');
+            }
+          }
+
+          allCalendarEvents.push({
+            type: 'hotel',
+            title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
+            start: hotelTimes.start,
+            end: hotelTimes.end,
+            description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
+            location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
+            url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+            confirmation: hotel.confirmation || '',
+            hotelName: hotel.hotel_name || '',
+            mainEvent: '' // Top-level hotels aren't tied to a specific event
+          });
+        }
+      });
+    }
+
+    if (topLevelTransport.length > 0) {
+      topLevelTransport.forEach(transport => {
+        if (transport.start) {
+          let transportTimes = parseUnifiedDateTime(transport.start);
+          if (transportTimes) {
+            const startTime = new Date(transportTimes.start);
+            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+
+            let formattedTitle = transport.title || 'Ground Transport';
+            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
+
+            let description = '';
+            if (transport.description) {
+              const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+              
+              if (driverMatch) {
+                const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
+                if (drivers.length > 0) {
+                  description += 'Drivers:\n';
+                  drivers.forEach(driver => {
+                    description += `• ${driver}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              
+              description += transport.description.replace(/Driver:\s*[^\n]+\n?/, '');
+            }
+
+            let eventType = 'ground_transport';
+            if (transport.type === 'ground_transport_pickup') {
+              eventType = 'ground_transport_pickup';
+            } else if (transport.type === 'ground_transport_dropoff') {
+              eventType = 'ground_transport_dropoff';
+            } else if (transport.type === 'ground_transport_meeting') {
+              eventType = 'ground_transport_meeting';
+            }
+
+            allCalendarEvents.push({
+              type: eventType,
+              title: `🚙 ${formattedTitle}`,
+              start: startTime,
+              end: endTime,
+              description: description,
+              location: transport.location || '',
+              mainEvent: '' // Top-level transport isn't tied to a specific event
+            });
+          }
+        }
+      });
+    }
+
+    if (topLevelTeamCalendar.length > 0) {
+      topLevelTeamCalendar.forEach(teamEvent => {
+        if (teamEvent.date) {
+          let eventTimes = parseUnifiedDateTime(teamEvent.date);
+          if (eventTimes) {
+            allCalendarEvents.push({
+              type: 'team_calendar',
+              title: `📅 ${teamEvent.title || 'Team Event'}`,
+              start: eventTimes.start,
+              end: eventTimes.end,
+              description: teamEvent.notes || '',
+              location: '',
+              url: teamEvent.notion_link || '',
+              mainEvent: '' // Top-level team calendar events aren't tied to a specific event
+            });
+          }
+        }
+      });
+    }
+
     
     if (shouldReturnICS) {
       // Generate ICS calendar with all events
