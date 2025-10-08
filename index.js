@@ -1522,7 +1522,12 @@ app.get('/calendar/:personId', async (req, res) => {
     
   } catch (error) {
     console.error('Calendar generation error:', error);
-    res.status(500).json({ error: 'Error generating calendar' });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Error generating calendar',
+      message: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
