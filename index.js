@@ -1363,11 +1363,18 @@ app.get('/calendar/:personId', async (req, res) => {
         if (teamEvent.date) {
           let eventTimes = parseUnifiedDateTime(teamEvent.date);
           if (eventTimes) {
+            // Make team calendar events all-day by using just the date portion
+            const startDate = new Date(eventTimes.start);
+            startDate.setUTCHours(0, 0, 0, 0);
+            
+            const endDate = new Date(startDate);
+            endDate.setUTCDate(endDate.getUTCDate() + 1);
+            
             allCalendarEvents.push({
               type: 'team_calendar',
               title: `📅 ${teamEvent.title || 'Team Event'}`,
-              start: eventTimes.start,
-              end: eventTimes.end,
+            start: startDate,
+            end: endDate,
               description: teamEvent.notes || '',
               location: '',
               url: teamEvent.notion_link || '',
