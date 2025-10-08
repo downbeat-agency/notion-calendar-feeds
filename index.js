@@ -875,8 +875,7 @@ app.get('/calendar/:personId', async (req, res) => {
             description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
-            mainEvent: event.event_name,
-            calltime: displayCalltime || null
+            mainEvent: event.event_name
         });
         }
       }
@@ -940,13 +939,50 @@ app.get('/calendar/:personId', async (req, res) => {
       if (event.rehearsals && Array.isArray(event.rehearsals)) {
         event.rehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
-            if (!rehearsalTimes) {
-              // Fallback: treat as single time point
-              rehearsalTimes = {
-                start: rehearsal.rehearsal_time,
-                end: rehearsal.rehearsal_time
-              };
+            let rehearsalTimes = null;
+            
+            // Handle rehearsal time conversion from UTC to America/Los_Angeles
+            if (rehearsal.rehearsal_time.includes('T') && (rehearsal.rehearsal_time.includes('Z') || rehearsal.rehearsal_time.includes('+00:00'))) {
+              try {
+                // Check if it's a date range (contains '/')
+                if (rehearsal.rehearsal_time.includes('/')) {
+                  const [startTime, endTime] = rehearsal.rehearsal_time.split('/');
+                  
+                  // Parse start time
+                  const startUtc = new Date(startTime);
+                  const startLa = new Date(startUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  // Parse end time
+                  const endUtc = new Date(endTime);
+                  const endLa = new Date(endUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  rehearsalTimes = {
+                    start: startLa,
+                    end: endLa
+                  };
+                } else {
+                  // Single timestamp
+                  const utcDate = new Date(rehearsal.rehearsal_time);
+                  const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  rehearsalTimes = {
+                    start: laDate,
+                    end: laDate
+                  };
+                }
+              } catch (e) {
+                console.warn('Failed to parse rehearsal time:', rehearsal.rehearsal_time, e);
+              }
+            } else {
+              // Fallback to original parsing
+              rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+              if (!rehearsalTimes) {
+                // Fallback: treat as single time point
+                rehearsalTimes = {
+                  start: rehearsal.rehearsal_time,
+                  end: rehearsal.rehearsal_time
+                };
+              }
             }
 
             // Build location string
@@ -1227,7 +1263,45 @@ app.get('/calendar/:personId', async (req, res) => {
     if (topLevelRehearsals.length > 0) {
       topLevelRehearsals.forEach(rehearsal => {
         if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-          let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+          let rehearsalTimes = null;
+          
+          // Handle rehearsal time conversion from UTC to America/Los_Angeles
+          if (rehearsal.rehearsal_time.includes('T') && (rehearsal.rehearsal_time.includes('Z') || rehearsal.rehearsal_time.includes('+00:00'))) {
+            try {
+              // Check if it's a date range (contains '/')
+              if (rehearsal.rehearsal_time.includes('/')) {
+                const [startTime, endTime] = rehearsal.rehearsal_time.split('/');
+                
+                // Parse start time
+                const startUtc = new Date(startTime);
+                const startLa = new Date(startUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                
+                // Parse end time
+                const endUtc = new Date(endTime);
+                const endLa = new Date(endUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                
+                rehearsalTimes = {
+                  start: startLa,
+                  end: endLa
+                };
+              } else {
+                // Single timestamp
+                const utcDate = new Date(rehearsal.rehearsal_time);
+                const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                
+                rehearsalTimes = {
+                  start: laDate,
+                  end: laDate
+                };
+              }
+            } catch (e) {
+              console.warn('Failed to parse rehearsal time:', rehearsal.rehearsal_time, e);
+            }
+          } else {
+            // Fallback to original parsing
+            rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+          }
+          
           if (rehearsalTimes) {
             let location = 'TBD';
             if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
@@ -1622,8 +1696,7 @@ app.get('/calendar-legacy/:personId', async (req, res) => {
             description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
-            mainEvent: event.event_name,
-            calltime: displayCalltime || null
+            mainEvent: event.event_name
         });
         }
       }
@@ -1687,13 +1760,50 @@ app.get('/calendar-legacy/:personId', async (req, res) => {
       if (event.rehearsals && Array.isArray(event.rehearsals)) {
         event.rehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
-            if (!rehearsalTimes) {
-              // Fallback: treat as single time point
-              rehearsalTimes = {
-                start: rehearsal.rehearsal_time,
-                end: rehearsal.rehearsal_time
-              };
+            let rehearsalTimes = null;
+            
+            // Handle rehearsal time conversion from UTC to America/Los_Angeles
+            if (rehearsal.rehearsal_time.includes('T') && (rehearsal.rehearsal_time.includes('Z') || rehearsal.rehearsal_time.includes('+00:00'))) {
+              try {
+                // Check if it's a date range (contains '/')
+                if (rehearsal.rehearsal_time.includes('/')) {
+                  const [startTime, endTime] = rehearsal.rehearsal_time.split('/');
+                  
+                  // Parse start time
+                  const startUtc = new Date(startTime);
+                  const startLa = new Date(startUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  // Parse end time
+                  const endUtc = new Date(endTime);
+                  const endLa = new Date(endUtc.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  rehearsalTimes = {
+                    start: startLa,
+                    end: endLa
+                  };
+                } else {
+                  // Single timestamp
+                  const utcDate = new Date(rehearsal.rehearsal_time);
+                  const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                  
+                  rehearsalTimes = {
+                    start: laDate,
+                    end: laDate
+                  };
+                }
+              } catch (e) {
+                console.warn('Failed to parse rehearsal time:', rehearsal.rehearsal_time, e);
+              }
+            } else {
+              // Fallback to original parsing
+              rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+              if (!rehearsalTimes) {
+                // Fallback: treat as single time point
+                rehearsalTimes = {
+                  start: rehearsal.rehearsal_time,
+                  end: rehearsal.rehearsal_time
+                };
+              }
             }
 
             // Build location string
