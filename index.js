@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
+import { createClient } from 'redis';
 
 // Server refresh - October 1, 2025
 
@@ -8,12 +10,47 @@ const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ auth: process.env.NOTION_API_KEY });
 
+// Redis client setup
+let redis = null;
+let cacheEnabled = false;
+
+try {
+  if (process.env.REDIS_URL) {
+    redis = createClient({
+      url: process.env.REDIS_URL
+    });
+
+    redis.on('error', (err) => {
+      console.error('Redis Client Error:', err.message);
+      cacheEnabled = false;
+    });
+    
+    redis.on('connect', () => {
+      console.log('✅ Redis connected successfully');
+      cacheEnabled = true;
+    });
+
+    // Connect to Redis
+    await redis.connect();
+  } else {
+    console.warn('⚠️  REDIS_URL not configured - caching disabled');
+  }
+} catch (err) {
+  console.error('Failed to connect to Redis:', err.message);
+  console.warn('⚠️  Continuing without cache');
+  redis = null;
+  cacheEnabled = false;
+}
+
 // Serve static files from public directory
 app.use(express.static('public'));
 
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
+
+// Cache TTL in seconds (10 minutes default)
+const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 600;
 
 // Helper function to convert timezone-aware ISO 8601 to Pacific time (updated v2)
 function convertToPacific(isoString) {
@@ -325,15 +362,81 @@ function parseUnifiedDateTime(dateTimeStr) {
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
-    status: 'Calendar Feed Server Running (Updated)',
+    status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
       ics: '/calendar/:personId?format=ics',
       debug: '/debug/simple-test/:personId',
-      debug_calendar_data: '/debug/calendar-data/:personId'
+      debug_calendar_data: '/debug/calendar-data/:personId',
+      cache_clear: '/cache/clear/:personId',
+      cache_clear_all: '/cache/clear-all'
+    },
+    cache: {
+      ttl: `${CACHE_TTL} seconds`,
+      status: cacheEnabled ? 'enabled' : 'disabled'
     }
   });
+});
+
+// Cache management endpoint - clear cache for a specific person
+app.get('/cache/clear/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+    
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+    
+    // Clear both ICS and JSON cache
+    const icsKey = `calendar:${personId}:ics`;
+    const jsonKey = `calendar:${personId}:json`;
+    
+    const icsDeleted = await redis.del(icsKey);
+    const jsonDeleted = await redis.del(jsonKey);
+    
+    res.json({
+      success: true,
+      message: 'Cache cleared successfully',
+      personId: personId,
+      cleared: {
+        ics: icsDeleted > 0,
+        json: jsonDeleted > 0
+      }
+    });
+  } catch (error) {
+    console.error('Cache clear error:', error);
+    res.status(500).json({ error: 'Error clearing cache' });
+  }
+});
+
+// Cache management endpoint - clear all caches
+app.get('/cache/clear-all', async (req, res) => {
+  try {
+    // Get all calendar cache keys
+    const keys = await redis.keys('calendar:*');
+    
+    if (keys.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No cache entries found',
+        cleared: 0
+      });
+    }
+    
+    // Delete all cache keys
+    const deleted = await redis.del(keys);
+    
+    res.json({
+      success: true,
+      message: 'All caches cleared successfully',
+      cleared: deleted
+    });
+  } catch (error) {
+    console.error('Cache clear all error:', error);
+    res.status(500).json({ error: 'Error clearing all caches' });
+  }
 });
 
 // Debug endpoint to explore Calendar Data database
@@ -681,6 +784,29 @@ app.get('/calendar/:personId', async (req, res) => {
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Check Redis cache first (if enabled)
+    const cacheKey = `calendar:${personId}:${shouldReturnICS ? 'ics' : 'json'}`;
+    if (redis && cacheEnabled) {
+      try {
+        const cachedData = await redis.get(cacheKey);
+        if (cachedData) {
+          console.log(`✅ Cache HIT for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`);
+          
+          if (shouldReturnICS) {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
+            return res.send(cachedData);
+          } else {
+            return res.json(JSON.parse(cachedData));
+          }
+        }
+        console.log(`❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'}) - fetching from Notion...`);
+      } catch (cacheError) {
+        console.error('Redis cache read error:', cacheError);
+        // Continue without cache if Redis fails
+      }
     }
     
     // Check if Calendar Data database is configured
@@ -1331,10 +1457,10 @@ app.get('/calendar/:personId', async (req, res) => {
         // or strings for old format
         const startDate = event.start instanceof Date ? event.start : new Date(event.start);
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-        
-        calendar.createEvent({
-          start: startDate,
-          end: endDate,
+          
+          calendar.createEvent({
+            start: startDate,
+            end: endDate,
           summary: event.title,
           description: event.description,
           location: event.location,
@@ -1343,13 +1469,25 @@ app.get('/calendar/:personId', async (req, res) => {
         });
       });
 
+      const icsData = calendar.toString();
+      
+      // Cache the ICS data (if enabled)
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, icsData);
+          console.log(`💾 Cached ICS for ${personId} (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+
       res.setHeader('Content-Type', 'text/calendar');
       res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
-      return res.send(calendar.toString());
+      return res.send(icsData);
     }
 
     // Return JSON format with expanded events
-    res.json({
+    const jsonResponse = {
       personName: personName,
       totalMainEvents: eventsArray.length,
       totalCalendarEvents: allCalendarEvents.length,
@@ -1362,7 +1500,19 @@ app.get('/calendar/:personId', async (req, res) => {
         groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
       },
       events: allCalendarEvents
-    });
+    };
+
+    // Cache the JSON data (if enabled)
+    if (redis && cacheEnabled) {
+      try {
+        await redis.setEx(cacheKey, CACHE_TTL, JSON.stringify(jsonResponse));
+        console.log(`💾 Cached JSON for ${personId} (TTL: ${CACHE_TTL}s)`);
+      } catch (cacheError) {
+        console.error('Redis cache write error:', cacheError);
+      }
+    }
+
+    res.json(jsonResponse);
     
   } catch (error) {
     console.error('Calendar generation error:', error);

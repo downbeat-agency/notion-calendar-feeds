@@ -9,12 +9,19 @@
     "dev": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["notion", "calendar", "feeds", "ical"],
+  "keywords": [
+    "notion",
+    "calendar",
+    "feeds",
+    "ical"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@notionhq/client": "^2.2.15",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "ical-generator": "^9.0.0"
+    "ical-generator": "^9.0.0",
+    "redis": "^5.8.3"
   }
 }
