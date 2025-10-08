@@ -239,25 +239,6 @@ function parseUnifiedDateTime(dateTimeStr) {
     }
   }
   
-  // Fallback: try to parse as regular ISO date
-  try {
-    const date = new Date(cleanStr);
-    
-    // Add Pacific offset for floating times
-    const isDST = isDSTDate(date);
-    const offsetHours = isDST ? 7 : 8;
-    date.setHours(date.getHours() + offsetHours);
-    
-    if (!isNaN(date.getTime())) {
-      return {
-        start: date,
-        end: date
-      };
-    }
-  } catch (e) {
-    console.warn('Failed to parse as ISO date:', cleanStr, e);
-  }
-  
   // Special handling for date range format: "2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00"
   if (cleanStr.includes('/')) {
     try {
@@ -274,6 +255,31 @@ function parseUnifiedDateTime(dateTimeStr) {
     } catch (e) {
       console.warn('Failed to parse date range format:', cleanStr, e);
     }
+  }
+  
+  // Fallback: try to parse as regular ISO date
+  try {
+    const date = new Date(cleanStr);
+    
+    if (!isNaN(date.getTime())) {
+      // Only add Pacific offset if this is NOT an ISO timestamp with timezone info
+      // ISO timestamps like "2025-10-13T00:30:00+00:00" or "2025-10-13T00:30:00Z" are already UTC
+      const isISOWithTimezone = cleanStr.includes('T') && (cleanStr.includes('Z') || cleanStr.includes('+') || cleanStr.includes('-'));
+      
+      if (!isISOWithTimezone) {
+        // Add Pacific offset for floating times (e.g., "2025-10-13")
+        const isDST = isDSTDate(date);
+        const offsetHours = isDST ? 7 : 8;
+        date.setHours(date.getHours() + offsetHours);
+      }
+      
+      return {
+        start: date,
+        end: date
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to parse as ISO date:', cleanStr, e);
   }
   
   return null;
