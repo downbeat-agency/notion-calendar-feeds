@@ -1323,14 +1323,8 @@ app.get('/calendar/:personId', async (req, res) => {
           let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
           
           if (rehearsalTimes) {
-            let location = 'TBD';
-            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
-              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
-            } else if (rehearsal.rehearsal_location) {
-              location = rehearsal.rehearsal_location;
-            } else if (rehearsal.rehearsal_address) {
-              location = rehearsal.rehearsal_address;
-            }
+            // Use rehearsal_address for location (clean up invisible characters)
+            let location = rehearsal.rehearsal_address ? rehearsal.rehearsal_address.trim().replace(/\u2060/g, '') : 'TBD';
 
             let description = `Rehearsal`;
             if (rehearsal.rehearsal_band) {
