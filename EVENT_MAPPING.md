@@ -1,71 +1,99 @@
 # Calendar Feed Event Processing Documentation
 
 ## Overview
-The server processes calendar data from two sources:
-1. **Legacy**: Notion's "Calendar Feed JSON" formula property (single JSON array)
-2. **New**: Notion's "Calendar Data" database with separate formula fields for each event type
+The server processes calendar data from Notion's "Calendar Data" database with separate formula fields for each event type.
 
 Each data source can generate multiple calendar events (main events + flights + rehearsals + hotels + transportation + team calendar).
 
-## Data Sources
+## Data Source
 
-### Legacy Source: "Calendar Feed JSON" Formula
-- **Location**: Personnel database → "Calendar Feed JSON" property
-- **Format**: Single JSON array with all event data
-- **Usage**: `GET /calendar/:personId` (default)
-
-### New Source: "Calendar Data" Database  
+### "Calendar Data" Database  
 - **Location**: Separate "Calendar Data" database
 - **Format**: Individual formula fields for each event type
-- **Usage**: `GET /calendar/:personId?source=new`
 - **Fields**:
-  - `Events` - Main events (weddings/gigs)
-  - `Flights` - Flight information
-  - `Rehearsals` - Rehearsal schedules
-  - `Hotels` - Hotel bookings
-  - `Transportation` - Ground transport
-  - `Team Calendar` - Office days and team events
+  - `Events` - Main events (weddings/gigs) - **11 fields**
+  - `Flights` - Flight information - **15 fields**
+  - `Rehearsals` - Rehearsal schedules - **5 fields**
+  - `Hotels` - Hotel bookings - **9 fields**
+  - `Transportation` - Ground transport - **7 fields**
+  - `Team Calendar` - Office days and team events - **5 fields**
+- **Total**: 52 fields across 6 event types
 
 ## Event Detection Rules
 
 ### 1. **Main Events** (Weddings/Gigs)
-**Triggers:** Object has `event_name` AND `event_date` (new) OR `event_start` (legacy)
+**Triggers:** Object has `event_name` AND `event_date`
+
+**Available Fields (11 total):**
+- `event_name` - Event title (required)
+- `event_date` - ISO 8601 date range (required)
+- `notion_url` - Link back to Notion page
+- `band` - Band name
+- `calltime` - Call time (ISO 8601)
+- `gear_checklist` - Equipment checklist
+- `general_info` - Load-in info, dress code, notes
+- `venue` - Venue name
+- `venue_address` - Full venue address
+- `pay_total` - Payment amount
+- `position` - Musician position
+- `assignments` - Additional assignments
 
 **Mapping:**
 ```javascript
 {
   type: 'main_event',
-  title: event.event_name,              // "Santa Monica Wedding"
-  start: event.event_date || event.event_start,  // "2025-08-30T12:00:00-07:00"
-  end: event.event_date || event.event_end,      // "2025-08-31T01:00:00-07:00"
-  description: event.general_info,       // Load-in info, dress code, etc.
-  location: event.venue_address || event.venue,  // Full address preferred
-  url: event.notion_url,                // Link back to Notion
-  band: event.band,                     // Band name
-  calltime: event.calltime,             // Call time (converted to local time)
-  pay_total: event.pay_total,           // Payment amount
-  position: event.position,             // Musician position
-  assignments: event.assignments        // Additional assignments
+  title: event.event_name,              // " Wedding"
+  start: event.event_date,              // "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00"
+  end: event.event_date,                // Same as start (date range)
+  description: event.general_info,      // "Parking and Load In:\nValet Parking..."
+  location: event.venue_address || event.venue,  // "1910 Ocean Way, Santa Monica, CA 90405"
+  url: event.notion_url,                // "https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6"
+  band: event.band,                     // "Gold Standard"
+  calltime: event.calltime,             // "2025-09-13T22:00:00+00:00"
+  gearChecklist: event.gear_checklist,  // Equipment list
+  pay_total: event.pay_total,           // 800
+  position: event.position,             // "Drums"
+  assignments: event.assignments        // "Base + Rehearsal"
 }
 ```
 
 ### 2. **Flight Events** 
-**Triggers:** `flights` array with flight objects (legacy) OR top-level `Flights` field (new)
+**Triggers:** Top-level `Flights` field
+
+**Available Fields (15 total):**
+- `confirmation` - Booking confirmation number
+- `flight_url` - Link to Notion page for this flight
+- `airport_arrival` - Arrival time recommendations
+- `flight_status` - Status (Booked, Pending, etc.)
+- `flight_type` - Type (Round Trip, One-Way, etc.)
+- `departure_name` - Departure flight name (required for departure event)
+- `departure_airline` - Departure airline
+- `departure_flightnumber` - Departure flight number
+- `departure_time` - Departure time as ISO 8601 date range (required)
+- `departure_airport` - Departure airport address
+- `return_name` - Return flight name (required for return event)
+- `return_airline` - Return airline
+- `return_airport` - Return airport address
+- `return_flightnumber` - Return flight number
+- `return_time` - Return time as ISO 8601 date range (required)
 
 **Departure Flight Mapping:**
 ```javascript
 // Requires: flight.departure_time AND flight.departure_name
 {
   type: 'flight_departure',
-  title: "✈️ Flight to HNL (Band)",     // From flight.departure_name
-  start: flight.departure_time,         // "2025-09-05T08:48:00-07:00"
-  end: flight.departure_arrival_time,   // "2025-09-05T11:45:00-07:00"
-  description: "Confirmation: HEOOAO\nAirline: American Airlines\nFlight: AA 31\n\nNotion Link: https://www.notion.so/..." (if flight_url provided),
-  location: flight.departure_airport || flight.departure_from || "Airport",
-  confirmation: flight.confirmation,
-  airline: flight.departure_airline,
-  flightNumber: flight.departure_flightnumber,
-  mainEvent: event.event_name || ""     // Links back to main event (empty for top-level)
+  title: "✈️ Flight to JFK (Diego)",    // From flight.departure_name
+  start: flight.departure_time,         // "2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00"
+  end: flight.departure_time,           // Same as start (date range)
+  description: "Confirmation: HWSV8Y\nAirline: Delta\nFlight: DL 915\nStatus: Booked\nType: Round Trip\n\nAirport Arrival: Domestic flights (within the U.S.) → Arrive 2 hours before departure.\n\nNotion Link: https://www.notion.so/26939e4a65a980f6839bd853232eaa52",
+  location: flight.departure_airport,   // "1 World Way, Los Angeles, CA 90045"
+  url: flight.flight_url,               // "https://www.notion.so/26939e4a65a980f6839bd853232eaa52"
+  confirmation: flight.confirmation,    // "HWSV8Y"
+  airline: flight.departure_airline,    // "Delta"
+  flightNumber: flight.departure_flightnumber,  // "DL 915"
+  flightStatus: flight.flight_status,   // "Booked"
+  flightType: flight.flight_type,       // "Round Trip"
+  airportArrival: flight.airport_arrival  // Arrival recommendations
 }
 ```
 
@@ -74,20 +102,30 @@ Each data source can generate multiple calendar events (main events + flights + 
 // Requires: flight.return_time AND flight.return_name
 {
   type: 'flight_return',
-  title: "✈️ Flight Return to LAX (Band)",  // From flight.return_name
-  start: flight.return_time,               // "2025-09-07T15:26:00-07:00"
-  end: flight.return_arrival_time,         // "2025-09-07T23:58:00-07:00"
-  description: "Confirmation: HEOOAO\nFlight: AA 164\n\nNotion Link: https://www.notion.so/..." (if flight_url provided),
-  location: flight.return_airport || flight.return_from || "Airport",
-  confirmation: flight.confirmation,
-  airline: flight.return_airline,
-  flightNumber: flight.return_flightnumber,
-  mainEvent: event.event_name || ""       // Links back to main event (empty for top-level)
+  title: "✈️ Flight Return to LAX (Diego)",  // From flight.return_name
+  start: flight.return_time,                 // "2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00"
+  end: flight.return_time,                   // Same as start (date range)
+  description: "Confirmation: HWSV8Y\nAirline: Delta\nFlight: DL 773\nStatus: Booked\nType: Round Trip\n\nAirport Arrival: Domestic flights (within the U.S.) → Arrive 2 hours before departure.\n\nNotion Link: https://www.notion.so/26939e4a65a980f6839bd853232eaa52",
+  location: flight.return_airport,           // "JFK Access Rd, Jamaica, NY 11430"
+  url: flight.flight_url,                    // "https://www.notion.so/26939e4a65a980f6839bd853232eaa52"
+  confirmation: flight.confirmation,         // "HWSV8Y"
+  airline: flight.return_airline,            // "Delta"
+  flightNumber: flight.return_flightnumber,  // "DL 773"
+  flightStatus: flight.flight_status,        // "Booked"
+  flightType: flight.flight_type,            // "Round Trip"
+  airportArrival: flight.airport_arrival     // Arrival recommendations
 }
 ```
 
 ### 3. **Rehearsal Events**
-**Triggers:** `rehearsals` array with rehearsal objects (legacy) OR top-level `Rehearsals` field (new)
+**Triggers:** Top-level `Rehearsals` field
+
+**Available Fields (5 total):**
+- `rehearsal_time` - ISO 8601 date range (required)
+- `rehearsal_pco` - Planning Center Online link
+- `rehearsal_band` - Band personnel list
+- `rehearsal_location` - Location name
+- `rehearsal_address` - Full address
 
 **Rehearsal Mapping:**
 ```javascript
@@ -95,145 +133,115 @@ Each data source can generate multiple calendar events (main events + flights + 
 {
   type: 'rehearsal',
   title: "🎤 Rehearsal",                    // Fixed title
-  start: rehearsal.rehearsal_time,          // "2025-09-03T14:00:00-07:00"
-  end: rehearsal.rehearsal_time,            // Same as start (no duration)
-  description: "Rehearsal\n\nBand Personnel:\n" + rehearsal.rehearsal_band,
-  location: rehearsal.rehearsal_address || rehearsal.rehearsal_location || "TBD",
-  url: rehearsal.rehearsal_pco,            // PCO link
-  mainEvent: event.event_name || ""        // Links back to main event (empty for top-level)
+  start: rehearsal.rehearsal_time,          // "2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00"
+  end: rehearsal.rehearsal_time,            // Same as start (date range)
+  description: "Rehearsal\n\nBand Personnel:\nBass - Eric  🟢\nDrums - Diego  🟢\nGuitar - Silas  🟢\nKeys - Kevin  🟢\nVox 1 - Revel  🟢\nVox 2 - Dani  🟢\nVox 3 - Joe  🟢\nVox 4 - Ayo  🟢",
+  location: rehearsal.rehearsal_address || rehearsal.rehearsal_location || "TBD",  // "123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠"
+  url: rehearsal.rehearsal_pco             // "https://services.planningcenteronline.com/plans/81859026"
 }
 ```
 
 ### 4. **Hotel Events**
-**Triggers:** Top-level `Hotels` field (new source only)
+**Triggers:** Top-level `Hotels` field
+
+**Available Fields (9 total):**
+- `title` - Hotel entry title
+- `hotel_url` - Link to Notion page for this hotel
+- `hotel_name` - Hotel name
+- `hotel_phone` - Hotel phone number
+- `hotel_address` - Full hotel address
+- `confirmation` - Booking confirmation number
+- `names_on_reservation` - Guest names
+- `booked_under` - Primary booker name
+- `dates_booked` - ISO 8601 date range (required)
 
 **Hotel Mapping:**
 ```javascript
 // Requires: hotel.dates_booked
 {
   type: 'hotel',
-  title: "🏨 " + (hotel.hotel_name || hotel.title || "Hotel"),
+  title: "🏨 " + (hotel.hotel_name || hotel.title || "Hotel"),  // "🏨 Hilton Garden Inn Sonoma County Airport"
   start: hotel.dates_booked,               // "2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00"
   end: hotel.dates_booked,                 // Same as start (date range)
-  description: "Hotel Stay\nConfirmation: " + hotel.confirmation + "\nPhone: " + hotel.hotel_phone + "\n\nNames on Reservation:\n" + hotel.names_on_reservation + "\nBooked Under: " + hotel.booked_under,
-  location: hotel.hotel_address || hotel.hotel_name || "Hotel",
-  url: hotel.hotel_google_maps || hotel.hotel_apple_maps || "",
-  confirmation: hotel.confirmation,
-  hotelName: hotel.hotel_name,
-  mainEvent: ""                            // Not tied to specific main event
+  description: "Hotel Stay\nConfirmation: 3291242890\nPhone: (707) 545-0444\n\nNames on Reservation:\nJackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\nBooked Under: Diego\n\nNotion Link: https://www.notion.so/22a39e4a65a980418fc2dc12edd96217",
+  location: hotel.hotel_address || hotel.hotel_name || "Hotel",  // "417 Aviation Blvd, Santa Rosa, CA 95403"
+  url: hotel.hotel_url,                    // "https://www.notion.so/22a39e4a65a980418fc2dc12edd96217"
+  confirmation: hotel.confirmation,        // "3291242890"
+  hotelName: hotel.hotel_name,             // "Hilton Garden Inn Sonoma County Airport"
+  hotelPhone: hotel.hotel_phone,           // "(707) 545-0444"
+  namesOnReservation: hotel.names_on_reservation,  // "Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael"
+  bookedUnder: hotel.booked_under          // "Diego"
 }
 ```
 
 ### 5. **Transportation Events**
-**Triggers:** Top-level `Transportation` field (new source only)
+**Triggers:** Top-level `Transportation` field
+
+**Available Fields (7 total):**
+- `title` - Transportation entry title (required)
+- `transportation_url` - Link to Notion page for this transport
+- `start` - Start time as ISO 8601 (required)
+- `end` - End time as ISO 8601
+- `location` - Pickup/dropoff location
+- `description` - Driver info, passengers, notes
+- `type` - Transport type (ground_transport_pickup, ground_transport_dropoff, ground_transport_meeting, ground_transport)
 
 **Transportation Mapping:**
 ```javascript
 // Requires: transport.start
 {
-  type: 'ground_transport_pickup' | 'ground_transport_dropoff' | 'ground_transport_meeting' | 'ground_transport',
-  title: "🚙 " + (transport.title || "Ground Transport"),
+  type: transport.type || 'ground_transport',  // "ground_transport_meeting"
+  title: "🚙 " + (transport.title || "Ground Transport"),  // "🚙 MEET UP: Band Sprinter ( Wedding)"
   start: transport.start,                  // "2025-09-20T14:00:00+00:00"
-  end: transport.end || (start + 30 minutes),  // Default 30-minute duration
-  description: transport.description,      // Driver info, passengers, etc.
-  location: transport.location || "",
-  mainEvent: ""                            // Not tied to specific main event
+  end: transport.end || transport.start,   // "2025-09-20T14:00:00+00:00"
+  description: "Driver: Diego De la Rosa\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\nDriver Info:\nDiego - (626) 991-4302,\nMeetup Notes: Make sure you bring a coffee for Diego\n\nNotion Link: https://www.notion.so/22839e4a65a98008b326f8e0a9f17129",
+  location: transport.location || "",      // "149 N Halstead St, Pasadena, CA 91107"
+  url: transport.transportation_url        // "https://www.notion.so/22839e4a65a98008b326f8e0a9f17129"
 }
 ```
 
 ### 6. **Team Calendar Events**
-**Triggers:** Top-level `Team Calendar` field (new source only)
+**Triggers:** Top-level `Team Calendar` field
+
+**Available Fields (5 total):**
+- `title` - Event title (required)
+- `address` - Location address
+- `date` - ISO 8601 date range (required)
+- `notes` - Additional notes
+- `notion_link` - Link to Notion page
 
 **Team Calendar Mapping:**
 ```javascript
 // Requires: teamEvent.date
 {
   type: 'team_calendar',
-  title: "📅 " + (teamEvent.title || "Team Event"),
-  start: teamEvent.date,                   // "2025-09-10T10:30:00-07:00/2025-09-10T18:30:00-07:00"
+  title: "📅 " + (teamEvent.title || "Team Event"),  // "📅 Office"
+  start: teamEvent.date,                   // "2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00"
   end: teamEvent.date,                     // Same as start (date range)
-  description: teamEvent.notes || "",
-  location: teamEvent.address || "",       // Office address or location
-  url: teamEvent.notion_link || "",
-  mainEvent: ""                            // Not tied to specific main event
+  description: teamEvent.notes || "",      // Additional notes
+  location: teamEvent.address || "",       // "123 W Bellevue Dr Ste 4, Pasadena CA 91105"
+  url: teamEvent.notion_link || ""         // "https://www.notion.so/17839e4a65a980fb8409c4b2231408b9"
 }
 ```
 
 ## Required JSON Structure
 
-### Legacy Format: "Calendar Feed JSON" Formula
-Your Notion formula should output an array of objects like this:
-
-```javascript
-[
-  {
-    // MAIN EVENT (Required)
-    "event_name": "Toronto Wedding",              // REQUIRED
-    "event_start": "2025-09-13T12:00:00-07:00",  // REQUIRED
-    "event_end": "2025-09-14T02:00:00-07:00",    // Optional
-    "venue": "Langdon Hall",                     // Optional
-    "venue_address": "1 Langdon Dr, Cambridge",  // Optional (preferred)
-    "general_info": "Parking info, dress code",  // Optional
-    "notion_url": "https://www.notion.so/...",   // Optional
-    "band": "Soultones",                         // Optional
-    
-    // FLIGHTS ARRAY (Optional)
-    "flights": [
-      {
-        "confirmation": "BW3E7Y",
-        "flight_status": "Booked",
-        "flight_type": "One-Way",
-        
-        // DEPARTURE (Creates separate flight event if present)
-        "departure_name": "Flight to LAX (Josh)",      // REQUIRED for departure event
-        "departure_time": "2025-09-16T18:35:00-07:00", // REQUIRED for departure event
-        "departure_arrival_time": "2025-09-16T20:53:00-07:00",
-        "departure_airline": "Air Canada",
-        "departure_flightnumber": "AC 795",
-        "departure_from": "Toronto Airport",
-        
-        // RETURN (Creates separate return flight event if present)
-        "return_name": "Flight Return to LAX",         // REQUIRED for return event
-        "return_time": "2025-09-07T15:26:00-07:00",   // REQUIRED for return event
-        "return_arrival_time": "2025-09-07T23:58:00-07:00",
-        "return_airline": "American Airlines",
-        "return_flightnumber": "AA 164",
-        "return_from": "HNL Airport"
-      }
-    ],
-    
-    // REHEARSALS ARRAY (Optional)
-    "rehearsals": [
-      {
-        "rehearsal_time": "2025-09-03T14:00:00-07:00",  // REQUIRED (null = ignored)
-        "rehearsal_location": "Downbeat HQ",             // Optional
-        "rehearsal_address": "123 W Bellevue Dr"         // Optional (preferred)
-      }
-    ],
-    
-    // OTHER OPTIONAL FIELDS
-    "payroll": [...],      // Ignored by calendar (for reference only)
-    "pay_total": 2425      // Ignored by calendar (for reference only)
-  }
-]
-```
-
-### New Format: "Calendar Data" Database
-The new database uses separate formula fields for each event type:
+### "Calendar Data" Database Format
+The database uses separate formula fields for each event type. Each field contains a JSON array:
 
 ```javascript
 {
-  "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/...\",\"event_date\":\"2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"calltime\":\"2025-08-26T15:30:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
+  "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6\",\"event_date\":\"2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"calltime\":\"2025-09-13T22:00:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
   
-  "Flights": "[{\"confirmation\":\"BUZ8HF\",\"flight_url\":\"https://www.notion.so/1b239e4a65a9808d9e5dc68ba6751520\",\"departure_name\":\"Flight to YYZ (Band)\",\"departure_airline\":\"Air Canada\",\"departure_flightnumber\":\"AC 788\",\"departure_time\":\"2025-09-12T11:50:00-07:00/2025-09-12T19:40:00-07:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Band)\",\"return_airline\":null,\"return_airport\":\"6301 Silver Dart Dr, Mississauga, ON L5P 1B2, Canada\",\"return_flightnumber\":\"AC 789\",\"return_time\":\"2025-09-14T10:10:00-07:00/2025-09-14T12:28:00-07:00\"}]",
+  "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
   
-  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"rehearsal_location\":\"\",\"rehearsal_address\":\"\"}]",
+  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
   
-  "Hotels": "[{\"title\":\"Hotel -  (Band)\",\"hotel_name\":\"Hilton Garden Inn Sonoma County Airport\",\"hotel_phone\":\"(707) 545-0444\",\"hotel_address\":\"417 Aviation Blvd, Santa Rosa, CA 95403\",\"confirmation\":\"3291242890\",\"names_on_reservation\":\"Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\",\"booked_under\":\"Diego\",\"dates_booked\":\"2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00\"}]",
+  "Hotels": "[{\"title\":\"Hotel -  (Band)\",\"hotel_url\":\"https://www.notion.so/22a39e4a65a980418fc2dc12edd96217\",\"hotel_name\":\"Hilton Garden Inn Sonoma County Airport\",\"hotel_phone\":\"(707) 545-0444\",\"hotel_address\":\"417 Aviation Blvd, Santa Rosa, CA 95403\",\"confirmation\":\"3291242890\",\"names_on_reservation\":\"Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\",\"booked_under\":\"Diego\",\"dates_booked\":\"2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00\"}]",
   
-  "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
+  "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
   
-  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-11T10:30:00-07:00/2025-09-11T18:30:00-07:00\",\"notes\":\"\",\"notion_link\":\"https://www.notion.so/17839e4a65a9801f8ae5c1d36810bebc\"}]"
+  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
 }
 ```
 
@@ -242,16 +250,15 @@ The new database uses separate formula fields for each event type:
 ```javascript
 {
   "personName": "Diego De la Rosa",
-  "totalMainEvents": 30,          // Count of main events
-  "totalCalendarEvents": 128,     // Count of all calendar events generated
-  "dataSource": "new",            // "new" or "old" (legacy)
+  "totalMainEvents": 31,          // Count of main events
+  "totalCalendarEvents": 117,     // Count of all calendar events generated
   "breakdown": {
-    "mainEvents": 30,             // Wedding/gig events
+    "mainEvents": 31,             // Wedding/gig events
     "flights": 10,                // Flight departure + return events  
     "rehearsals": 16,             // Rehearsal events
     "hotels": 7,                  // Hotel bookings
-    "groundTransport": 5,         // Ground transportation events
-    "teamCalendar": 60            // Office days and team events
+    "groundTransport": 10,        // Ground transportation events (pickup, dropoff, meeting)
+    "teamCalendar": 53            // Office days and team events
   },
   "events": [
     // Array of all calendar events (main + flights + rehearsals + hotels + transport + team)
@@ -271,14 +278,13 @@ The new database uses separate formula fields for each event type:
 
 ## Calendar Integration
 
-- **Legacy Data Source**: `GET /calendar/:personId` - Uses "Calendar Feed JSON" formula
-- **New Data Source**: `GET /calendar/:personId?source=new` - Uses "Calendar Data" database
+- **Endpoint**: `GET /calendar/:personId` - Uses "Calendar Data" database
 - **ICS Format**: `GET /calendar/:personId?format=ics` - All events in calendar format
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
 - **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚙 for transport, 📅 for team calendar) for easy identification
-- **Descriptions**: Include confirmation numbers, flight details, call times, etc.
-- **Links**: Main events link back to Notion via `notion_url`
-- **Call Time**: Automatically converted from UTC to America/Los_Angeles floating time
+- **Descriptions**: Include confirmation numbers, flight details, call times, Notion links, etc.
+- **Links**: Events link back to Notion via URL fields (notion_url, flight_url, hotel_url, transportation_url, notion_link)
+- **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")
 
 ## Optimization Notes
 
@@ -290,26 +296,18 @@ To ensure your Notion formula works within API timeout limits:
 
 ## Testing
 
-Use the debug endpoints to verify data:
+Use the debug endpoint to verify data:
 
-**Legacy Data Source:**
-```bash
-curl "https://calendar.downbeat.agency/debug/simple-test/PERSON_ID"
-```
-
-**New Data Source:**
+**Debug Endpoint:**
 ```bash
 curl "https://calendar.downbeat.agency/debug/calendar-data/PERSON_ID"
 ```
 
 **Calendar API:**
 ```bash
-# Legacy source
+# JSON format
 curl "https://calendar.downbeat.agency/calendar/PERSON_ID"
 
-# New source  
-curl "https://calendar.downbeat.agency/calendar/PERSON_ID?source=new"
-
-# ICS format
+# ICS format (for calendar subscription)
 curl "https://calendar.downbeat.agency/calendar/PERSON_ID?format=ics"
 ```
