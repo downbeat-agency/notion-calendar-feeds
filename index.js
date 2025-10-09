@@ -621,20 +621,20 @@ app.get('/subscribe/:personId', async (req, res) => {
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
             border: 1px solid #333;
         }
-        .greeting {
-            color: #888;
-            font-size: 1.2rem;
-            text-align: center;
-            margin-bottom: 10px;
-            font-weight: 300;
-        }
         h1 { 
             color: #fff; 
-            margin-bottom: 30px; 
+            margin-bottom: 15px; 
             font-size: 2.5rem; 
             font-weight: 300;
             letter-spacing: 2px;
             text-align: center;
+        }
+        .subtitle {
+            color: #888;
+            font-size: 1.1rem;
+            text-align: center;
+            margin-bottom: 30px;
+            font-weight: 300;
         }
         .url-box { 
             background: #1a1a1a; 
@@ -704,8 +704,8 @@ app.get('/subscribe/:personId', async (req, res) => {
 </head>
 <body>
     <div class="container">
-        ${personName ? `<div class="greeting">Hello ${personName}! 👋</div>` : ''}
-        <h1>Subscribe to Downbeat Calendar</h1>
+        <h1>${personName ? `Hello ${personName}` : 'Subscribe to Downbeat Calendar'}</h1>
+        ${personName ? '<div class="subtitle">Subscribe to Downbeat Calendar</div>' : ''}
         
         <div class="instructions">
             <div class="section-title">Quick Subscribe</div>
