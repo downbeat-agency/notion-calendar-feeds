@@ -569,18 +569,8 @@ app.get('/subscribe/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Get person name from URL query parameter or fetch from Notion
-    let personName = req.query.name || null;
-    
-    // If no name in URL, try to fetch from Notion (with caching)
-    if (!personName) {
-      try {
-        const person = await notion.pages.retrieve({ page_id: personId });
-        personName = person.properties?.['Full Name']?.formula?.string || null;
-      } catch (error) {
-        console.error('Error fetching person name:', error.message);
-      }
-    }
+    // Get person name from URL query parameter only
+    const personName = req.query.name || null;
     
     const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
     
