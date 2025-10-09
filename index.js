@@ -1447,7 +1447,7 @@ app.get('/calendar/:personId', async (req, res) => {
               start: eventTimes.start,
               end: eventTimes.end,
               description: teamEvent.notes || '',
-              location: '',
+              location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
               mainEvent: '' // Top-level team calendar events aren't tied to a specific event
             });

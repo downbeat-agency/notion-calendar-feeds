@@ -150,10 +150,10 @@ Each data source can generate multiple calendar events (main events + flights + 
 {
   type: 'team_calendar',
   title: "📅 " + (teamEvent.title || "Team Event"),
-  start: teamEvent.date,                   // "2025-09-10T17:30:00+00:00"
-  end: teamEvent.date,                     // Same as start (no duration)
+  start: teamEvent.date,                   // "2025-09-10T10:30:00-07:00/2025-09-10T18:30:00-07:00"
+  end: teamEvent.date,                     // Same as start (date range)
   description: teamEvent.notes || "",
-  location: "",
+  location: teamEvent.address || "",       // Office address or location
   url: teamEvent.notion_link || "",
   mainEvent: ""                            // Not tied to specific main event
 }
@@ -233,7 +233,7 @@ The new database uses separate formula fields for each event type:
   
   "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
   
-  "Team Calendar": "[{\"title\":\"Office\",\"date\":\"2025-09-10T17:30:00+00:00\",\"notes\":\"\",\"notion_link\":\"https://www.notion.so/17839e4a65a9801f8ae5c1d36810bebc\"}]"
+  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-11T10:30:00-07:00/2025-09-11T18:30:00-07:00\",\"notes\":\"\",\"notion_link\":\"https://www.notion.so/17839e4a65a9801f8ae5c1d36810bebc\"}]"
 }
 ```
 
