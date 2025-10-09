@@ -1441,9 +1441,13 @@ app.get('/calendar/:personId', async (req, res) => {
         if (teamEvent.date) {
           let eventTimes = parseUnifiedDateTime(teamEvent.date);
           if (eventTimes) {
+            // Use ⛔️ emoji for OOO events, 📅 for regular events
+            const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
+            const emoji = isOOO ? '⛔️' : '📅';
+            
             allCalendarEvents.push({
               type: 'team_calendar',
-              title: `📅 ${teamEvent.title || 'Team Event'}`,
+              title: `${emoji} ${teamEvent.title || 'Team Event'}`,
               start: eventTimes.start,
               end: eventTimes.end,
               description: teamEvent.notes || '',
