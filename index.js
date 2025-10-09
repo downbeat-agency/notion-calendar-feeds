@@ -1280,13 +1280,20 @@ app.get('/calendar/:personId', async (req, res) => {
         if (flight.departure_time && flight.departure_name) {
           let departureTimes = parseUnifiedDateTime(flight.departure_time);
           if (departureTimes) {
+            // Build description with optional Notion link
+            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
+            if (flight.flight_url) {
+              description += `\n\nNotion Link: ${flight.flight_url}`;
+            }
+            
             allCalendarEvents.push({
               type: 'flight_departure',
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
               start: departureTimes.start,
               end: departureTimes.end,
-              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: description,
               location: flight.departure_airport || '',
+              url: flight.flight_url || '',
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -1299,13 +1306,20 @@ app.get('/calendar/:personId', async (req, res) => {
         if (flight.return_time && flight.return_name) {
           let returnTimes = parseUnifiedDateTime(flight.return_time);
           if (returnTimes) {
+            // Build description with optional Notion link
+            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
+            if (flight.flight_url) {
+              description += `\n\nNotion Link: ${flight.flight_url}`;
+            }
+            
             allCalendarEvents.push({
               type: 'flight_return',
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
               start: returnTimes.start,
               end: returnTimes.end,
-              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: description,
               location: flight.return_airport || '',
+              url: flight.flight_url || '',
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',

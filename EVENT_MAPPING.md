@@ -60,8 +60,9 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "✈️ Flight to HNL (Band)",     // From flight.departure_name
   start: flight.departure_time,         // "2025-09-05T08:48:00-07:00"
   end: flight.departure_arrival_time,   // "2025-09-05T11:45:00-07:00"
-  description: "Confirmation: HEOOAO\nAirline: American Airlines\nFlight: AA 31",
+  description: "Confirmation: HEOOAO\nAirline: American Airlines\nFlight: AA 31\n\nNotion Link: https://www.notion.so/...",
   location: flight.departure_airport || flight.departure_from || "Airport",
+  url: flight.flight_url || "",         // Notion link for flight details
   confirmation: flight.confirmation,
   airline: flight.departure_airline,
   flightNumber: flight.departure_flightnumber,
@@ -77,8 +78,9 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "✈️ Flight Return to LAX (Band)",  // From flight.return_name
   start: flight.return_time,               // "2025-09-07T15:26:00-07:00"
   end: flight.return_arrival_time,         // "2025-09-07T23:58:00-07:00"
-  description: "Confirmation: HEOOAO\nFlight: AA 164",
+  description: "Confirmation: HEOOAO\nFlight: AA 164\n\nNotion Link: https://www.notion.so/...",
   location: flight.return_airport || flight.return_from || "Airport",
+  url: flight.flight_url || "",            // Notion link for flight details
   confirmation: flight.confirmation,
   airline: flight.return_airline,
   flightNumber: flight.return_flightnumber,
@@ -225,7 +227,7 @@ The new database uses separate formula fields for each event type:
 {
   "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/...\",\"event_date\":\"2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"calltime\":\"2025-08-26T15:30:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
   
-  "Flights": "[{\"confirmation\":\"HWSV8Y\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
+  "Flights": "[{\"confirmation\":\"BUZ8HF\",\"flight_url\":\"https://www.notion.so/1b239e4a65a9808d9e5dc68ba6751520\",\"departure_name\":\"Flight to YYZ (Band)\",\"departure_airline\":\"Air Canada\",\"departure_flightnumber\":\"AC 788\",\"departure_time\":\"2025-09-12T11:50:00-07:00/2025-09-12T19:40:00-07:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Band)\",\"return_airline\":null,\"return_airport\":\"6301 Silver Dart Dr, Mississauga, ON L5P 1B2, Canada\",\"return_flightnumber\":\"AC 789\",\"return_time\":\"2025-09-14T10:10:00-07:00/2025-09-14T12:28:00-07:00\"}]",
   
   "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"rehearsal_location\":\"\",\"rehearsal_address\":\"\"}]",
   
