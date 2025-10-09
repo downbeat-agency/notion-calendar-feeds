@@ -1120,9 +1120,9 @@ app.get('/calendar/:personId', async (req, res) => {
               title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
               start: hotelTimes.start,
               end: hotelTimes.end,
-              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
+              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`,
               location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
-              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              url: hotel.hotel_url || '',
               confirmation: hotel.confirmation || '',
               hotelName: hotel.hotel_name || '',
               mainEvent: event.event_name
@@ -1379,9 +1379,9 @@ app.get('/calendar/:personId', async (req, res) => {
             title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
             start: hotelTimes.start,
             end: hotelTimes.end,
-            description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}`,
+            description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`,
             location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
-            url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+            url: hotel.hotel_url || '',
             confirmation: hotel.confirmation || '',
             hotelName: hotel.hotel_name || '',
             mainEvent: '' // Top-level hotels aren't tied to a specific event
