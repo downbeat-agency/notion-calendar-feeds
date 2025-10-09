@@ -569,8 +569,19 @@ app.get('/subscribe/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // No need to fetch person data - just use generic title for speed
-    const personName = 'Downbeat Calendar';
+    // Get person name from URL query parameter or fetch from Notion
+    let personName = req.query.name || null;
+    
+    // If no name in URL, try to fetch from Notion (with caching)
+    if (!personName) {
+      try {
+        const person = await notion.pages.retrieve({ page_id: personId });
+        personName = person.properties?.['Full Name']?.formula?.string || null;
+      } catch (error) {
+        console.error('Error fetching person name:', error.message);
+      }
+    }
+    
     const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
     
     // Check if this is a calendar app request
@@ -609,6 +620,13 @@ app.get('/subscribe/:personId', async (req, res) => {
             border-radius: 8px; 
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
             border: 1px solid #333;
+        }
+        .greeting {
+            color: #888;
+            font-size: 1.2rem;
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: 300;
         }
         h1 { 
             color: #fff; 
@@ -686,6 +704,7 @@ app.get('/subscribe/:personId', async (req, res) => {
 </head>
 <body>
     <div class="container">
+        ${personName ? `<div class="greeting">Hello ${personName}! 👋</div>` : ''}
         <h1>Subscribe to Downbeat Calendar</h1>
         
         <div class="instructions">
