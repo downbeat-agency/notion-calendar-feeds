@@ -60,9 +60,8 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "✈️ Flight to HNL (Band)",     // From flight.departure_name
   start: flight.departure_time,         // "2025-09-05T08:48:00-07:00"
   end: flight.departure_arrival_time,   // "2025-09-05T11:45:00-07:00"
-  description: "Confirmation: HEOOAO\nAirline: American Airlines\nFlight: AA 31\n\nNotion Link: https://www.notion.so/...",
+  description: "Confirmation: HEOOAO\nAirline: American Airlines\nFlight: AA 31\n\nNotion Link: https://www.notion.so/..." (if flight_url provided),
   location: flight.departure_airport || flight.departure_from || "Airport",
-  url: flight.flight_url || "",         // Notion link for flight details
   confirmation: flight.confirmation,
   airline: flight.departure_airline,
   flightNumber: flight.departure_flightnumber,
@@ -78,9 +77,8 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "✈️ Flight Return to LAX (Band)",  // From flight.return_name
   start: flight.return_time,               // "2025-09-07T15:26:00-07:00"
   end: flight.return_arrival_time,         // "2025-09-07T23:58:00-07:00"
-  description: "Confirmation: HEOOAO\nFlight: AA 164\n\nNotion Link: https://www.notion.so/...",
+  description: "Confirmation: HEOOAO\nFlight: AA 164\n\nNotion Link: https://www.notion.so/..." (if flight_url provided),
   location: flight.return_airport || flight.return_from || "Airport",
-  url: flight.flight_url || "",            // Notion link for flight details
   confirmation: flight.confirmation,
   airline: flight.return_airline,
   flightNumber: flight.return_flightnumber,
