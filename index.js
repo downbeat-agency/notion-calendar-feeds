@@ -336,12 +336,11 @@ function parseUnifiedDateTime(dateTimeStr) {
     const date = new Date(cleanStr);
     
     if (!isNaN(date.getTime())) {
-      // Only add Pacific offset if this is NOT an ISO timestamp with timezone info
-      // ISO timestamps like "2025-10-13T00:30:00+00:00" or "2025-10-13T00:30:00Z" are already UTC
-      const isISOWithTimezone = cleanStr.includes('T') && (cleanStr.includes('Z') || cleanStr.includes('+') || cleanStr.includes('-'));
+      // For UTC times (ISO timestamps with Z or +00:00), add Pacific offset to convert to Pacific floating time
+      const isUTCTime = cleanStr.includes('T') && (cleanStr.includes('Z') || cleanStr.includes('+00:00'));
       
-      if (!isISOWithTimezone) {
-        // Add Pacific offset for floating times (e.g., "2025-10-13")
+      if (isUTCTime) {
+        // Add Pacific offset to convert UTC to Pacific floating time
         const isDST = isDSTDate(date);
         const offsetHours = isDST ? 7 : 8;
         date.setHours(date.getHours() + offsetHours);
