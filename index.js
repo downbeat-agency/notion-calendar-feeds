@@ -1253,6 +1253,11 @@ app.get('/calendar/:personId', async (req, res) => {
               if (confirmationMatch) {
                 description += `Confirmation: ${confirmationMatch[1]}\n`;
               }
+              
+              // Add transportation URL if present
+              if (transport.transportation_url) {
+                description += `\nNotion Link: ${transport.transportation_url}`;
+              }
     } else {
               description = 'Ground transportation details';
             }
@@ -1419,6 +1424,11 @@ app.get('/calendar/:personId', async (req, res) => {
               }
               
               description += transport.description.replace(/Driver:\s*[^\n]+\n?/, '');
+            }
+            
+            // Add transportation URL if present
+            if (transport.transportation_url) {
+              description += `\n\nNotion Link: ${transport.transportation_url}`;
             }
 
             let eventType = 'ground_transport';
