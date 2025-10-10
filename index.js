@@ -223,9 +223,9 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startDateStr = dateOnlyMatch[1].trim();
         const endDateStr = dateOnlyMatch[2].trim();
         
-        // Parse dates and set to midnight (for all-day events)
-        const startDate = new Date(startDateStr);
-        const endDate = new Date(endDateStr);
+        // Parse dates as UTC and set to midnight (for all-day events)
+        const startDate = new Date(startDateStr + ' UTC');
+        const endDate = new Date(endDateStr + ' UTC');
         
         // Add Pacific offset for floating times
         const isDST = isDSTDate(startDate);
@@ -266,9 +266,9 @@ function parseUnifiedDateTime(dateTimeStr) {
       }
       
       try {
-        // Parse dates as Pacific time and add offset to create floating times
-        const startDate = new Date(`${dateStr} ${startTimeStr}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        // Parse dates as UTC (Notion sends UTC times), then add Pacific offset for floating times
+        const startDate = new Date(`${dateStr} ${startTimeStr} UTC`);
+        const endDate = new Date(`${endDateStr} ${endTimeStr} UTC`);
         
         // Add Pacific offset to create floating times that display correctly
         // DST: +7 hours (PDT), Standard: +8 hours (PST)
@@ -294,7 +294,7 @@ function parseUnifiedDateTime(dateTimeStr) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(dateStr);
+        const date = new Date(dateStr + ' UTC');
         
         // Add Pacific offset for floating times
         const isDST = isDSTDate(date);
@@ -1086,8 +1086,13 @@ app.get('/calendar/:personId', async (req, res) => {
               hotelTimes = parseUnifiedDateTime(hotel.check_in);
               if (!hotelTimes) {
                 // If that fails, create dates and apply Pacific offset
-                const startDate = new Date(hotel.check_in);
-                const endDate = new Date(hotel.check_out);
+                // Check if dates are ISO with timezone, otherwise parse as UTC
+                const isISOWithTZ = (str) => str && str.includes('T') && (str.includes('Z') || str.includes('+'));
+                const checkIn = isISOWithTZ(hotel.check_in) ? hotel.check_in : hotel.check_in + ' UTC';
+                const checkOut = isISOWithTZ(hotel.check_out) ? hotel.check_out : hotel.check_out + ' UTC';
+                
+                const startDate = new Date(checkIn);
+                const endDate = new Date(checkOut);
                 
                 const isDST = isDSTDate(startDate);
                 const offsetHours = isDST ? 7 : 8;
