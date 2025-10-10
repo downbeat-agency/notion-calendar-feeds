@@ -1489,14 +1489,14 @@ app.get('/calendar/:personId', async (req, res) => {
         const startDate = event.start instanceof Date ? event.start : new Date(event.start);
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
           
-          calendar.createEvent({
-            start: startDate,
-            end: endDate,
+        calendar.createEvent({
+          start: startDate,
+          end: endDate,
           summary: event.title,
           description: event.description,
           location: event.location,
-          url: event.url || ''
-          // No timezone - let calendar apps interpret UTC times as local
+          url: event.url || '',
+          floating: true  // Create floating timezone events - times stay the same regardless of timezone
         });
       });
 
