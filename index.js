@@ -870,13 +870,13 @@ app.get('/calendar/:personId', async (req, res) => {
           // Use direct fields from Calendar Data database
           if (event.position || event.pay_total || event.assignments) {
             if (event.position) {
-              payrollInfo += `💼 Position: ${event.position}\n`;
+              payrollInfo += `Position: ${event.position}\n`;
             }
             if (event.assignments) {
-              payrollInfo += `📋 Assignments: ${event.assignments}\n`;
+              payrollInfo += `Assignments: ${event.assignments}\n`;
             }
             if (event.pay_total) {
-              payrollInfo += `💰 Pay: $${event.pay_total}\n`;
+              payrollInfo += `Pay: $${event.pay_total}\n`;
             }
             payrollInfo += '\n'; // Add spacing after position info
           }
@@ -965,7 +965,7 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build Notion URL info (after gear checklist, before general info)
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
-            notionUrlInfo = `📋 Notion Link: ${event.notion_url}\n\n`;
+            notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
           }
 
           allCalendarEvents.push({
