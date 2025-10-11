@@ -877,7 +877,9 @@ app.get('/calendar/:personId', async (req, res) => {
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
+        console.log('🎸 Main event date from Notion:', event.event_date);
         let eventTimes = parseUnifiedDateTime(event.event_date);
+        console.log('🎸 Parsed main event times:', eventTimes);
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
@@ -1082,6 +1084,7 @@ app.get('/calendar/:personId', async (req, res) => {
               end: rehearsalTimes.end,
               description: description,
               location: location,
+              url: rehearsal.rehearsal_pco || '',
               mainEvent: event.event_name
             });
   }
@@ -1354,8 +1357,10 @@ app.get('/calendar/:personId', async (req, res) => {
     if (topLevelRehearsals.length > 0) {
       topLevelRehearsals.forEach(rehearsal => {
         if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
+          console.log('🎤 Rehearsal time from Notion:', rehearsal.rehearsal_time);
           // Use the same parseUnifiedDateTime function as other event types
           let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+          console.log('🎤 Parsed rehearsal times:', rehearsalTimes);
           
           if (rehearsalTimes) {
             // Use rehearsal_address for location (clean up invisible characters)
@@ -1373,6 +1378,7 @@ app.get('/calendar/:personId', async (req, res) => {
               end: rehearsalTimes.end,
               description: description,
               location: location,
+              url: rehearsal.rehearsal_pco || '',
               mainEvent: '' // Top-level rehearsals aren't tied to a specific event
             });
           }
