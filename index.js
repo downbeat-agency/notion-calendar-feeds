@@ -1020,21 +1020,27 @@ async function regenerateAllCalendars() {
       
       console.log(`\n📅 Processing ${i + 1}/${response.results.length}: ${personId}`);
       
-      const result = await regenerateCalendarForPerson(personId);
-      results.push(result);
-      
-      if (result.success) {
-        successCount++;
-      } else if (result.reason === 'no_events') {
-        skippedCount++;
-      } else {
+      try {
+        const result = await regenerateCalendarForPerson(personId);
+        results.push(result);
+        
+        if (result.success) {
+          successCount++;
+        } else if (result.reason === 'no_events') {
+          skippedCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        console.error(`❌ Failed to process ${personId}:`, error.message);
         failCount++;
+        results.push({ success: false, personId, error: error.message });
       }
       
-      // Add delay between each person (5 seconds) to avoid overwhelming Notion API
+      // Add delay between each person (10 seconds) to avoid overwhelming Notion API
       if (i < response.results.length - 1) {
-        console.log('⏳ Waiting 5 seconds before next person...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('⏳ Waiting 10 seconds before next person...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
       }
     }
     
