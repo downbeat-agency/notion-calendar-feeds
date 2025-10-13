@@ -52,6 +52,54 @@ const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 // Cache TTL in seconds (10 minutes default)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 600;
 
+// Helper function to get appropriate alarms for each event type
+function getAlarmsForEvent(eventType, eventTitle = '') {
+  // Skip alarms for OOO events
+  if (eventTitle && eventTitle.includes('⛔️') && eventTitle.toUpperCase().includes('OOO')) {
+    return [];
+  }
+  
+  const alarmConfigs = {
+    // FLIGHTS: 3 hours before
+    'flight_departure': [
+      { type: 'display', trigger: 10800 }   // 3 hours
+    ],
+    'flight_return': [
+      { type: 'display', trigger: 10800 }   // 3 hours
+    ],
+    
+    // MAIN EVENTS: 1 hour before
+    'main_event': [
+      { type: 'display', trigger: 3600 }    // 1 hour
+    ],
+    
+    // REHEARSALS: 24 hours before
+    'rehearsal': [
+      { type: 'display', trigger: 86400 }   // 24 hours
+    ],
+    
+    // HOTELS: 4 hours before check-in
+    'hotel': [
+      { type: 'display', trigger: 14400 }   // 4 hours
+    ],
+    
+    // TRANSPORTATION: 45 mins for pickup/meetup ONLY
+    'ground_transport_pickup': [
+      { type: 'display', trigger: 2700 }    // 45 minutes
+    ],
+    'ground_transport_meeting': [
+      { type: 'display', trigger: 2700 }    // 45 minutes
+    ],
+    'ground_transport_dropoff': [],         // NO ALARM
+    'ground_transport': [],                 // NO ALARM
+    
+    // TEAM CALENDAR: None
+    'team_calendar': []                     // NO ALARM
+  };
+  
+  return alarmConfigs[eventType] || [];
+}
+
 // Helper function to convert timezone-aware ISO 8601 to Pacific time (updated v2)
 function convertToPacific(isoString) {
   if (!isoString) return null;
@@ -1503,7 +1551,11 @@ app.get('/calendar/:personId', async (req, res) => {
     
     if (shouldReturnICS) {
       // Generate ICS calendar with all events
-      const calendar = ical({ name: 'My Downbeat Calendar' });
+      const calendar = ical({ 
+        name: `Downbeat - ${personName}`,
+        description: `Professional events calendar for ${personName}`,
+        ttl: 3600  // Suggest refresh every hour
+      });
 
       allCalendarEvents.forEach(event => {
         // event.start and event.end are already Date objects for new format
@@ -1518,7 +1570,8 @@ app.get('/calendar/:personId', async (req, res) => {
           description: event.description,
           location: event.location,
           url: event.url || '',
-          floating: true  // Create floating timezone events - times stay the same regardless of timezone
+          floating: true,  // Create floating timezone events - times stay the same regardless of timezone
+          alarms: getAlarmsForEvent(event.type, event.title)  // Add event-specific alarms
         });
       });
 
