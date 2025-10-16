@@ -440,6 +440,7 @@ async function regenerateCalendarForPerson(personId) {
     // Get person name from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Processing calendar for ${personName} (${calendarData.events.length} events)`);
 
@@ -949,9 +950,6 @@ async function regenerateCalendarForPerson(personId) {
       });
     }
 
-    // Extract first name from full name
-    const firstName = personName.split(' ')[0];
-    
     // Generate ICS calendar
     const calendar = ical({ 
       name: `Downbeat iCal (${firstName})`,
@@ -1678,6 +1676,7 @@ app.get('/calendar/:personId', async (req, res) => {
     // Get person name from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Using Calendar Data database for ${personName} (${calendarData.events.length} events)`);
 
@@ -2324,9 +2323,6 @@ app.get('/calendar/:personId', async (req, res) => {
 
     
     if (shouldReturnICS) {
-      // Extract first name from full name
-      const firstName = personName.split(' ')[0];
-      
       // Generate ICS calendar with all events
       const calendar = ical({ 
         name: `Downbeat iCal (${firstName})`,
