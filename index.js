@@ -949,9 +949,12 @@ async function regenerateCalendarForPerson(personId) {
       });
     }
 
+    // Extract first name from full name
+    const firstName = personName.split(' ')[0];
+    
     // Generate ICS calendar
     const calendar = ical({ 
-      name: `Downbeat - ${personName}`,
+      name: `Downbeat iCal (${firstName})`,
       description: `Professional events calendar for ${personName}`,
       ttl: 300  // Suggest refresh every 5 minutes
     });
@@ -2321,9 +2324,12 @@ app.get('/calendar/:personId', async (req, res) => {
 
     
     if (shouldReturnICS) {
+      // Extract first name from full name
+      const firstName = personName.split(' ')[0];
+      
       // Generate ICS calendar with all events
       const calendar = ical({ 
-        name: `Downbeat - ${personName}`,
+        name: `Downbeat iCal (${firstName})`,
         description: `Professional events calendar for ${personName}`,
         ttl: 300  // Suggest refresh every 5 minutes
       });
