@@ -1692,15 +1692,12 @@ app.get('/calendar/:personId', async (req, res) => {
     const topLevelHotels = events.hotels || [];
     const topLevelTransport = events.ground_transport || [];
     
-    console.log(`DEBUG: topLevelRehearsals count: ${topLevelRehearsals.length}`);
     const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
-        console.log('🎸 Main event date from Notion:', event.event_date);
         let eventTimes = parseUnifiedDateTime(event.event_date);
-        console.log('🎸 Parsed main event times:', eventTimes);
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
@@ -2178,10 +2175,8 @@ app.get('/calendar/:personId', async (req, res) => {
     if (topLevelRehearsals.length > 0) {
       topLevelRehearsals.forEach(rehearsal => {
         if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-          console.log('🎤 Rehearsal time from Notion:', rehearsal.rehearsal_time);
           // Use the same parseUnifiedDateTime function as other event types
           let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
-          console.log('🎤 Parsed rehearsal times:', rehearsalTimes);
           
           if (rehearsalTimes) {
             // Use rehearsal_address for location (clean up invisible characters)
