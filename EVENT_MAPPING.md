@@ -11,24 +11,25 @@ Each data source can generate multiple calendar events (main events + flights + 
 - **Location**: Separate "Calendar Data" database
 - **Format**: Individual formula fields for each event type
 - **Fields**:
-  - `Events` - Main events (weddings/gigs) - **11 fields**
+  - `Events` - Main events (weddings/gigs) - **12 fields**
   - `Flights` - Flight information - **15 fields**
   - `Rehearsals` - Rehearsal schedules - **6 fields**
   - `Hotels` - Hotel bookings - **9 fields**
   - `Transportation` - Ground transport - **7 fields**
   - `Team Calendar` - Office days and team events - **5 fields**
-- **Total**: 53 fields across 6 event types
+- **Total**: 54 fields across 6 event types
 
 ## Event Detection Rules
 
 ### 1. **Main Events** (Weddings/Gigs)
 **Triggers:** Object has `event_name` AND `event_date`
 
-**Available Fields (11 total):**
+**Available Fields (12 total):**
 - `event_name` - Event title (required)
 - `event_date` - ISO 8601 date range (required)
 - `notion_url` - Link back to Notion page
 - `band` - Band name
+- `event_personnel` - Formatted list of event personnel (all roles)
 - `calltime` - Call time (ISO 8601)
 - `gear_checklist` - Equipment checklist
 - `general_info` - Load-in info, dress code, notes
@@ -45,12 +46,17 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: event.event_name,              // " Wedding"
   start: event.event_date,              // "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00"
   end: event.event_date,                // Same as start (date range)
-  description: event.general_info,      // "Parking and Load In:\nValet Parking..."
+  description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + event.general_info,
+  // Description includes:
+  // - Position, Assignments, Pay (if present)
+  // - Call Time (if present)
+  // - Gear Checklist (if present)
+  // - Event Personnel (if present) - formatted list of all roles
+  // - Notion Link (if present)
+  // - General Info (load-in, dress code, etc.)
   location: event.venue_address || event.venue,  // "1910 Ocean Way, Santa Monica, CA 90405"
   url: event.notion_url,                // "https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6"
   band: event.band,                     // "Gold Standard"
-  calltime: event.calltime,             // "2025-09-13T22:00:00+00:00"
-  gearChecklist: event.gear_checklist,  // Equipment list
   pay_total: event.pay_total,           // 800
   position: event.position,             // "Drums"
   assignments: event.assignments        // "Base + Rehearsal"
@@ -232,7 +238,7 @@ The database uses separate formula fields for each event type. Each field contai
 
 ```javascript
 {
-  "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6\",\"event_date\":\"2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"calltime\":\"2025-09-13T22:00:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
+  "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6\",\"event_date\":\"2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"event_personnel\":\"Audio: A1 - Adrian Alvarado 📷 DJ 🍸\\nAudio: A2 - Paul Kirz\\nBand: Bass - Eric England\\nBand: Drums - Diego De la Rosa\\nBand: Guitar - Pedro Cordeiro\\nBand: Keys - Andre Bernier\\nBand: Vox 1 - Byron Dodson\\nBand: Vox 2 - Danielle Mozeleski\\nBand: Vox 3 - Joseph Leone\\nBand: Vox 4 - Uchechi Ejelonu\\nHorns: Sax - Carlo Alfonso 🍸\\nHorns: Trombone - Kevin Hicks\\nHorns: Trumpet - Scott Bell\",\"calltime\":\"2025-09-13T22:00:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
   
   "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
   

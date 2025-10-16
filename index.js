@@ -502,6 +502,12 @@ async function regenerateCalendarForPerson(personId) {
             gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
           }
 
+          // Build event personnel info (after gear checklist, before general info)
+          let eventPersonnelInfo = '';
+          if (event.event_personnel && event.event_personnel.trim()) {
+            eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
+          }
+
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
@@ -512,7 +518,7 @@ async function regenerateCalendarForPerson(personId) {
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
@@ -1823,13 +1829,19 @@ app.get('/calendar/:personId', async (req, res) => {
             calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
           }
 
-          // Build gear checklist info (after calltime, before general info)
+          // Build gear checklist info (after calltime, before personnel)
           let gearChecklistInfo = '';
           if (event.gear_checklist && event.gear_checklist.trim()) {
             gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
           }
 
-          // Build Notion URL info (after gear checklist, before general info)
+          // Build event personnel info (after gear checklist, before general info)
+          let eventPersonnelInfo = '';
+          if (event.event_personnel && event.event_personnel.trim()) {
+            eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
+          }
+
+          // Build Notion URL info (after personnel, before general info)
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
@@ -1840,7 +1852,7 @@ app.get('/calendar/:personId', async (req, res) => {
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + notionUrlInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
