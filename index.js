@@ -5,6 +5,7 @@ import ical from 'ical-generator';
 import { createClient } from 'redis';
 
 // Server refresh - October 1, 2025
+// Updated with event_personnel field support - October 8, 2025
 
 const app = express();
 const port = process.env.PORT || 3000;
