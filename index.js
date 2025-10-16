@@ -996,33 +996,20 @@ async function regenerateAllCalendars() {
   try {
     console.log('🚀 Starting BATCHED PARALLEL calendar regeneration...');
     
-    // Get person IDs from environment variables (PERSON_ID_1, PERSON_ID_2, etc.)
-    // This avoids the Calendar Data database timeout issue
-    const knownPersonIds = [];
-    let personIdIndex = 1;
-    while (process.env[`PERSON_ID_${personIdIndex}`]) {
-      const personId = process.env[`PERSON_ID_${personIdIndex}`];
-      if (personId && personId.trim()) {
-        knownPersonIds.push(personId.trim());
-      }
-      personIdIndex++;
-    }
-    
-    // Fallback to hardcoded IDs if no environment variables are set
-    if (knownPersonIds.length === 0) {
-      knownPersonIds.push(
-        'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
-        '330ae3ddb0c347d5a660ce3b1c925b75'  // Nick
-      );
-      console.log('⚠️  No PERSON_ID_* environment variables found, using fallback IDs');
-    }
-    
-    console.log(`Processing ${knownPersonIds.length} known people in batches of 100...`);
+    // Get all person IDs from Personnel database
+    const response = await notion.databases.query({
+      database_id: PERSONNEL_DB,
+      page_size: 100
+    });
+
+    const personIds = response.results.map(page => page.id);
+    console.log(`Found ${personIds.length} people in Personnel database`);
+    console.log(`Processing ${personIds.length} people in batches of 100...`);
     
     const batchSize = 100;
     const batches = [];
-    for (let i = 0; i < knownPersonIds.length; i += batchSize) {
-      batches.push(knownPersonIds.slice(i, i + batchSize));
+    for (let i = 0; i < personIds.length; i += batchSize) {
+      batches.push(personIds.slice(i, i + batchSize));
     }
     
     let totalSuccess = 0;
@@ -1073,12 +1060,12 @@ async function regenerateAllCalendars() {
     const totalTime = Math.round((Date.now() - startTime) / 1000);
     
     console.log(`\n✅ Batched parallel regeneration complete in ${totalTime}s!`);
-    console.log(`   Total: ${knownPersonIds.length} people, ${batches.length} batches`);
+    console.log(`   Total: ${personIds.length} people, ${batches.length} batches`);
     console.log(`   Success: ${totalSuccess}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
     
     return { 
       success: true, 
-      total: knownPersonIds.length, 
+      total: personIds.length, 
       batches: batches.length,
       successCount: totalSuccess, 
       failCount: totalFailed, 
@@ -1102,33 +1089,22 @@ function startBackgroundJob() {
     try {
       console.log('\n⏰ Background job triggered - updating one random person...');
       
-      // Use known person IDs to avoid Calendar Data timeout
-      const knownPersonIds = [];
-      let personIdIndex = 1;
-      while (process.env[`PERSON_ID_${personIdIndex}`]) {
-        const personId = process.env[`PERSON_ID_${personIdIndex}`];
-        if (personId && personId.trim()) {
-          knownPersonIds.push(personId.trim());
-        }
-        personIdIndex++;
-      }
+      // Get all person IDs from Personnel database
+      const response = await notion.databases.query({
+        database_id: PERSONNEL_DB,
+        page_size: 100
+      });
+
+      const personIds = response.results.map(page => page.id);
       
-      // Fallback to hardcoded IDs if no environment variables are set
-      if (knownPersonIds.length === 0) {
-        knownPersonIds.push(
-          'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
-          '330ae3ddb0c347d5a660ce3b1c925b75'  // Nick
-        );
-      }
-      
-      if (knownPersonIds.length === 0) {
-        console.log('⚠️  No known person IDs available');
+      if (personIds.length === 0) {
+        console.log('⚠️  No personnel found in database');
         return;
       }
       
-      // Pick a random person from known IDs
-      const randomIndex = Math.floor(Math.random() * knownPersonIds.length);
-      const personId = knownPersonIds[randomIndex];
+      // Pick a random person from Personnel database
+      const randomIndex = Math.floor(Math.random() * personIds.length);
+      const personId = personIds[randomIndex];
       
       // Regenerate their calendar
       const result = await regenerateCalendarForPerson(personId);
