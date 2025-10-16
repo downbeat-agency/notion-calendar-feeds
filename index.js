@@ -507,7 +507,10 @@ async function regenerateCalendarForPerson(personId) {
           // Build event personnel info (after gear checklist, before general info)
           let eventPersonnelInfo = '';
           if (event.event_personnel && event.event_personnel.trim()) {
+            console.log(`DEBUG: Found event_personnel for ${event.event_name}:`, event.event_personnel.substring(0, 100));
             eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
+          } else {
+            console.log(`DEBUG: No event_personnel for ${event.event_name}`);
           }
 
           let notionUrlInfo = '';
