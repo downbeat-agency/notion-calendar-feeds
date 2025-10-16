@@ -1082,13 +1082,15 @@ async function regenerateAllCalendars() {
   }
 }
 
-// Background job to update one random person every 5 minutes
+// Background job to update 100 people in parallel batches every 5 minutes
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
+  console.log('   Processing 100 people in parallel each cycle');
   
   setInterval(async () => {
     try {
-      console.log('\n⏰ Background job triggered - updating one random person...');
+      const jobStart = Date.now();
+      console.log('\n⏰ Background job triggered - updating 100 people in parallel...');
       
       // Get all person IDs from Personnel database
       const response = await notion.databases.query({
@@ -1103,18 +1105,47 @@ function startBackgroundJob() {
         return;
       }
       
-      // Pick a random person from Personnel database
-      const randomIndex = Math.floor(Math.random() * personIds.length);
-      const personId = personIds[randomIndex];
+      console.log(`   Found ${personIds.length} people to update`);
       
-      // Regenerate their calendar
-      const result = await regenerateCalendarForPerson(personId);
-      
-      if (result.success) {
-        console.log(`✅ Background refresh complete for ${result.personName}`);
-      } else {
-        console.log(`⚠️  Background refresh failed for ${personId}: ${result.error || result.reason}`);
+      // Process all people in parallel (batches of 100)
+      const batchSize = 100;
+      const batches = [];
+      for (let i = 0; i < personIds.length; i += batchSize) {
+        batches.push(personIds.slice(i, i + batchSize));
       }
+      
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let totalSkipped = 0;
+      
+      // Process each batch
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        
+        // Process batch in parallel
+        const batchPromises = batch.map(async (personId) => {
+          try {
+            return await regenerateCalendarForPerson(personId);
+          } catch (error) {
+            return { success: false, personId, error: error.message };
+          }
+        });
+        
+        // Wait for batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Count results
+        const batchSuccess = batchResults.filter(r => r.success).length;
+        const batchSkipped = batchResults.filter(r => r.reason === 'no_events').length;
+        const batchFailed = batchResults.filter(r => !r.success && r.reason !== 'no_events').length;
+        
+        totalSuccess += batchSuccess;
+        totalSkipped += batchSkipped;
+        totalFailed += batchFailed;
+      }
+      
+      const jobTime = Math.round((Date.now() - jobStart) / 1000);
+      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
