@@ -2435,5 +2435,5 @@ startBackgroundJob();
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
-  console.log(`Background job active - updating one person every 5 minutes`);
+  console.log(`Background job active - updating all people every 5 minutes (batched parallel)`);
 });
