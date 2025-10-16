@@ -996,14 +996,26 @@ async function regenerateAllCalendars() {
   try {
     console.log('🚀 Starting BATCHED PARALLEL calendar regeneration...');
     
-    // Known person IDs from our testing (these are people who have calendar data)
+    // Get person IDs from environment variables (PERSON_ID_1, PERSON_ID_2, etc.)
     // This avoids the Calendar Data database timeout issue
-    const knownPersonIds = [
-      'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
-      '330ae3ddb0c347d5a660ce3b1c925b75', // Nick
-      '8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b', // Add more as needed
-      // We'll add more person IDs as we discover them through testing
-    ];
+    const knownPersonIds = [];
+    let personIdIndex = 1;
+    while (process.env[`PERSON_ID_${personIdIndex}`]) {
+      const personId = process.env[`PERSON_ID_${personIdIndex}`];
+      if (personId && personId.trim()) {
+        knownPersonIds.push(personId.trim());
+      }
+      personIdIndex++;
+    }
+    
+    // Fallback to hardcoded IDs if no environment variables are set
+    if (knownPersonIds.length === 0) {
+      knownPersonIds.push(
+        'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
+        '330ae3ddb0c347d5a660ce3b1c925b75'  // Nick
+      );
+      console.log('⚠️  No PERSON_ID_* environment variables found, using fallback IDs');
+    }
     
     console.log(`Processing ${knownPersonIds.length} known people in batches of 100...`);
     
@@ -1091,11 +1103,23 @@ function startBackgroundJob() {
       console.log('\n⏰ Background job triggered - updating one random person...');
       
       // Use known person IDs to avoid Calendar Data timeout
-      const knownPersonIds = [
-        'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
-        '330ae3ddb0c347d5a660ce3b1c925b75', // Nick
-        '8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b', // Add more as needed
-      ];
+      const knownPersonIds = [];
+      let personIdIndex = 1;
+      while (process.env[`PERSON_ID_${personIdIndex}`]) {
+        const personId = process.env[`PERSON_ID_${personIdIndex}`];
+        if (personId && personId.trim()) {
+          knownPersonIds.push(personId.trim());
+        }
+        personIdIndex++;
+      }
+      
+      // Fallback to hardcoded IDs if no environment variables are set
+      if (knownPersonIds.length === 0) {
+        knownPersonIds.push(
+          'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
+          '330ae3ddb0c347d5a660ce3b1c925b75'  // Nick
+        );
+      }
       
       if (knownPersonIds.length === 0) {
         console.log('⚠️  No known person IDs available');
