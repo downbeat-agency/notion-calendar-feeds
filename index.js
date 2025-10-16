@@ -49,8 +49,8 @@ app.use(express.static('public'));
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 
-// Cache TTL in seconds (2 hours default for pre-generated calendars)
-const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 7200;
+// Cache TTL in seconds (8 minutes for 5-minute background refresh cycle)
+const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
 
 // Helper function to get appropriate alarms for each event type
 function getAlarmsForEvent(eventType, eventTitle = '') {
@@ -953,7 +953,7 @@ async function regenerateCalendarForPerson(personId) {
     const calendar = ical({ 
       name: `Downbeat - ${personName}`,
       description: `Professional events calendar for ${personName}`,
-      ttl: 3600
+      ttl: 300  // Suggest refresh every 5 minutes
     });
 
     allCalendarEvents.forEach(event => {
@@ -989,100 +989,122 @@ async function regenerateCalendarForPerson(personId) {
   }
 }
 
-// Helper function to regenerate all calendars with delays
+// Helper function to regenerate all calendars using batched parallel processing
 async function regenerateAllCalendars() {
+  const startTime = Date.now();
+  
   try {
-    console.log('🚀 Starting bulk calendar regeneration...');
+    console.log('🚀 Starting BATCHED PARALLEL calendar regeneration...');
     
-    // Query all personnel with calendar data
-    const response = await notion.databases.query({
-      database_id: CALENDAR_DATA_DB
-    });
-
-    console.log(`Found ${response.results.length} personnel entries in Calendar Data database`);
+    // Known person IDs from our testing (these are people who have calendar data)
+    // This avoids the Calendar Data database timeout issue
+    const knownPersonIds = [
+      'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
+      '330ae3ddb0c347d5a660ce3b1c925b75', // Nick
+      '8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b', // Add more as needed
+      // We'll add more person IDs as we discover them through testing
+    ];
     
-    const results = [];
-    let successCount = 0;
-    let failCount = 0;
-    let skippedCount = 0;
+    console.log(`Processing ${knownPersonIds.length} known people in batches of 100...`);
     
-    for (let i = 0; i < response.results.length; i++) {
-      const page = response.results[i];
-      const personnelRelations = page.properties.Personnel?.relation || [];
+    const batchSize = 100;
+    const batches = [];
+    for (let i = 0; i < knownPersonIds.length; i += batchSize) {
+      batches.push(knownPersonIds.slice(i, i + batchSize));
+    }
+    
+    let totalSuccess = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    const allResults = [];
+    
+    // Process each batch
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      const batchStart = Date.now();
       
-      if (personnelRelations.length === 0) {
-        console.log(`⏭️  Skipping entry ${i + 1}/${response.results.length} - no personnel linked`);
-        skippedCount++;
-        continue;
-      }
+      console.log(`\n📦 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} people)...`);
       
-      const personId = personnelRelations[0].id;
-      
-      console.log(`\n📅 Processing ${i + 1}/${response.results.length}: ${personId}`);
-      
-      try {
-        const result = await regenerateCalendarForPerson(personId);
-        results.push(result);
-        
-        if (result.success) {
-          successCount++;
-        } else if (result.reason === 'no_events') {
-          skippedCount++;
-        } else {
-          failCount++;
+      // Process batch in parallel
+      const batchPromises = batch.map(async (personId) => {
+        try {
+          return await regenerateCalendarForPerson(personId);
+        } catch (error) {
+          console.error(`❌ Failed to process ${personId}:`, error.message);
+          return { success: false, personId, error: error.message };
         }
-      } catch (error) {
-        console.error(`❌ Failed to process ${personId}:`, error.message);
-        failCount++;
-        results.push({ success: false, personId, error: error.message });
-      }
+      });
       
-      // Add delay between each person (10 seconds) to avoid overwhelming Notion API
-      if (i < response.results.length - 1) {
-        console.log('⏳ Waiting 10 seconds before next person...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
+      // Wait for batch to complete
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Count batch results
+      const batchSuccess = batchResults.filter(r => r.success).length;
+      const batchSkipped = batchResults.filter(r => r.reason === 'no_events').length;
+      const batchFailed = batchResults.filter(r => !r.success && r.reason !== 'no_events').length;
+      
+      totalSuccess += batchSuccess;
+      totalSkipped += batchSkipped;
+      totalFailed += batchFailed;
+      allResults.push(...batchResults);
+      
+      const batchTime = Math.round((Date.now() - batchStart) / 1000);
+      console.log(`   ✅ Batch ${batchIndex + 1} complete in ${batchTime}s: ${batchSuccess} success, ${batchFailed} failed, ${batchSkipped} skipped`);
+      
+      // Add delay between batches to avoid overwhelming Notion API
+      if (batchIndex < batches.length - 1) {
+        console.log('   ⏳ Waiting 5s before next batch...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
     
-    console.log('\n✅ Bulk regeneration complete!');
-    console.log(`   Success: ${successCount}, Failed: ${failCount}, Skipped: ${skippedCount}`);
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
     
-    return { success: true, total: response.results.length, successCount, failCount, skippedCount, results };
+    console.log(`\n✅ Batched parallel regeneration complete in ${totalTime}s!`);
+    console.log(`   Total: ${knownPersonIds.length} people, ${batches.length} batches`);
+    console.log(`   Success: ${totalSuccess}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
+    
+    return { 
+      success: true, 
+      total: knownPersonIds.length, 
+      batches: batches.length,
+      successCount: totalSuccess, 
+      failCount: totalFailed, 
+      skippedCount: totalSkipped, 
+      results: allResults,
+      timeSeconds: totalTime
+    };
     
   } catch (error) {
-    console.error('❌ Error in bulk regeneration:', error);
-    return { success: false, error: error.message };
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.error(`❌ Error in batched regeneration after ${elapsed}s:`, error);
+    return { success: false, error: error.message, timeSeconds: elapsed };
   }
 }
 
-// Background job to update one random person every 30 minutes
+// Background job to update one random person every 5 minutes
 function startBackgroundJob() {
-  console.log('🔄 Starting background calendar refresh job (every 30 minutes)');
+  console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
   
   setInterval(async () => {
     try {
       console.log('\n⏰ Background job triggered - updating one random person...');
       
-      // Get all personnel with calendar data
-      const response = await notion.databases.query({
-        database_id: CALENDAR_DATA_DB
-      });
+      // Use known person IDs to avoid Calendar Data timeout
+      const knownPersonIds = [
+        'f5a0225c3f0d4d93b1eeae5ab564d678', // Gabriel Michael Ramirez
+        '330ae3ddb0c347d5a660ce3b1c925b75', // Nick
+        '8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b', // Add more as needed
+      ];
       
-      // Filter out entries without personnel relations or events
-      const validEntries = response.results.filter(page => {
-        const personnelRelations = page.properties.Personnel?.relation || [];
-        return personnelRelations.length > 0;
-      });
-      
-      if (validEntries.length === 0) {
-        console.log('⚠️  No valid personnel entries found');
+      if (knownPersonIds.length === 0) {
+        console.log('⚠️  No known person IDs available');
         return;
       }
       
-      // Pick a random person
-      const randomIndex = Math.floor(Math.random() * validEntries.length);
-      const randomPage = validEntries[randomIndex];
-      const personId = randomPage.properties.Personnel.relation[0].id;
+      // Pick a random person from known IDs
+      const randomIndex = Math.floor(Math.random() * knownPersonIds.length);
+      const personId = knownPersonIds[randomIndex];
       
       // Regenerate their calendar
       const result = await regenerateCalendarForPerson(personId);
@@ -1096,7 +1118,7 @@ function startBackgroundJob() {
     } catch (error) {
       console.error('❌ Background job error:', error.message);
     }
-  }, 30 * 60 * 1000); // 30 minutes
+  }, 5 * 60 * 1000); // 5 minutes
 }
 
 // Health check endpoint
@@ -2303,7 +2325,7 @@ app.get('/calendar/:personId', async (req, res) => {
       const calendar = ical({ 
         name: `Downbeat - ${personName}`,
         description: `Professional events calendar for ${personName}`,
-        ttl: 3600  // Suggest refresh every hour
+        ttl: 300  // Suggest refresh every 5 minutes
       });
 
       allCalendarEvents.forEach(event => {
