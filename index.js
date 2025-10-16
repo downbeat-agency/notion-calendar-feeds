@@ -583,7 +583,7 @@ async function regenerateCalendarForPerson(personId) {
               location = rehearsal.rehearsal_address;
             }
 
-            let description = `Rehearsal for ${event.event_name}`;
+            let description = rehearsal.description || `Rehearsal`;
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
@@ -821,7 +821,7 @@ async function regenerateCalendarForPerson(personId) {
           
           if (rehearsalTimes) {
             let location = rehearsal.rehearsal_address ? rehearsal.rehearsal_address.trim().replace(/\u2060/g, '') : 'TBD';
-            let description = `Rehearsal`;
+            let description = rehearsal.description || `Rehearsal`;
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
@@ -1920,8 +1920,8 @@ app.get('/calendar/:personId', async (req, res) => {
               location = rehearsal.rehearsal_address;
             }
 
-            // Build description with band personnel
-            let description = `Rehearsal for ${event.event_name}`;
+            // Build description with rehearsal info at the top
+            let description = rehearsal.description || `Rehearsal`;
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }

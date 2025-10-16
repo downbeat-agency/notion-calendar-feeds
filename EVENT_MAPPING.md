@@ -13,11 +13,11 @@ Each data source can generate multiple calendar events (main events + flights + 
 - **Fields**:
   - `Events` - Main events (weddings/gigs) - **11 fields**
   - `Flights` - Flight information - **15 fields**
-  - `Rehearsals` - Rehearsal schedules - **5 fields**
+  - `Rehearsals` - Rehearsal schedules - **6 fields**
   - `Hotels` - Hotel bookings - **9 fields**
   - `Transportation` - Ground transport - **7 fields**
   - `Team Calendar` - Office days and team events - **5 fields**
-- **Total**: 52 fields across 6 event types
+- **Total**: 53 fields across 6 event types
 
 ## Event Detection Rules
 
@@ -120,12 +120,13 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 3. **Rehearsal Events**
 **Triggers:** Top-level `Rehearsals` field
 
-**Available Fields (5 total):**
+**Available Fields (6 total):**
 - `rehearsal_time` - ISO 8601 date range (required)
 - `rehearsal_pco` - Planning Center Online link
 - `rehearsal_band` - Band personnel list
 - `rehearsal_location` - Location name
 - `rehearsal_address` - Full address
+- `description` - Rehearsal description (e.g., "Rehearsal for 10/11/25 Midnight Hour - LA Wedding")
 
 **Rehearsal Mapping:**
 ```javascript
@@ -135,7 +136,7 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "🎤 Rehearsal",                    // Fixed title
   start: rehearsal.rehearsal_time,          // "2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00"
   end: rehearsal.rehearsal_time,            // Same as start (date range)
-  description: "Rehearsal\n\nBand Personnel:\nBass - Eric  🟢\nDrums - Diego  🟢\nGuitar - Silas  🟢\nKeys - Kevin  🟢\nVox 1 - Revel  🟢\nVox 2 - Dani  🟢\nVox 3 - Joe  🟢\nVox 4 - Ayo  🟢",
+  description: "Rehearsal for 10/11/25 Midnight Hour - LA Wedding\n\nBand Personnel:\nBass - Eric  🟢\nDrums - Diego  🟢\nGuitar - Silas  🟢\nKeys - Kevin  🟢\nVox 1 - Revel  🟢\nVox 2 - Dani  🟢\nVox 3 - Joe  🟢\nVox 4 - Ayo  🟢",
   location: rehearsal.rehearsal_address || rehearsal.rehearsal_location || "TBD",  // "123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠"
   url: rehearsal.rehearsal_pco             // "https://services.planningcenteronline.com/plans/81859026"
 }
@@ -235,7 +236,7 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
   
-  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
+  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"description\":\"Rehearsal for 9/14/25 Gold Standard - Santa Monica Wedding\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
   
   "Hotels": "[{\"title\":\"Hotel -  (Band)\",\"hotel_url\":\"https://www.notion.so/22a39e4a65a980418fc2dc12edd96217\",\"hotel_name\":\"Hilton Garden Inn Sonoma County Airport\",\"hotel_phone\":\"(707) 545-0444\",\"hotel_address\":\"417 Aviation Blvd, Santa Rosa, CA 95403\",\"confirmation\":\"3291242890\",\"names_on_reservation\":\"Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\",\"booked_under\":\"Diego\",\"dates_booked\":\"2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00\"}]",
   
