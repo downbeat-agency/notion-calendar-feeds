@@ -1510,6 +1510,13 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin: 0;
         }
         
+        .separator {
+            width: 100px;
+            height: 1px;
+            background: #2a2a2a;
+            margin: 16px auto;
+        }
+        
         .description {
             color: #999;
             font-size: 0.95rem;
@@ -1518,6 +1525,11 @@ app.get('/subscribe/:personId', async (req, res) => {
             margin: 24px auto 40px auto;
             max-width: 480px;
             line-height: 1.5;
+        }
+        
+        .description strong {
+            color: #bbb;
+            font-weight: 600;
         }
         
         .calendar-card {
@@ -1782,8 +1794,8 @@ app.get('/subscribe/:personId', async (req, res) => {
     <div class="container">
         <div class="header">
             <h1>${personName ? `Hello ${personName}!` : 'Subscribe to Calendar'}</h1>
-            <div class="subtitle">Downbeat Calendar</div>
-            <div class="description">Your personalized event calendar with everything you need: call times, venue details, MD contacts, payroll info, flights, hotels, and more - all in one place.</div>
+            <div class="separator"></div>
+            <div class="description"><strong>Introducing Downbeat Calendar</strong> - your personalized event calendar with everything you need: call times, venue details, MD contacts, payroll info, flights, hotels, and more. Subscribe once and stay organized across all your devices.</div>
         </div>
         
         <!-- Apple Calendar - Primary -->
