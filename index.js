@@ -1499,8 +1499,8 @@ app.get('/subscribe/:personId', async (req, res) => {
             color: #fff; 
             margin: 0 0 12px 0; 
             font-size: 2.2rem; 
-            font-weight: 300;
-            letter-spacing: 1px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
         }
         
         .subtitle {
@@ -1508,6 +1508,16 @@ app.get('/subscribe/:personId', async (req, res) => {
             font-size: 1rem;
             font-weight: 400;
             margin: 0;
+        }
+        
+        .description {
+            color: #999;
+            font-size: 0.95rem;
+            font-weight: 400;
+            text-align: center;
+            margin: 24px auto 40px auto;
+            max-width: 480px;
+            line-height: 1.5;
         }
         
         .calendar-card {
@@ -1563,9 +1573,13 @@ app.get('/subscribe/:personId', async (req, res) => {
         }
         
         .calendar-button img {
-            width: 28px;
-            height: 28px;
+            width: 36px;
+            height: 36px;
             object-fit: contain;
+        }
+        
+        .calendar-button.primary img {
+            filter: brightness(0) invert(1);
         }
         
         .badge {
@@ -1767,8 +1781,9 @@ app.get('/subscribe/:personId', async (req, res) => {
 <body>
     <div class="container">
         <div class="header">
-            <h1>${personName ? `Hello ${personName}` : 'Subscribe to Calendar'}</h1>
+            <h1>${personName ? `Hello ${personName}!` : 'Subscribe to Calendar'}</h1>
             <div class="subtitle">Downbeat Calendar</div>
+            <div class="description">Your personalized event calendar with everything you need: call times, venue details, MD contacts, payroll info, flights, hotels, and more - all in one place.</div>
         </div>
         
         <!-- Apple Calendar - Primary -->
@@ -1849,7 +1864,7 @@ app.get('/subscribe/:personId', async (req, res) => {
                 showToast();
                 // Small delay so user sees the toast before opening new tab
                 setTimeout(() => {
-                    window.open('https://calendar.google.com/calendar/u/0/r/settings/addcalendar', '_blank');
+                    window.open('https://calendar.google.com/calendar/u/0/r/settings/addcalendar', '_blank', 'noopener,noreferrer');
                 }, 300);
             });
         }
