@@ -1471,155 +1471,394 @@ app.get('/subscribe/:personId', async (req, res) => {
     <title>Subscribe to Downbeat Calendar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
+        * {
+            box-sizing: border-box;
+        }
+        
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             margin: 0; 
             padding: 40px 20px; 
-            background: #000; 
-            color: #fff; 
+            background: #0a0a0a; 
+            color: #e0e0e0; 
             min-height: 100vh;
+            line-height: 1.6;
         }
+        
         .container { 
-            max-width: 600px; 
-            margin: 0 auto; 
-            background: #111; 
-            padding: 50px; 
-            border-radius: 8px; 
-            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-            border: 1px solid #333;
+            max-width: 560px; 
+            margin: 0 auto;
         }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        
         h1 { 
             color: #fff; 
-            margin-bottom: 15px; 
-            font-size: 2.5rem; 
+            margin: 0 0 12px 0; 
+            font-size: 2.2rem; 
             font-weight: 300;
-            letter-spacing: 2px;
-            text-align: center;
+            letter-spacing: 1px;
         }
+        
         .subtitle {
             color: #888;
-            font-size: 1.1rem;
-            text-align: center;
-            margin-bottom: 30px;
-            font-weight: 300;
+            font-size: 1rem;
+            font-weight: 400;
+            margin: 0;
         }
+        
+        .calendar-card {
+            background: #141414;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .calendar-card.primary {
+            border: 2px solid #2c2c2c;
+        }
+        
+        .calendar-card.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+        }
+        
+        .calendar-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 20px 32px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            width: 100%;
+            position: relative;
+        }
+        
+        .calendar-button:hover {
+            background: #222;
+            border-color: #444;
+            transform: translateY(-1px);
+        }
+        
+        .calendar-button:active {
+            transform: translateY(0);
+        }
+        
+        .calendar-button.primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            border-color: #4a4a4a;
+        }
+        
+        .calendar-button img {
+            width: 28px;
+            height: 28px;
+            object-fit: contain;
+        }
+        
+        .badge {
+            position: absolute;
+            top: -8px;
+            right: 16px;
+            background: #2ecc71;
+            color: #000;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .steps {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .step {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            align-items: start;
+        }
+        
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        
+        .step-number {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            background: #2a2a2a;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .step-text {
+            color: #b0b0b0;
+            font-size: 0.95rem;
+            padding-top: 4px;
+        }
+        
+        .step-text strong {
+            color: #e0e0e0;
+        }
+        
+        .collapsible {
+            margin-top: 20px;
+        }
+        
+        .collapsible-header {
+            background: transparent;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 16px 20px;
+            color: #888;
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .collapsible-header:hover {
+            background: #141414;
+            color: #b0b0b0;
+            border-color: #333;
+        }
+        
+        .collapsible-header::after {
+            content: '▼';
+            font-size: 0.7rem;
+            transition: transform 0.3s ease;
+        }
+        
+        .collapsible-header.active::after {
+            transform: rotate(180deg);
+        }
+        
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .collapsible-content.active {
+            max-height: 500px;
+        }
+        
+        .collapsible-inner {
+            background: #141414;
+            border: 1px solid #2a2a2a;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 24px;
+            margin-top: -8px;
+        }
+        
         .url-box { 
-            background: #1a1a1a; 
-            padding: 20px; 
+            background: #0a0a0a; 
+            padding: 16px; 
             border-radius: 6px; 
-            border: 1px solid #333; 
-            margin: 25px 0; 
+            border: 1px solid #2a2a2a; 
+            margin: 16px 0; 
             word-break: break-all; 
             font-family: 'Monaco', 'Menlo', monospace;
-            color: #ccc;
-            font-size: 14px;
+            color: #888;
+            font-size: 13px;
+            line-height: 1.5;
         }
+        
         .copy-btn { 
-            background: #000; 
+            background: #1a1a1a; 
             color: #fff; 
             border: 1px solid #333; 
-            padding: 15px 30px; 
+            padding: 12px 24px; 
             border-radius: 6px; 
             cursor: pointer; 
-            margin: 15px 0; 
-            font-size: 16px;
+            font-size: 0.95rem;
             transition: all 0.3s ease;
+            width: 100%;
+            font-weight: 500;
         }
+        
         .copy-btn:hover { 
-            background: #333; 
-            border-color: #555;
+            background: #222; 
+            border-color: #444;
         }
-        .instructions { 
-            background: #1a1a1a; 
-            padding: 25px; 
-            border-radius: 6px; 
-            border-left: 3px solid #333; 
-            margin: 30px 0; 
-            color: #ccc;
+        
+        .divider {
+            color: #444;
+            font-size: 0.85rem;
+            text-align: center;
+            margin: 16px 0;
         }
-        .instructions strong {
-            color: #fff;
-        }
-        .app-links { 
-            display: flex; 
-            gap: 15px; 
-            margin: 30px 0; 
-        }
-        .app-link { 
-            flex: 1; 
-            padding: 20px; 
-            text-align: center; 
-            background: #000; 
-            color: #fff; 
-            text-decoration: none; 
-            border-radius: 6px; 
-            border: 1px solid #333;
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #2ecc71;
+            color: #000;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 20px rgba(46, 204, 113, 0.4);
+            opacity: 0;
             transition: all 0.3s ease;
-            font-weight: 500;
+            z-index: 1000;
         }
-        .app-link:hover { 
-            background: #1a1a1a; 
-            border-color: #555;
+        
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
         }
-        .section-title {
-            color: #fff;
-            font-size: 1.1rem;
-            margin-bottom: 15px;
-            font-weight: 500;
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 20px 16px;
+            }
+            
+            .calendar-card {
+                padding: 24px 20px;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .calendar-button {
+                padding: 18px 24px;
+                font-size: 1rem;
+            }
+            
+            .badge {
+                font-size: 0.65rem;
+                padding: 3px 8px;
+                right: 12px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>${personName ? `Hello ${personName}` : 'Subscribe to Downbeat Calendar'}</h1>
-        ${personName ? '<div class="subtitle">Subscribe to Downbeat Calendar</div>' : ''}
-        
-        <div class="instructions">
-            <div class="section-title">Quick Subscribe</div>
-            Click one of the options below to automatically open your calendar app with this calendar pre-loaded.
+        <div class="header">
+            <h1>${personName ? `Hello ${personName}` : 'Subscribe to Calendar'}</h1>
+            <div class="subtitle">Downbeat Calendar</div>
         </div>
         
-        <div class="app-links">
-            <a href="webcal://${req.get('host')}/calendar/${personId}" class="app-link">
-                🍎 Apple Calendar
+        <!-- Apple Calendar - Primary -->
+        <div class="calendar-card primary">
+            <a href="webcal://${req.get('host')}/calendar/${personId}" class="calendar-button primary">
+                <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
+                <span>Subscribe with Apple Calendar</span>
+                <span class="badge">One Click</span>
             </a>
         </div>
         
-        <div class="instructions" style="background: #1a1a1a; border-left-color: #ffa500;">
-            <div class="section-title">📝 Google Calendar Note</div>
-            <strong>Select "From URL" in the left menu, then paste the URL below to add the calendar.</strong>
+        <!-- Google Calendar - Secondary -->
+        <div class="calendar-card">
+            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+                <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
+                <span>Subscribe with Google Calendar</span>
+            </button>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-text">Click the button above to <strong>copy the URL</strong> and open Google Calendar</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-text">Select <strong>"From URL"</strong> in the left menu</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-text">Paste the URL and click <strong>"Add calendar"</strong></div>
+                </div>
+            </div>
         </div>
         
-        <div class="app-links">
-            <a href="https://calendar.google.com/calendar/u/0/r/settings/addcalendar" class="app-link" target="_blank">
-                📅 Google Calendar
-            </a>
-        </div>
-        
-        <div class="instructions">
-            <div class="section-title">Manual Setup</div>
-            <p>Copy this URL to add the calendar manually:</p>
-            <div class="url-box" id="urlBox">${subscriptionUrl}</div>
-            <button class="copy-btn" onclick="copyUrl()">📋 Copy URL</button>
-        </div>
-        
-        <div class="instructions">
-            <div class="section-title">Setup Instructions</div>
-            <strong>Apple Calendar:</strong> Just press the Apple Calendar button.<br><br>
-            <strong>Google Calendar:</strong> Click the Google Calendar button above → Click "From URL" in the left menu → Paste the URL below in the "URL of the calendar" field → Click "Add calendar"<br><br>
-            <strong>Outlook:</strong> Copy URL → Calendar → Add calendar → Subscribe from web → Paste URL
+        <!-- Other Apps - Collapsible -->
+        <div class="collapsible">
+            <div class="collapsible-header" onclick="toggleCollapsible()">
+                Other Calendar Apps (Outlook, etc.)
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner">
+                    <p style="margin: 0 0 16px 0; color: #888; font-size: 0.9rem;">
+                        Copy this URL and add it to your calendar app:
+                    </p>
+                    <div class="url-box" id="urlBox">${subscriptionUrl}</div>
+                    <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                    <div class="divider">• • •</div>
+                    <div class="step-text" style="margin-top: 16px;">
+                        <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br><br>
+                        <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     
+    <div class="toast" id="toast">✓ URL copied to clipboard!</div>
+    
     <script>
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2500);
+        }
+        
         function copyUrl() {
             const urlBox = document.getElementById('urlBox');
             navigator.clipboard.writeText(urlBox.textContent).then(() => {
-                const btn = document.querySelector('.copy-btn');
-                const originalText = btn.textContent;
-                btn.textContent = '✅ Copied!';
-                setTimeout(() => btn.textContent = originalText, 2000);
+                showToast();
             });
+        }
+        
+        function copyAndOpenGoogle() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+                // Small delay so user sees the toast before opening new tab
+                setTimeout(() => {
+                    window.open('https://calendar.google.com/calendar/u/0/r/settings/addcalendar', '_blank');
+                }, 300);
+            });
+        }
+        
+        function toggleCollapsible() {
+            const header = document.querySelector('.collapsible-header');
+            const content = document.querySelector('.collapsible-content');
+            header.classList.toggle('active');
+            content.classList.toggle('active');
         }
     </script>
 </body>
