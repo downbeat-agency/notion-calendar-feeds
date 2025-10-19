@@ -53,12 +53,10 @@ async function regeneratePerson(personId) {
     const data = await response.json();
     
     if (data.success) {
-      console.log(`✅ Found Eric England! Person ID: ${personId}`);
-      console.log(`   Name: ${data.personName}`);
-      console.log(`   Events: ${data.eventCount}`);
+      console.log(`   ✅ Success! Name: ${data.personName}, Events: ${data.eventCount}`);
       return { success: true, personId, personName: data.personName, eventCount: data.eventCount };
     } else {
-      console.log(`   ❌ Not Eric England: ${data.message || data.error}`);
+      console.log(`   ❌ Failed: ${data.message || data.error}`);
       return { success: false, personId, error: data.message || data.error };
     }
   } catch (error) {
@@ -76,7 +74,9 @@ async function findAndRegenerateEricEngland() {
     
     const result = await regeneratePerson(personId);
     
-    if (result.success && result.personName && result.personName.toLowerCase().includes('eric')) {
+    if (result.success && result.personName && 
+        (result.personName.toLowerCase().includes('eric england') || 
+         result.personName.toLowerCase().includes('eric') && result.personName.toLowerCase().includes('england'))) {
       console.log('\n🎉 FOUND ERIC ENGLAND!');
       console.log(`Person ID: ${result.personId}`);
       console.log(`Name: ${result.personName}`);
