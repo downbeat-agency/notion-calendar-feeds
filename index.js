@@ -1346,6 +1346,19 @@ app.get('/api/flight/:flightId', async (req, res) => {
     const page = await notion.pages.retrieve({ page_id: notionPageId });
     const properties = page.properties;
     
+    // Debug: Log available properties
+    console.log('Available properties:', Object.keys(properties));
+    
+    // Temporary: Return available properties for debugging
+    if (req.query.debug === 'true') {
+      return res.json({
+        notionPageId,
+        direction,
+        availableProperties: Object.keys(properties),
+        properties: properties
+      });
+    }
+    
     // Extract flight data based on direction
     let flightData;
     if (direction === 'departure') {
