@@ -1,0 +1,28 @@
+{
+  "name": "Flight Countdown",
+  "short_name": "FlightCount",
+  "description": "Real-time flight countdown and status tracker",
+  "start_url": "/flight-countdown-dynamic.html",
+  "display": "standalone",
+  "background_color": "#667eea",
+  "theme_color": "#667eea",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/Apple Logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/Apple Logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["travel", "utilities"],
+  "lang": "en",
+  "dir": "ltr"
+}

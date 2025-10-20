@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Countdown</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Flight Countdown">
+    <meta name="theme-color" content="#667eea">
+    <link rel="apple-touch-icon" href="/Apple Logo.png">
+    <link rel="manifest" href="/manifest.json">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+        }
+
+        .countdown-container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .flight-info {
+            margin-bottom: 30px;
+        }
+
+        .flight-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #ffd700;
+        }
+
+        .route {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .airline {
+            font-size: 1rem;
+            opacity: 0.7;
+        }
+
+        .countdown {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .time-unit {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            padding: 20px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .time-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 5px;
+        }
+
+        .time-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        .status.boarding {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid rgba(255, 193, 7, 0.5);
+        }
+
+        .status.departed {
+            background: rgba(40, 167, 69, 0.2);
+            border: 1px solid rgba(40, 167, 69, 0.5);
+        }
+
+        .status.upcoming {
+            background: rgba(0, 123, 255, 0.2);
+            border: 1px solid rgba(0, 123, 255, 0.5);
+        }
+
+        .departure-time {
+            margin-top: 15px;
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .flight-details {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .refresh-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 25px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .error-message {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.5);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        @media (max-width: 480px) {
+            .countdown {
+                gap: 15px;
+            }
+            
+            .time-value {
+                font-size: 2rem;
+            }
+            
+            .countdown-container {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="countdown-container">
+        <div class="flight-info">
+            <div class="flight-number" id="flight-number">✈️ Loading...</div>
+            <div class="route" id="route">Loading route...</div>
+            <div class="airline" id="airline">Loading airline...</div>
+        </div>
+
+        <div class="countdown">
+            <div class="time-unit">
+                <div class="time-value" id="days">0</div>
+                <div class="time-label">Days</div>
+            </div>
+            <div class="time-unit">
+                <div class="time-value" id="hours">0</div>
+                <div class="time-label">Hours</div>
+            </div>
+            <div class="time-unit">
+                <div class="time-value" id="minutes">0</div>
+                <div class="time-label">Minutes</div>
+            </div>
+            <div class="time-unit">
+                <div class="time-value" id="seconds">0</div>
+                <div class="time-label">Seconds</div>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            <div id="status-text">Loading...</div>
+        </div>
+
+        <div class="departure-time" id="departure-time">
+            Loading departure time...
+        </div>
+
+        <div class="flight-details" id="flight-details">
+            Loading flight details...
+        </div>
+
+        <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+    </div>
+
+    <script>
+        // Get URL parameters
+        function getUrlParameter(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        // Parse flight data from URL
+        const flightNumber = getUrlParameter('flight') || 'N/A';
+        const departureTimeStr = getUrlParameter('departure');
+        const airline = getUrlParameter('airline') || 'N/A';
+        const route = getUrlParameter('route') || 'N/A';
+        const confirmation = getUrlParameter('confirmation') || 'N/A';
+
+        // Validate required parameters
+        if (!departureTimeStr) {
+            document.querySelector('.countdown-container').innerHTML = `
+                <div class="error-message">
+                    <h3>❌ Missing Flight Information</h3>
+                    <p>This countdown page requires flight departure time information.</p>
+                    <p>Please access this page through your calendar event.</p>
+                </div>
+            `;
+            throw new Error('Missing departure time parameter');
+        }
+
+        // Parse departure time
+        const departureTime = new Date(departureTimeStr);
+        
+        if (isNaN(departureTime.getTime())) {
+            document.querySelector('.countdown-container').innerHTML = `
+                <div class="error-message">
+                    <h3>❌ Invalid Flight Time</h3>
+                    <p>The departure time format is invalid.</p>
+                    <p>Please check your calendar event.</p>
+                </div>
+            `;
+            throw new Error('Invalid departure time format');
+        }
+
+        // Update flight information
+        document.getElementById('flight-number').textContent = `✈️ ${flightNumber}`;
+        document.getElementById('route').textContent = route.replace('-', ' → ');
+        document.getElementById('airline').textContent = airline;
+        
+        // Format departure time for display
+        const departureTimeFormatted = departureTime.toLocaleString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZoneName: 'short'
+        });
+        document.getElementById('departure-time').textContent = `Departure: ${departureTimeFormatted}`;
+        
+        // Update flight details
+        document.getElementById('flight-details').innerHTML = `
+            <strong>Confirmation:</strong> ${confirmation}<br>
+            <strong>Flight:</strong> ${flightNumber}<br>
+            <strong>Airline:</strong> ${airline}
+        `;
+
+        function updateCountdown() {
+            const now = new Date();
+            const timeLeft = departureTime - now;
+            
+            if (timeLeft <= 0) {
+                // Flight has departed
+                document.getElementById('days').textContent = '0';
+                document.getElementById('hours').textContent = '0';
+                document.getElementById('minutes').textContent = '0';
+                document.getElementById('seconds').textContent = '0';
+                
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status departed';
+                document.getElementById('status-text').textContent = '✈️ Flight Departed';
+                return;
+            }
+            
+            const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+            
+            document.getElementById('days').textContent = days.toString().padStart(2, '0');
+            document.getElementById('hours').textContent = hours.toString().padStart(2, '0');
+            document.getElementById('minutes').textContent = minutes.toString().padStart(2, '0');
+            document.getElementById('seconds').textContent = seconds.toString().padStart(2, '0');
+            
+            // Update status based on time remaining
+            const statusEl = document.getElementById('status');
+            const statusText = document.getElementById('status-text');
+            
+            if (timeLeft <= 2 * 60 * 60 * 1000) { // 2 hours or less
+                statusEl.className = 'status boarding';
+                statusText.textContent = '🛫 Boarding Soon!';
+            } else if (timeLeft <= 24 * 60 * 60 * 1000) { // 24 hours or less
+                statusEl.className = 'status upcoming';
+                statusText.textContent = '✈️ Flight Tomorrow';
+            } else {
+                statusEl.className = 'status upcoming';
+                statusText.textContent = '📅 Flight Upcoming';
+            }
+        }
+        
+        // Update immediately and then every second
+        updateCountdown();
+        setInterval(updateCountdown, 1000);
+        
+        // Update page title with countdown
+        function updateTitle() {
+            const now = new Date();
+            const timeLeft = departureTime - now;
+            
+            if (timeLeft <= 0) {
+                document.title = `${flightNumber} - Departed`;
+                return;
+            }
+            
+            const hours = Math.floor(timeLeft / (1000 * 60 * 60));
+            const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            
+            document.title = `${flightNumber} - ${hours}h ${minutes}m`;
+        }
+        
+        setInterval(updateTitle, 60000); // Update title every minute
+        updateTitle();
+
+        // Register service worker for PWA functionality
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch((registrationError) => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
