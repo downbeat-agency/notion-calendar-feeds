@@ -825,6 +825,17 @@ async function regenerateCalendarForPerson(personId) {
             let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
+            // Generate countdown URL for flight departure
+            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.departure_flightnumber || 'N/A',
+              departureTime: departureTime,
+              airline: flight.departure_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_departure',
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
@@ -832,6 +843,7 @@ async function regenerateCalendarForPerson(personId) {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -846,6 +858,17 @@ async function regenerateCalendarForPerson(personId) {
             let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
+            // Generate countdown URL for flight return
+            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.return_flightnumber || 'N/A',
+              departureTime: returnTime,
+              airline: flight.return_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_return',
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
@@ -853,6 +876,7 @@ async function regenerateCalendarForPerson(personId) {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2183,6 +2207,17 @@ app.get('/calendar/:personId', async (req, res) => {
               };
             }
 
+            // Generate countdown URL for flight departure
+            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.departure_flightnumber || 'N/A',
+              departureTime: departureTime,
+              airline: flight.departure_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_departure',
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
@@ -2190,6 +2225,7 @@ app.get('/calendar/:personId', async (req, res) => {
               end: departureTimes.end,
               description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.departure_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2208,6 +2244,17 @@ app.get('/calendar/:personId', async (req, res) => {
               };
             }
 
+            // Generate countdown URL for flight return
+            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.return_flightnumber || 'N/A',
+              departureTime: returnTime,
+              airline: flight.return_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_return',
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
@@ -2215,11 +2262,12 @@ app.get('/calendar/:personId', async (req, res) => {
               end: returnTimes.end,
               description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.return_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
               mainEvent: event.event_name
-    });
+            });
   }
 });
       }
@@ -2482,6 +2530,17 @@ app.get('/calendar/:personId', async (req, res) => {
               description += `\n\nNotion Link: ${flight.flight_url}`;
             }
             
+            // Generate countdown URL for flight departure
+            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.departure_flightnumber || 'N/A',
+              departureTime: departureTime,
+              airline: flight.departure_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_departure',
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
@@ -2489,6 +2548,7 @@ app.get('/calendar/:personId', async (req, res) => {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2507,6 +2567,17 @@ app.get('/calendar/:personId', async (req, res) => {
               description += `\n\nNotion Link: ${flight.flight_url}`;
             }
             
+            // Generate countdown URL for flight return
+            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
+            const countdownUrl = generateFlightCountdownUrl({
+              flightNumber: flight.return_flightnumber || 'N/A',
+              departureTime: returnTime,
+              airline: flight.return_airline || 'N/A',
+              route: route,
+              confirmation: flight.confirmation || 'N/A'
+            });
+
             allCalendarEvents.push({
               type: 'flight_return',
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
@@ -2514,6 +2585,7 @@ app.get('/calendar/:personId', async (req, res) => {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
+              url: flight.flight_url || countdownUrl, // Use Notion URL if available, otherwise countdown URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
