@@ -15,17 +15,17 @@
   
   <style>
     :root{
-      color-scheme: light dark;
-      --ink: CanvasText;
-      --bg: Canvas;
-      --elev: color-mix(in oklab, Canvas 94%, Canvas);
-      --hair: color-mix(in oklab, CanvasText 18%, transparent);
-      --muted: color-mix(in oklab, CanvasText 35%, transparent);
+      color-scheme: dark;
+      --ink: #ffffff;
+      --bg: #000000;
+      --elev: #1a1a1a;
+      --hair: #333333;
+      --muted: #999999;
       --ok: #14b45c;
       --warn: #f7be00;
       --err: #ff453a;
       --ok-soft: color-mix(in oklab, var(--ok) 18%, transparent);
-      --surface: color-mix(in oklab, Canvas 96%, Canvas);
+      --surface: #1a1a1a;
     }
     *{box-sizing:border-box}
     html{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI",Roboto,Arial,sans-serif}
@@ -33,24 +33,14 @@
 
     .screen{min-height:100svh;display:flex;flex-direction:column}
 
-    /* Header */
-    .hdr{position:sticky;top:0;backdrop-filter:saturate(180%) blur(20px);
-         background:color-mix(in oklab, Canvas 80%, transparent);
-         border-bottom:0.5px solid var(--hair)}
-    .hdr-in{padding: env(safe-area-inset-top) 16px 10px;display:flex;align-items:center;gap:10px}
-    .airline-mark{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;overflow:hidden;
-                  background:color-mix(in oklab, CanvasText 8%, transparent)}
-    .airline-mark img{width:100%;height:100%;object-fit:cover}
-    .route-title{font-weight:800;font-size:22px;line-height:1.15}
-    .route-sub{font-size:13px;opacity:.75}
 
     /* Status banner */
-    .status{background:color-mix(in oklab, var(--ok) 25%, transparent);
-            border-bottom:0.5px solid color-mix(in oklab, var(--ok) 60%, transparent)}
-    .status.warn{background:color-mix(in oklab, var(--warn) 24%, transparent);
-                 border-bottom-color:color-mix(in oklab, var(--warn) 60%, transparent)}
-    .status.err{background:color-mix(in oklab, var(--err) 20%, transparent);
-                border-bottom-color:color-mix(in oklab, var(--err) 60%, transparent)}
+    .status{background:rgba(20, 180, 92, 0.15);
+            border-bottom:0.5px solid rgba(20, 180, 92, 0.3)}
+    .status.warn{background:rgba(247, 190, 0, 0.15);
+                 border-bottom-color:rgba(247, 190, 0, 0.3)}
+    .status.err{background:rgba(255, 69, 58, 0.15);
+                border-bottom-color:rgba(255, 69, 58, 0.3)}
     .status-in{padding:12px 16px}
     .status-big{font-weight:800;font-size:18px;color:var(--ok)}
     .status.warn .status-big{color:#926a00}
@@ -78,10 +68,10 @@
     /* Vertical progress rail */
     .rail{display:flex;flex-direction:column;align-items:center;margin-top:6px}
     .rail-line{position:relative;width:8px;border-radius:8px;
-               background:linear-gradient(to bottom, var(--ok-soft), color-mix(in oklab, var(--ok) 32%, transparent));
+               background:linear-gradient(to bottom, rgba(20, 180, 92, 0.2), rgba(20, 180, 92, 0.4));
                height:100%}
     .rail-cap{width:12px;height:12px;border-radius:50%;background:var(--ok);
-              box-shadow:0 0 0 2px color-mix(in oklab, var(--ok) 30%, transparent)}
+              box-shadow:0 0 0 2px rgba(20, 180, 92, 0.3)}
     .plane{position:absolute;left:50%;transform:translate(-50%,-50%);font-size:18px;filter:saturate(1.2)}
 
     .divider{height:1px;background:var(--hair);margin:10px 0}
@@ -117,19 +107,6 @@
 </head>
 <body>
   <div class="screen">
-    <!-- Header -->
-    <header class="hdr">
-      <div class="hdr-in safe">
-        <div class="airline-mark" aria-hidden="true">
-          <img id="airlineLogo" alt="Airline" style="display: none;">
-        </div>
-        <div>
-          <div class="route-title" id="routeTitle">Loading...</div>
-          <div class="route-sub" id="routeSub">Loading...</div>
-        </div>
-      </div>
-    </header>
-
     <!-- Status Banner -->
     <section class="status" id="status">
       <div class="status-in safe">
@@ -271,9 +248,6 @@
       const depDate = new Date(departureTime);
       const arrDate = new Date(arrivalTime);
       
-      // Update header
-      qsid('routeTitle').textContent = data.route;
-      qsid('routeSub').textContent = `${fmtDate(depDate)} • ${data.flightNumber} • ${data.airline}`;
       
       // Update airport codes and times
       qsid('depCode').textContent = data.departureCode;
