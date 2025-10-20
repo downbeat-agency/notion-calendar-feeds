@@ -1331,7 +1331,12 @@ app.get('/api/flight/:flightId', async (req, res) => {
     }
     
     const direction = parts.pop();
-    const notionPageId = parts.join('-');
+    let notionPageId = parts.join('-');
+    
+    // Convert 32-character page ID to UUID format if needed
+    if (notionPageId.length === 32 && !notionPageId.includes('-')) {
+      notionPageId = notionPageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
     
     if (!['departure', 'return'].includes(direction)) {
       return res.status(400).json({ error: 'Invalid direction. Must be "departure" or "return"' });
