@@ -169,11 +169,20 @@
     const fmtTime = (d)=> new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(d);
     const fmtDate = (d)=> new Intl.DateTimeFormat(undefined,{weekday:'short', month:'short', day:'numeric'}).format(d);
 
-    // Get flight ID from URL path
-    function getFlightIdFromPath() {
-      const path = window.location.pathname;
-      const match = path.match(/\/flight\/(.+)$/);
-      return match ? match[1] : null;
+    // Get flight data from URL parameters
+    function getFlightDataFromParams() {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        flightNumber: params.get('flight') || 'N/A',
+        departureTime: params.get('departure') || '',
+        airline: params.get('airline') || 'N/A',
+        route: params.get('route') || 'N/A',
+        confirmation: params.get('confirmation') || 'N/A',
+        departureCode: params.get('departureCode') || 'N/A',
+        arrivalCode: params.get('arrivalCode') || 'N/A',
+        departureName: params.get('departureName') || 'N/A',
+        arrivalName: params.get('arrivalName') || 'N/A'
+      };
     }
 
     // Calculate time until departure
@@ -212,33 +221,15 @@
     }
 
     // Load flight data
-    async function loadFlightData() {
-      const flightId = getFlightIdFromPath();
+    function loadFlightData() {
+      const flightData = getFlightDataFromParams();
       
-      if (!flightId) {
-        showError('Invalid flight URL');
+      if (!flightData.departureTime) {
+        showError('Invalid flight URL - missing departure time');
         return;
       }
 
-      try {
-        const response = await fetch(`/api/flight/${flightId}`);
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            showError('Flight not found');
-          } else {
-            showError('Failed to load flight data');
-          }
-          return;
-        }
-
-        const flightData = await response.json();
-        displayFlightData(flightData);
-        
-      } catch (error) {
-        console.error('Error loading flight data:', error);
-        showError('Failed to load flight data');
-      }
+      displayFlightData(flightData);
     }
 
     // Display flight data

@@ -61,22 +61,7 @@ const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
 function generateFlightCountdownUrl(flightData, direction = 'departure') {
   const baseUrl = (process.env.BASE_URL || 'https://calendar.downbeat.agency').replace(/\/$/, '');
   
-  // Extract Notion page ID from flight_url if available
-  let notionPageId = null;
-  if (flightData.flight_url) {
-    const match = flightData.flight_url.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-    if (match) {
-      notionPageId = match[1];
-    }
-  }
-  
-  // Use clean URL pattern if we have a Notion page ID
-  if (notionPageId) {
-    const flightId = `${notionPageId}-${direction}`;
-    return `${baseUrl}/flight/${flightId}`;
-  }
-  
-  // Fallback to URL params if no notionPageId available
+  // Always use URL params since we already have all the flight data
   const params = new URLSearchParams({
     flight: flightData.flightNumber || 'N/A',
     departure: flightData.departureTime,
