@@ -302,6 +302,10 @@
         const airline = getUrlParameter('airline') || 'N/A';
         const route = getUrlParameter('route') || 'N/A';
         const confirmation = getUrlParameter('confirmation') || 'N/A';
+        const departureCode = getUrlParameter('departureCode') || 'N/A';
+        const arrivalCode = getUrlParameter('arrivalCode') || 'N/A';
+        const departureName = getUrlParameter('departureName') || 'N/A';
+        const arrivalName = getUrlParameter('arrivalName') || 'N/A';
         
         console.log('URL:', window.location.href);
         console.log('Search params:', window.location.search);
@@ -382,26 +386,23 @@
         
         // Update flight segments with real data
         try {
-            // Parse route to get airport codes
-            const routeParts = finalRoute.split('-');
-            const departureCode = routeParts[0] || 'HNL';
-            const arrivalCode = routeParts[1] || 'LAX';
+            // Use airport codes and names from URL parameters
+            const finalDepartureCode = departureCode !== 'N/A' ? departureCode : 'LAX';
+            const finalArrivalCode = arrivalCode !== 'N/A' ? arrivalCode : 'SFO';
+            const finalDepartureName = departureName !== 'N/A' ? departureName : 'Los Angeles Intl.';
+            const finalArrivalName = arrivalName !== 'N/A' ? arrivalName : 'San Francisco Intl.';
             
             // Set airport codes
-            document.getElementById('departure-code').textContent = departureCode;
-            document.getElementById('arrival-code').textContent = arrivalCode;
+            document.getElementById('departure-code').textContent = finalDepartureCode;
+            document.getElementById('arrival-code').textContent = finalArrivalCode;
             
-            // Set airport names
-            const airportNames = {
-                'HNL': 'Daniel K Inouye Intl',
-                'LAX': 'Los Angeles Intl.',
-                'JFK': 'John F. Kennedy Intl',
-                'SFO': 'San Francisco Intl',
-                'SEA': 'Seattle-Tacoma Intl'
-            };
+            // Update the route display with clean airport codes
+            const cleanRoute = `${finalDepartureCode} to ${finalArrivalCode}`;
+            document.getElementById('flight-route').textContent = cleanRoute;
             
-            document.getElementById('departure-name').textContent = airportNames[departureCode] || 'Airport';
-            document.getElementById('arrival-name').textContent = airportNames[arrivalCode] || 'Airport';
+            // Set airport names from URL parameters
+            document.getElementById('departure-name').textContent = finalDepartureName;
+            document.getElementById('arrival-name').textContent = finalArrivalName;
             
             // Format departure time (now using floating time)
             const departureTimeFormatted = departureTime.toLocaleTimeString('en-US', {

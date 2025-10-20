@@ -63,7 +63,11 @@ function generateFlightCountdownUrl(flightData) {
     departure: flightData.departureTime,
     airline: flightData.airline || 'N/A',
     route: flightData.route || 'N/A',
-    confirmation: flightData.confirmation || 'N/A'
+    confirmation: flightData.confirmation || 'N/A',
+    departureCode: flightData.departureCode || 'N/A',
+    arrivalCode: flightData.arrivalCode || 'N/A',
+    departureName: flightData.departureName || 'N/A',
+    arrivalName: flightData.arrivalName || 'N/A'
   });
   return `${baseUrl}/flight-countdown-dynamic.html?${params.toString()}`;
 }
@@ -565,7 +569,11 @@ async function regenerateCalendarForPerson(personId) {
               departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.departure_airport || 'N/A',
+              arrivalCode: flight.return_airport || 'N/A',
+              departureName: flight.departure_airport_name || 'N/A',
+              arrivalName: flight.return_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -602,7 +610,11 @@ async function regenerateCalendarForPerson(personId) {
               departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.return_airport || 'N/A',
+              arrivalCode: flight.departure_airport || 'N/A',
+              departureName: flight.return_airport_name || 'N/A',
+              arrivalName: flight.departure_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -839,7 +851,11 @@ async function regenerateCalendarForPerson(personId) {
               departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.departure_airport || 'N/A',
+              arrivalCode: flight.return_airport || 'N/A',
+              departureName: flight.departure_airport_name || 'N/A',
+              arrivalName: flight.return_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -874,7 +890,11 @@ async function regenerateCalendarForPerson(personId) {
               departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.return_airport || 'N/A',
+              arrivalCode: flight.departure_airport || 'N/A',
+              departureName: flight.return_airport_name || 'N/A',
+              arrivalName: flight.departure_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -2225,7 +2245,11 @@ app.get('/calendar/:personId', async (req, res) => {
               departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.departure_airport || 'N/A',
+              arrivalCode: flight.return_airport || 'N/A',
+              departureName: flight.departure_airport_name || 'N/A',
+              arrivalName: flight.return_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -2264,7 +2288,11 @@ app.get('/calendar/:personId', async (req, res) => {
               departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.return_airport || 'N/A',
+              arrivalCode: flight.departure_airport || 'N/A',
+              departureName: flight.return_airport_name || 'N/A',
+              arrivalName: flight.departure_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -2552,7 +2580,11 @@ app.get('/calendar/:personId', async (req, res) => {
               departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.departure_airport || 'N/A',
+              arrivalCode: flight.return_airport || 'N/A',
+              departureName: flight.departure_airport_name || 'N/A',
+              arrivalName: flight.return_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
@@ -2591,7 +2623,11 @@ app.get('/calendar/:personId', async (req, res) => {
               departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
-              confirmation: flight.confirmation || 'N/A'
+              confirmation: flight.confirmation || 'N/A',
+              departureCode: flight.return_airport || 'N/A',
+              arrivalCode: flight.departure_airport || 'N/A',
+              departureName: flight.return_airport_name || 'N/A',
+              arrivalName: flight.departure_airport_name || 'N/A'
             });
 
             allCalendarEvents.push({
