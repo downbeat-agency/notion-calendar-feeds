@@ -59,7 +59,7 @@ const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
 
 // Helper function to generate flight countdown URL
 function generateFlightCountdownUrl(flightData, direction = 'departure') {
-  const baseUrl = process.env.BASE_URL || 'https://calendar.downbeat.agency';
+  const baseUrl = (process.env.BASE_URL || 'https://calendar.downbeat.agency').replace(/\/$/, '');
   
   // Extract Notion page ID from flight_url if available
   let notionPageId = null;
