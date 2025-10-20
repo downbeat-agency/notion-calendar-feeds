@@ -66,7 +66,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 2. **Flight Events** 
 **Triggers:** Top-level `Flights` field
 
-**Available Fields (15 total):**
+**Available Fields (17 total):**
 - `confirmation` - Booking confirmation number
 - `flight_url` - Link to Notion page for this flight
 - `airport_arrival` - Arrival time recommendations
@@ -77,9 +77,11 @@ Each data source can generate multiple calendar events (main events + flights + 
 - `departure_flightnumber` - Departure flight number
 - `departure_time` - Departure time as ISO 8601 date range (required)
 - `departure_airport` - Departure airport address
+- `departure_airport_name` - Departure airport name
 - `return_name` - Return flight name (required for return event)
 - `return_airline` - Return airline
 - `return_airport` - Return airport address
+- `return_airport_name` - Return airport name
 - `return_flightnumber` - Return flight number
 - `return_time` - Return time as ISO 8601 date range (required)
 
@@ -240,7 +242,7 @@ The database uses separate formula fields for each event type. Each field contai
 {
   "Events": "[{\"event_name\":\" Wedding\",\"notion_url\":\"https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6\",\"event_date\":\"2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00\",\"band\":\"Gold Standard\",\"event_personnel\":\"Audio: A1 - Adrian Alvarado 📷 DJ 🍸\\nAudio: A2 - Paul Kirz\\nBand: Bass - Eric England\\nBand: Drums - Diego De la Rosa\\nBand: Guitar - Pedro Cordeiro\\nBand: Keys - Andre Bernier\\nBand: Vox 1 - Byron Dodson\\nBand: Vox 2 - Danielle Mozeleski\\nBand: Vox 3 - Joseph Leone\\nBand: Vox 4 - Uchechi Ejelonu\\nHorns: Sax - Carlo Alfonso 🍸\\nHorns: Trombone - Kevin Hicks\\nHorns: Trumpet - Scott Bell\",\"calltime\":\"2025-09-13T22:00:00+00:00\",\"gear_checklist\":\"\",\"general_info\":\"Parking and Load In:...\",\"venue\":\"Casa Del Mar\",\"venue_address\":\"1910 Ocean Way, Santa Monica, CA 90405\",\"pay_total\":800,\"position\":\"Drums\",\"assignments\":\"Base + Rehearsal\"}]",
   
-  "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
+  "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"departure_airport_name\":\"Los Angeles International Airport\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_airport_name\":\"John F. Kennedy International Airport\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
   
   "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"description\":\"Rehearsal for 9/14/25 Gold Standard - Santa Monica Wedding\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
   

@@ -253,12 +253,11 @@
                     <div class="segment-icon departure"></div>
                     <div>
                         <div class="airport-code" id="departure-code">HNL</div>
-                        <div class="airport-name" id="departure-name">Daniel K Inouye Intl</div>
-                        <div class="segment-details" id="departure-details">Terminal 2 • Gate C2</div>
+                        <div class="airport-name" id="departure-name">Airport</div>
+                        <div class="segment-details" id="departure-details"></div>
                     </div>
                     <div class="segment-time">
                         <div class="time-main" id="departure-time">1:14 PM</div>
-                        <div class="time-sub">1:15 PM • 1m early</div>
                         <div class="time-status" id="departure-status">3h 27m ago</div>
                     </div>
                 </div>
@@ -273,12 +272,11 @@
                     <div class="segment-icon arrival"></div>
                     <div>
                         <div class="airport-code" id="arrival-code">LAX</div>
-                        <div class="airport-name" id="arrival-name">Los Angeles Intl.</div>
-                        <div class="segment-details" id="arrival-details">Terminal 3 • Gate 30A • Baggage Belt 25</div>
+                        <div class="airport-name" id="arrival-name">Airport</div>
+                        <div class="segment-details" id="arrival-details"></div>
                     </div>
                     <div class="segment-time">
                         <div class="time-main" id="arrival-time">9:47 PM</div>
-                        <div class="time-sub">9:57 PM • 10m early</div>
                         <div class="time-status" id="arrival-status">in 2h 6m</div>
                     </div>
                 </div>
@@ -312,10 +310,12 @@
             throw new Error('Missing departure time parameter');
         }
 
-        // Parse departure time
-        const departureTime = new Date(departureTimeStr);
+        // Parse departure time range to get both departure and arrival times
+        const [departureStr, arrivalStr] = departureTimeStr.split('/');
+        const departureTime = new Date(departureStr);
+        const arrivalTime = new Date(arrivalStr);
         
-        if (isNaN(departureTime.getTime())) {
+        if (isNaN(departureTime.getTime()) || isNaN(arrivalTime.getTime())) {
             document.querySelector('.countdown-container').innerHTML = `
                 <div class="error-message">
                     <h3>❌ Invalid Flight Time</h3>
@@ -325,6 +325,30 @@
             `;
             throw new Error('Invalid departure time format');
         }
+        
+        // Apply floating time conversion (like main calendar)
+        function isDSTDate(date) {
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            const day = date.getDate();
+            
+            // DST starts second Sunday in March at 2 AM
+            const marchFirst = new Date(year, 2, 1);
+            const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7);
+            
+            // DST ends first Sunday in November at 2 AM
+            const novFirst = new Date(year, 10, 1);
+            const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7);
+            
+            const checkDate = new Date(year, month, day);
+            return checkDate >= dstStart && checkDate < dstEnd;
+        }
+        
+        // Convert to floating time
+        const isDST = isDSTDate(departureTime);
+        const offsetHours = isDST ? 7 : 8; // PDT is UTC-7, PST is UTC-8
+        departureTime.setHours(departureTime.getHours() + offsetHours);
+        arrivalTime.setHours(arrivalTime.getHours() + offsetHours);
 
         // Update flight information immediately
         try {
@@ -356,7 +380,7 @@
             document.getElementById('departure-code').textContent = departureCode;
             document.getElementById('arrival-code').textContent = arrivalCode;
             
-            // Format departure time
+            // Format departure time (now using floating time)
             const departureTimeFormatted = departureTime.toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
@@ -364,14 +388,21 @@
             });
             document.getElementById('departure-time').textContent = departureTimeFormatted;
             
-            // Calculate arrival time (assuming 5h 33m flight)
-            const arrivalTime = new Date(departureTime.getTime() + (5 * 60 + 33) * 60 * 1000);
+            // Format arrival time (now using actual arrival time from date range)
             const arrivalTimeFormatted = arrivalTime.toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true
             });
             document.getElementById('arrival-time').textContent = arrivalTimeFormatted;
+            
+            // Calculate actual flight duration
+            const durationMs = arrivalTime - departureTime;
+            const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
+            const durationMinutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+            
+            // Update flight summary with actual duration
+            document.querySelector('.flight-summary').textContent = `Total ${durationHours}h ${durationMinutes}m • 2,553 mi`;
             
         } catch (error) {
             console.error('Error updating flight segments:', error);
@@ -380,7 +411,6 @@
         function updateCountdown() {
             const now = new Date();
             const timeLeft = departureTime - now;
-            const arrivalTime = new Date(departureTime.getTime() + (5 * 60 + 33) * 60 * 1000);
             const timeToArrival = arrivalTime - now;
             
             if (timeLeft <= 0) {
