@@ -556,11 +556,13 @@ async function regenerateCalendarForPerson(personId) {
             }
             
             // Generate countdown URL for flight departure
-            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
+            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
             const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTime,
+              departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -591,11 +593,13 @@ async function regenerateCalendarForPerson(personId) {
             }
             
             // Generate countdown URL for flight return
-            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
+            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
             const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTime,
+              departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -826,11 +830,13 @@ async function regenerateCalendarForPerson(personId) {
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
             // Generate countdown URL for flight departure
-            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
+            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
             const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTime,
+              departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -859,11 +865,13 @@ async function regenerateCalendarForPerson(personId) {
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
             // Generate countdown URL for flight return
-            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
+            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
             const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTime,
+              departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -2208,11 +2216,13 @@ app.get('/calendar/:personId', async (req, res) => {
             }
 
             // Generate countdown URL for flight departure
-            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
+            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
             const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTime,
+              departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -2245,11 +2255,13 @@ app.get('/calendar/:personId', async (req, res) => {
             }
 
             // Generate countdown URL for flight return
-            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
+            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
             const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTime,
+              departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -2531,11 +2543,13 @@ app.get('/calendar/:personId', async (req, res) => {
             }
             
             // Generate countdown URL for flight departure
-            const departureTime = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
+            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
+            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
             const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTime,
+              departureTime: departureTimeRange,
               airline: flight.departure_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
@@ -2568,11 +2582,13 @@ app.get('/calendar/:personId', async (req, res) => {
             }
             
             // Generate countdown URL for flight return
-            const returnTime = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
+            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
+            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
             const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
             const countdownUrl = generateFlightCountdownUrl({
               flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTime,
+              departureTime: returnTimeRange,
               airline: flight.return_airline || 'N/A',
               route: route,
               confirmation: flight.confirmation || 'N/A'
