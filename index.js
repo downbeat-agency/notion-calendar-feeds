@@ -57,7 +57,7 @@ const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
 
 // Helper function to generate flight countdown URL
 function generateFlightCountdownUrl(flightData) {
-  const baseUrl = process.env.BASE_URL || `http://localhost:${port}`;
+  const baseUrl = process.env.BASE_URL || 'https://notion-calendar-feeds-production.up.railway.app';
   const params = new URLSearchParams({
     flight: flightData.flightNumber || 'N/A',
     departure: flightData.departureTime,
