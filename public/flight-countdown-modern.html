@@ -165,9 +165,34 @@
   <script>
     const qsid = (id)=>document.getElementById(id);
 
-    // Format time and date
-    const fmtTime = (d)=> new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(d);
-    const fmtDate = (d)=> new Intl.DateTimeFormat(undefined,{weekday:'short', month:'short', day:'numeric'}).format(d);
+    // Format time and date - same as calendar (UTC to floating)
+    const fmtTime = (d) => {
+      // Convert UTC to America/Los_Angeles timezone, then format as floating time
+      const laDate = new Date(d.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+      const hours = laDate.getHours();
+      const minutes = laDate.getMinutes().toString().padStart(2, '0');
+      
+      // Convert to 12-hour format
+      let displayHours = hours;
+      let period = 'AM';
+      
+      if (hours === 0) {
+        displayHours = 12;
+      } else if (hours === 12) {
+        period = 'PM';
+      } else if (hours > 12) {
+        displayHours = hours - 12;
+        period = 'PM';
+      }
+      
+      return `${displayHours}:${minutes} ${period}`;
+    };
+    
+    const fmtDate = (d) => {
+      // Convert UTC to America/Los_Angeles timezone, then format as floating date
+      const laDate = new Date(d.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+      return new Intl.DateTimeFormat(undefined, {weekday:'short', month:'short', day:'numeric'}).format(laDate);
+    };
 
     // Get flight data from URL parameters
     function getFlightDataFromParams() {
@@ -236,6 +261,8 @@
     function displayFlightData(data) {
       // Parse departure time range
       const [departureTime, arrivalTime] = data.departureTime.split('/');
+      
+      // Create dates from UTC timestamps (same as calendar)
       const depDate = new Date(departureTime);
       const arrDate = new Date(arrivalTime);
       
