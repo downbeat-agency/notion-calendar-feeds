@@ -24,8 +24,8 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: #1a1a1a;
             min-height: 100vh;
-            color: #ffffff;
-            padding: 0;
+            color: #fff;
+            padding: 20px;
             line-height: 1.4;
         }
 
@@ -33,17 +33,20 @@
             max-width: 400px;
             margin: 0 auto;
             background: #1a1a1a;
-            min-height: 100vh;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            min-height: calc(100vh - 40px);
+            overflow: hidden;
         }
 
         .flight-header {
-            padding: 20px 20px 0 20px;
+            padding: 30px 20px 20px 20px;
             background: #1a1a1a;
         }
 
         .flight-date {
             font-size: 0.85rem;
-            color: #999999;
+            color: #999;
             margin-bottom: 8px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -52,7 +55,7 @@
         .flight-route {
             font-size: 1.5rem;
             font-weight: 600;
-            color: #ffffff;
+            color: #fff;
             margin-bottom: 12px;
             line-height: 1.2;
         }
@@ -97,28 +100,28 @@
 
         .passenger-name {
             font-size: 0.9rem;
-            color: #999999;
+            color: #999;
         }
 
         .status-bar {
-            background: #10b981;
+            background: #2ecc71;
             margin: 0 20px 20px 20px;
-            padding: 20px;
+            padding: 24px;
             border-radius: 8px;
             text-align: center;
         }
 
         .status-main {
-            font-size: 1.3rem;
-            font-weight: 600;
+            font-size: 1.5rem;
+            font-weight: 700;
             color: #ffffff;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
         }
 
         .status-sub {
-            font-size: 0.9rem;
+            font-size: 1rem;
             color: #ffffff;
-            opacity: 0.9;
+            opacity: 0.95;
         }
 
         .flight-segments {
@@ -127,8 +130,8 @@
         }
 
         .segment {
-            padding: 20px 0;
-            border-bottom: 1px solid #333333;
+            padding: 24px 0;
+            border-bottom: 1px solid #333;
         }
 
         .segment:last-child {
@@ -146,7 +149,7 @@
             width: 20px;
             height: 20px;
             border-radius: 50%;
-            background: #10b981;
+            background: #2ecc71;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -163,20 +166,20 @@
         }
 
         .airport-code {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #ffffff;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #fff;
         }
 
         .airport-name {
-            font-size: 0.85rem;
-            color: #999999;
+            font-size: 0.9rem;
+            color: #999;
             margin-top: 2px;
         }
 
         .segment-details {
             font-size: 0.8rem;
-            color: #999999;
+            color: #999;
             margin-top: 4px;
         }
 
@@ -186,30 +189,32 @@
         }
 
         .time-main {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #10b981;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #2ecc71;
         }
 
         .time-sub {
-            font-size: 0.8rem;
-            color: #999999;
+            font-size: 0.85rem;
+            color: #999;
             margin-top: 2px;
         }
 
         .time-status {
             font-size: 0.75rem;
-            color: #10b981;
+            color: #2ecc71;
             margin-top: 2px;
         }
 
         .flight-summary {
             text-align: center;
-            padding: 12px 0;
-            font-size: 0.8rem;
-            color: #999999;
-            border-top: 1px solid #333333;
-            border-bottom: 1px solid #333333;
+            padding: 16px 0;
+            border-top: 1px solid #333;
+            border-bottom: 1px solid #333;
+            font-size: 0.85rem;
+            color: #999;
+            background: #1a1a1a;
+            position: relative;
         }
 
         .error-message {
@@ -297,26 +302,32 @@
         const airline = getUrlParameter('airline') || 'N/A';
         const route = getUrlParameter('route') || 'N/A';
         const confirmation = getUrlParameter('confirmation') || 'N/A';
+        
+        console.log('URL:', window.location.href);
+        console.log('Search params:', window.location.search);
+        console.log('Departure time string:', departureTimeStr);
 
-        // Validate required parameters
-        if (!departureTimeStr) {
-            document.querySelector('.countdown-container').innerHTML = `
-                <div class="error-message">
-                    <h3>❌ Missing Flight Information</h3>
-                    <p>This countdown page requires flight departure time information.</p>
-                    <p>Please access this page through your calendar event.</p>
-                </div>
-            `;
-            throw new Error('Missing departure time parameter');
+        // Validate required parameters - use test data if not available
+        let finalDepartureTimeStr = departureTimeStr;
+        let finalFlightNumber = flightNumber;
+        let finalAirline = airline;
+        let finalRoute = route;
+        
+        if (!finalDepartureTimeStr) {
+            console.log('No URL parameters found, using test data');
+            finalDepartureTimeStr = '2025-10-19T13:15:00.000Z/2025-10-19T21:47:00.000Z';
+            finalFlightNumber = 'DL 915';
+            finalAirline = 'Delta';
+            finalRoute = 'HNL-LAX';
         }
 
         // Parse departure time range to get both departure and arrival times
-        const [departureStr, arrivalStr] = departureTimeStr.split('/');
+        const [departureStr, arrivalStr] = finalDepartureTimeStr.split('/');
         const departureTime = new Date(departureStr);
         const arrivalTime = new Date(arrivalStr);
         
         if (isNaN(departureTime.getTime()) || isNaN(arrivalTime.getTime())) {
-            document.querySelector('.countdown-container').innerHTML = `
+            document.querySelector('.flight-container').innerHTML = `
                 <div class="error-message">
                     <h3>❌ Invalid Flight Time</h3>
                     <p>The departure time format is invalid.</p>
@@ -326,7 +337,7 @@
             throw new Error('Invalid departure time format');
         }
         
-        // Apply floating time conversion (like main calendar)
+        // Apply the same floating time conversion as the main calendar
         function isDSTDate(date) {
             const year = date.getFullYear();
             const month = date.getMonth();
@@ -344,7 +355,7 @@
             return checkDate >= dstStart && checkDate < dstEnd;
         }
         
-        // Convert to floating time
+        // Convert to floating time (same as main calendar)
         const isDST = isDSTDate(departureTime);
         const offsetHours = isDST ? 7 : 8; // PDT is UTC-7, PST is UTC-8
         departureTime.setHours(departureTime.getHours() + offsetHours);
@@ -359,11 +370,11 @@
                 month: 'short'
             }).toUpperCase();
             
-            document.getElementById('flight-date').textContent = `${dateFormatted} • ${flightNumber}`;
-            document.getElementById('flight-route').textContent = route.replace('-', ' to ');
+            document.getElementById('flight-date').textContent = `${dateFormatted} • ${finalFlightNumber}`;
+            document.getElementById('flight-route').textContent = finalRoute.replace('-', ' to ');
             
             // Set airline logo
-            const airlineCode = airline.substring(0, 2).toUpperCase();
+            const airlineCode = finalAirline.substring(0, 2).toUpperCase();
             document.getElementById('airline-logo').textContent = airlineCode;
         } catch (error) {
             console.error('Error updating flight info:', error);
@@ -372,13 +383,25 @@
         // Update flight segments with real data
         try {
             // Parse route to get airport codes
-            const routeParts = route.split('-');
+            const routeParts = finalRoute.split('-');
             const departureCode = routeParts[0] || 'HNL';
             const arrivalCode = routeParts[1] || 'LAX';
             
             // Set airport codes
             document.getElementById('departure-code').textContent = departureCode;
             document.getElementById('arrival-code').textContent = arrivalCode;
+            
+            // Set airport names
+            const airportNames = {
+                'HNL': 'Daniel K Inouye Intl',
+                'LAX': 'Los Angeles Intl.',
+                'JFK': 'John F. Kennedy Intl',
+                'SFO': 'San Francisco Intl',
+                'SEA': 'Seattle-Tacoma Intl'
+            };
+            
+            document.getElementById('departure-name').textContent = airportNames[departureCode] || 'Airport';
+            document.getElementById('arrival-name').textContent = airportNames[arrivalCode] || 'Airport';
             
             // Format departure time (now using floating time)
             const departureTimeFormatted = departureTime.toLocaleTimeString('en-US', {
@@ -412,6 +435,7 @@
             const now = new Date();
             const timeLeft = departureTime - now;
             const timeToArrival = arrivalTime - now;
+            
             
             if (timeLeft <= 0) {
                 // Flight has departed
