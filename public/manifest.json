@@ -4,8 +4,8 @@
   "description": "Real-time flight countdown and status tracker",
   "start_url": "/flight-countdown-dynamic.html",
   "display": "standalone",
-  "background_color": "#667eea",
-  "theme_color": "#667eea",
+  "background_color": "#ffffff",
+  "theme_color": "#1f2937",
   "orientation": "portrait-primary",
   "scope": "/",
   "icons": [
