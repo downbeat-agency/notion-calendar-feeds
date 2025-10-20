@@ -22,149 +22,194 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: #000000;
+            background: #1a1a1a;
             min-height: 100vh;
+            color: #ffffff;
+            padding: 0;
+            line-height: 1.4;
+        }
+
+        .flight-container {
+            max-width: 400px;
+            margin: 0 auto;
+            background: #1a1a1a;
+            min-height: 100vh;
+        }
+
+        .flight-header {
+            padding: 20px 20px 0 20px;
+            background: #1a1a1a;
+        }
+
+        .flight-date {
+            font-size: 0.85rem;
+            color: #999999;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .flight-route {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 12px;
+            line-height: 1.2;
+        }
+
+        .flight-details-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .airline-logo {
+            width: 24px;
+            height: 24px;
+            background: #dc2626;
+            border-radius: 4px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #ffffff;
-            padding: 20px;
-            line-height: 1.6;
+            color: white;
+            font-size: 0.7rem;
+            font-weight: bold;
         }
 
-        .countdown-container {
-            text-align: center;
-            background: #000000;
-            border-radius: 12px;
-            padding: 40px 30px;
-            box-shadow: 0 4px 20px rgba(255, 255, 255, 0.1);
-            border: 1px solid #333333;
-            max-width: 420px;
-            width: 100%;
+        .passenger-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        .flight-info {
-            margin-bottom: 40px;
-        }
-
-        .flight-number {
-            font-size: 2.2rem;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: #ffffff;
-            letter-spacing: -0.02em;
-        }
-
-        .route {
-            font-size: 1.1rem;
+        .passenger-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #333333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
             color: #cccccc;
-            margin-bottom: 8px;
-            font-weight: 500;
         }
 
-        .airline {
-            font-size: 0.95rem;
+        .passenger-name {
+            font-size: 0.9rem;
             color: #999999;
-            font-weight: 400;
         }
 
-        .countdown {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-            margin: 40px 0;
-        }
-
-        .time-unit {
-            background: #111111;
-            border-radius: 8px;
-            padding: 20px 8px;
-            border: 1px solid #333333;
-            transition: all 0.2s ease;
-        }
-
-        .time-unit:hover {
-            background: #1a1a1a;
-            border-color: #444444;
-        }
-
-        .time-value {
-            font-size: 2.2rem;
-            font-weight: 600;
-            line-height: 1;
-            margin-bottom: 6px;
-            color: #ffffff;
-            letter-spacing: -0.02em;
-        }
-
-        .time-label {
-            font-size: 0.8rem;
-            color: #cccccc;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 500;
-        }
-
-        .status {
-            margin-top: 30px;
-            padding: 16px 20px;
-            border-radius: 8px;
-            font-weight: 500;
-            font-size: 0.95rem;
-        }
-
-        .status.boarding {
-            background: #2d1b00;
-            border: 1px solid #f59e0b;
-            color: #fbbf24;
-        }
-
-        .status.departed {
-            background: #064e3b;
-            border: 1px solid #10b981;
-            color: #34d399;
-        }
-
-        .status.upcoming {
-            background: #1e3a8a;
-            border: 1px solid #3b82f6;
-            color: #60a5fa;
-        }
-
-        .departure-time {
-            margin-top: 20px;
-            font-size: 1rem;
-            color: #cccccc;
-            font-weight: 400;
-        }
-
-        .flight-details {
-            margin-top: 25px;
+        .status-bar {
+            background: #10b981;
+            margin: 0 20px 20px 20px;
             padding: 20px;
-            background: #111111;
             border-radius: 8px;
-            font-size: 0.9rem;
-            color: #cccccc;
-            border: 1px solid #333333;
-            text-align: left;
+            text-align: center;
         }
 
-        .refresh-btn {
-            margin-top: 25px;
-            padding: 12px 24px;
-            background: #ffffff;
-            border: 1px solid #333333;
-            border-radius: 6px;
-            color: #000000;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: 500;
-            transition: all 0.2s ease;
+        .status-main {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 4px;
         }
 
-        .refresh-btn:hover {
-            background: #f0f0f0;
-            border-color: #555555;
+        .status-sub {
+            font-size: 0.9rem;
+            color: #ffffff;
+            opacity: 0.9;
+        }
+
+        .flight-segments {
+            background: #1a1a1a;
+            margin: 0 20px;
+        }
+
+        .segment {
+            padding: 20px 0;
+            border-bottom: 1px solid #333333;
+        }
+
+        .segment:last-child {
+            border-bottom: none;
+        }
+
+        .segment-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .segment-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #10b981;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.6rem;
+            color: white;
+        }
+
+        .segment-icon.departure::before {
+            content: "↑";
+        }
+
+        .segment-icon.arrival::before {
+            content: "↓";
+        }
+
+        .airport-code {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .airport-name {
+            font-size: 0.85rem;
+            color: #999999;
+            margin-top: 2px;
+        }
+
+        .segment-details {
+            font-size: 0.8rem;
+            color: #999999;
+            margin-top: 4px;
+        }
+
+        .segment-time {
+            text-align: right;
+            flex: 1;
+        }
+
+        .time-main {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #10b981;
+        }
+
+        .time-sub {
+            font-size: 0.8rem;
+            color: #999999;
+            margin-top: 2px;
+        }
+
+        .time-status {
+            font-size: 0.75rem;
+            color: #10b981;
+            margin-top: 2px;
+        }
+
+        .flight-summary {
+            text-align: center;
+            padding: 12px 0;
+            font-size: 0.8rem;
+            color: #999999;
+            border-top: 1px solid #333333;
+            border-bottom: 1px solid #333333;
         }
 
         .error-message {
@@ -173,64 +218,72 @@
             color: #fca5a5;
             padding: 20px;
             border-radius: 8px;
-            margin: 20px 0;
+            margin: 20px;
         }
 
         @media (max-width: 480px) {
-            .countdown {
-                gap: 15px;
-            }
-            
-            .time-value {
-                font-size: 2rem;
-            }
-            
-            .countdown-container {
-                padding: 30px 20px;
+            .flight-container {
+                max-width: 100%;
             }
         }
     </style>
 </head>
 <body>
-    <div class="countdown-container">
-        <div class="flight-info">
-            <div class="flight-number" id="flight-number">✈️ Loading...</div>
-            <div class="route" id="route">Loading route...</div>
-            <div class="airline" id="airline">Loading airline...</div>
-        </div>
-
-        <div class="countdown">
-            <div class="time-unit">
-                <div class="time-value" id="days">0</div>
-                <div class="time-label">Days</div>
-            </div>
-            <div class="time-unit">
-                <div class="time-value" id="hours">0</div>
-                <div class="time-label">Hours</div>
-            </div>
-            <div class="time-unit">
-                <div class="time-value" id="minutes">0</div>
-                <div class="time-label">Minutes</div>
-            </div>
-            <div class="time-unit">
-                <div class="time-value" id="seconds">0</div>
-                <div class="time-label">Seconds</div>
+    <div class="flight-container">
+        <div class="flight-header">
+            <div class="flight-date" id="flight-date">Loading...</div>
+            <div class="flight-route" id="flight-route">Loading route...</div>
+            <div class="flight-details-header">
+                <div class="airline-logo" id="airline-logo">DL</div>
+                <div class="passenger-info">
+                    <div class="passenger-avatar">D</div>
+                    <div class="passenger-name">Diego</div>
+                </div>
             </div>
         </div>
 
-        <div class="status" id="status">
-            <div id="status-text">Loading...</div>
+        <div class="status-bar">
+            <div class="status-main" id="status-main">Loading...</div>
+            <div class="status-sub" id="status-sub">Flight Status</div>
         </div>
 
-        <div class="departure-time" id="departure-time">
-            Loading departure time...
-        </div>
+        <div class="flight-segments">
+            <div class="segment">
+                <div class="segment-header">
+                    <div class="segment-icon departure"></div>
+                    <div>
+                        <div class="airport-code" id="departure-code">HNL</div>
+                        <div class="airport-name" id="departure-name">Daniel K Inouye Intl</div>
+                        <div class="segment-details" id="departure-details">Terminal 2 • Gate C2</div>
+                    </div>
+                    <div class="segment-time">
+                        <div class="time-main" id="departure-time">1:14 PM</div>
+                        <div class="time-sub">1:15 PM • 1m early</div>
+                        <div class="time-status" id="departure-status">3h 27m ago</div>
+                    </div>
+                </div>
+            </div>
 
-        <div class="flight-details" id="flight-details">
-            Loading flight details...
-        </div>
+            <div class="flight-summary">
+                Total 5h 33m • 2,553 mi
+            </div>
 
-        <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+            <div class="segment">
+                <div class="segment-header">
+                    <div class="segment-icon arrival"></div>
+                    <div>
+                        <div class="airport-code" id="arrival-code">LAX</div>
+                        <div class="airport-name" id="arrival-name">Los Angeles Intl.</div>
+                        <div class="segment-details" id="arrival-details">Terminal 3 • Gate 30A • Baggage Belt 25</div>
+                    </div>
+                    <div class="segment-time">
+                        <div class="time-main" id="arrival-time">9:47 PM</div>
+                        <div class="time-sub">9:57 PM • 10m early</div>
+                        <div class="time-status" id="arrival-status">in 2h 6m</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -275,82 +328,102 @@
 
         // Update flight information immediately
         try {
-            document.getElementById('flight-number').textContent = `✈️ ${flightNumber}`;
-            document.getElementById('route').textContent = route.replace('-', ' → ');
-            document.getElementById('airline').textContent = airline;
+            // Format date for header
+            const dateFormatted = departureTime.toLocaleDateString('en-US', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short'
+            }).toUpperCase();
+            
+            document.getElementById('flight-date').textContent = `${dateFormatted} • ${flightNumber}`;
+            document.getElementById('flight-route').textContent = route.replace('-', ' to ');
+            
+            // Set airline logo
+            const airlineCode = airline.substring(0, 2).toUpperCase();
+            document.getElementById('airline-logo').textContent = airlineCode;
         } catch (error) {
             console.error('Error updating flight info:', error);
         }
         
-        // Format departure time for display
+        // Update flight segments with real data
         try {
-            const departureTimeFormatted = departureTime.toLocaleString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
+            // Parse route to get airport codes
+            const routeParts = route.split('-');
+            const departureCode = routeParts[0] || 'HNL';
+            const arrivalCode = routeParts[1] || 'LAX';
+            
+            // Set airport codes
+            document.getElementById('departure-code').textContent = departureCode;
+            document.getElementById('arrival-code').textContent = arrivalCode;
+            
+            // Format departure time
+            const departureTimeFormatted = departureTime.toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
-                timeZoneName: 'short'
+                hour12: true
             });
-            document.getElementById('departure-time').textContent = `Departure: ${departureTimeFormatted}`;
+            document.getElementById('departure-time').textContent = departureTimeFormatted;
+            
+            // Calculate arrival time (assuming 5h 33m flight)
+            const arrivalTime = new Date(departureTime.getTime() + (5 * 60 + 33) * 60 * 1000);
+            const arrivalTimeFormatted = arrivalTime.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+            document.getElementById('arrival-time').textContent = arrivalTimeFormatted;
+            
         } catch (error) {
-            console.error('Error formatting departure time:', error);
-            document.getElementById('departure-time').textContent = `Departure: ${departureTimeStr}`;
-        }
-        
-        // Update flight details
-        try {
-            document.getElementById('flight-details').innerHTML = `
-                <strong>Confirmation:</strong> ${confirmation}<br>
-                <strong>Flight:</strong> ${flightNumber}<br>
-                <strong>Airline:</strong> ${airline}
-            `;
-        } catch (error) {
-            console.error('Error updating flight details:', error);
+            console.error('Error updating flight segments:', error);
         }
 
         function updateCountdown() {
             const now = new Date();
             const timeLeft = departureTime - now;
+            const arrivalTime = new Date(departureTime.getTime() + (5 * 60 + 33) * 60 * 1000);
+            const timeToArrival = arrivalTime - now;
             
             if (timeLeft <= 0) {
                 // Flight has departed
-                document.getElementById('days').textContent = '0';
-                document.getElementById('hours').textContent = '0';
-                document.getElementById('minutes').textContent = '0';
-                document.getElementById('seconds').textContent = '0';
-                
-                const statusEl = document.getElementById('status');
-                statusEl.className = 'status departed';
-                document.getElementById('status-text').textContent = '✈️ Flight Departed';
+                if (timeToArrival > 0) {
+                    // Flight is en route
+                    const hours = Math.floor(timeToArrival / (1000 * 60 * 60));
+                    const minutes = Math.floor((timeToArrival % (1000 * 60 * 60)) / (1000 * 60));
+                    
+                    document.getElementById('status-main').textContent = `Lands in ${hours}h ${minutes}m`;
+                    document.getElementById('status-sub').textContent = 'Flight is En Route';
+                    
+                    // Update arrival status
+                    document.getElementById('arrival-status').textContent = `in ${hours}h ${minutes}m`;
+                    document.getElementById('departure-status').textContent = 'Departed';
+                } else {
+                    // Flight has arrived
+                    document.getElementById('status-main').textContent = 'Flight Arrived';
+                    document.getElementById('status-sub').textContent = 'Welcome to Los Angeles';
+                    document.getElementById('arrival-status').textContent = 'Arrived';
+                    document.getElementById('departure-status').textContent = 'Departed';
+                }
                 return;
             }
             
             const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
             const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
             const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-            
-            document.getElementById('days').textContent = days.toString().padStart(2, '0');
-            document.getElementById('hours').textContent = hours.toString().padStart(2, '0');
-            document.getElementById('minutes').textContent = minutes.toString().padStart(2, '0');
-            document.getElementById('seconds').textContent = seconds.toString().padStart(2, '0');
             
             // Update status based on time remaining
-            const statusEl = document.getElementById('status');
-            const statusText = document.getElementById('status-text');
-            
             if (timeLeft <= 2 * 60 * 60 * 1000) { // 2 hours or less
-                statusEl.className = 'status boarding';
-                statusText.textContent = '🛫 Boarding Soon!';
+                document.getElementById('status-main').textContent = `Boards in ${hours}h ${minutes}m`;
+                document.getElementById('status-sub').textContent = 'Boarding Soon';
             } else if (timeLeft <= 24 * 60 * 60 * 1000) { // 24 hours or less
-                statusEl.className = 'status upcoming';
-                statusText.textContent = '✈️ Flight Tomorrow';
+                document.getElementById('status-main').textContent = `Departs in ${hours}h ${minutes}m`;
+                document.getElementById('status-sub').textContent = 'Flight Tomorrow';
             } else {
-                statusEl.className = 'status upcoming';
-                statusText.textContent = '📅 Flight Upcoming';
+                document.getElementById('status-main').textContent = `Departs in ${days}d ${hours}h`;
+                document.getElementById('status-sub').textContent = 'Flight Upcoming';
             }
+            
+            // Update departure status
+            document.getElementById('departure-status').textContent = `in ${days}d ${hours}h ${minutes}m`;
         }
         
         // Update immediately and then every second
