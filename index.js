@@ -3,6 +3,7 @@ import express from 'express';
 import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 import { createClient } from 'redis';
+import path from 'path';
 
 // Server refresh - October 1, 2025
 // Updated with event_personnel field support - October 8, 2025
@@ -57,8 +58,25 @@ const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
 
 // Helper function to generate flight countdown URL
-function generateFlightCountdownUrl(flightData) {
+function generateFlightCountdownUrl(flightData, direction = 'departure') {
   const baseUrl = process.env.BASE_URL || 'https://calendar.downbeat.agency';
+  
+  // Extract Notion page ID from flight_url if available
+  let notionPageId = null;
+  if (flightData.flight_url) {
+    const match = flightData.flight_url.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+    if (match) {
+      notionPageId = match[1];
+    }
+  }
+  
+  // Use clean URL pattern if we have a Notion page ID
+  if (notionPageId) {
+    const flightId = `${notionPageId}-${direction}`;
+    return `${baseUrl}/flight/${flightId}`;
+  }
+  
+  // Fallback to URL params if no notionPageId available
   const params = new URLSearchParams({
     flight: flightData.flightNumber || 'N/A',
     departure: flightData.departureTime,
@@ -70,7 +88,7 @@ function generateFlightCountdownUrl(flightData) {
     departureName: flightData.departureName || 'N/A',
     arrivalName: flightData.arrivalName || 'N/A'
   });
-  return `${baseUrl}/flight-countdown-dynamic.html?${params.toString()}`;
+  return `${baseUrl}/flight-countdown-modern.html?${params.toString()}`;
 }
 
 // Helper function to get appropriate alarms for each event type
@@ -1280,6 +1298,108 @@ app.get('/', (_req, res) => {
       description: 'Updates one random person every 30 minutes'
     }
   });
+});
+
+// Flight countdown API endpoint - Direct Notion Query
+app.get('/api/flight/:flightId', async (req, res) => {
+  try {
+    const { flightId } = req.params;
+    
+    // Special case for test flight
+    if (flightId === 'test') {
+      return res.json({
+        flightNumber: 'AS 1360',
+        departureTime: '2025-01-15T19:59:00.000Z/2025-01-15T21:34:00.000Z',
+        airline: 'Alaska',
+        route: 'LAX-SJD',
+        confirmation: 'TEST123',
+        departureCode: 'LAX',
+        arrivalCode: 'SJD',
+        departureName: 'Los Angeles International Airport',
+        arrivalName: 'Los Cabos International Airport'
+      });
+    }
+    
+    // Parse flightId: {notionPageId}-{direction}
+    const parts = flightId.split('-');
+    if (parts.length < 2) {
+      return res.status(400).json({ error: 'Invalid flight ID format' });
+    }
+    
+    const direction = parts.pop();
+    const notionPageId = parts.join('-');
+    
+    if (!['departure', 'return'].includes(direction)) {
+      return res.status(400).json({ error: 'Invalid direction. Must be "departure" or "return"' });
+    }
+    
+    // Query Notion page
+    const page = await notion.pages.retrieve({ page_id: notionPageId });
+    const properties = page.properties;
+    
+    // Extract flight data based on direction
+    let flightData;
+    if (direction === 'departure') {
+      // Parse departure time range
+      const departureTime = properties.departure_time?.date?.start;
+      const departureArrivalTime = properties.departure_arrival_time?.date?.start;
+      
+      if (!departureTime) {
+        return res.status(404).json({ error: 'Departure time not found' });
+      }
+      
+      const departureTimeRange = departureArrivalTime
+        ? `${departureTime}/${departureArrivalTime}`
+        : `${departureTime}/${departureTime}`;
+      
+      flightData = {
+        flightNumber: properties.departure_flightnumber?.title?.[0]?.text?.content || 'N/A',
+        departureTime: departureTimeRange,
+        airline: properties.departure_airline?.select?.name || 'N/A',
+        route: `${properties.departure_airport?.select?.name || 'N/A'}-${properties.return_airport?.select?.name || 'N/A'}`,
+        confirmation: properties.confirmation?.rich_text?.[0]?.text?.content || 'N/A',
+        departureCode: properties.departure_airport?.select?.name || 'N/A',
+        arrivalCode: properties.return_airport?.select?.name || 'N/A',
+        departureName: properties.departure_airport_name?.rich_text?.[0]?.text?.content || 'N/A',
+        arrivalName: properties.return_airport_name?.rich_text?.[0]?.text?.content || 'N/A'
+      };
+    } else {
+      // Parse return time range
+      const returnTime = properties.return_time?.date?.start;
+      const returnArrivalTime = properties.return_arrival_time?.date?.start;
+      
+      if (!returnTime) {
+        return res.status(404).json({ error: 'Return time not found' });
+      }
+      
+      const returnTimeRange = returnArrivalTime
+        ? `${returnTime}/${returnArrivalTime}`
+        : `${returnTime}/${returnTime}`;
+      
+      flightData = {
+        flightNumber: properties.return_flightnumber?.title?.[0]?.text?.content || 'N/A',
+        departureTime: returnTimeRange,
+        airline: properties.return_airline?.select?.name || properties.departure_airline?.select?.name || 'N/A',
+        route: `${properties.return_airport?.select?.name || 'N/A'}-${properties.departure_airport?.select?.name || 'N/A'}`,
+        confirmation: properties.confirmation?.rich_text?.[0]?.text?.content || 'N/A',
+        departureCode: properties.return_airport?.select?.name || 'N/A',
+        arrivalCode: properties.departure_airport?.select?.name || 'N/A',
+        departureName: properties.return_airport_name?.rich_text?.[0]?.text?.content || 'N/A',
+        arrivalName: properties.departure_airport_name?.rich_text?.[0]?.text?.content || 'N/A'
+      };
+    }
+    
+    res.json(flightData);
+  } catch (error) {
+    console.error('Flight API error:', error);
+    
+    // Handle specific Notion API errors
+    if (error.code === 'object_not_found') {
+      return res.status(404).json({ error: 'Flight not found' });
+    }
+    
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Cache management endpoint - clear cache for a specific person
@@ -2874,6 +2994,16 @@ app.get('/calendar/:personId', async (req, res) => {
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
+});
+
+// Flight countdown page route - serves modern design
+app.get('/flight/:flightId', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'flight-countdown-modern.html'));
+});
+
+// Fallback route for URL parameters (if modern design needs it)
+app.get('/flight-countdown-modern.html', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'flight-countdown-modern.html'));
 });
 
 // Start background job for calendar updates
