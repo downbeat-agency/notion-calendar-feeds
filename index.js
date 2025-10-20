@@ -6,6 +6,7 @@ import { createClient } from 'redis';
 
 // Server refresh - October 1, 2025
 // Updated with event_personnel field support - October 8, 2025
+// Retry deployment after network issues resolved
 // Force deployment - testing event_personnel integration
 // DEBUG VERSION - Testing deployment process
 
