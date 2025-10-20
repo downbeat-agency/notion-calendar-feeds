@@ -165,12 +165,10 @@
   <script>
     const qsid = (id)=>document.getElementById(id);
 
-    // Format time and date - same as calendar (UTC to floating)
+    // Format time and date - times are already in correct local format
     const fmtTime = (d) => {
-      // Convert UTC to America/Los_Angeles timezone, then format as floating time
-      const laDate = new Date(d.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
-      const hours = laDate.getHours();
-      const minutes = laDate.getMinutes().toString().padStart(2, '0');
+      const hours = d.getHours();
+      const minutes = d.getMinutes().toString().padStart(2, '0');
       
       // Convert to 12-hour format
       let displayHours = hours;
@@ -189,9 +187,7 @@
     };
     
     const fmtDate = (d) => {
-      // Convert UTC to America/Los_Angeles timezone, then format as floating date
-      const laDate = new Date(d.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
-      return new Intl.DateTimeFormat(undefined, {weekday:'short', month:'short', day:'numeric'}).format(laDate);
+      return new Intl.DateTimeFormat(undefined, {weekday:'short', month:'short', day:'numeric'}).format(d);
     };
 
     // Get flight data from URL parameters
@@ -257,6 +253,13 @@
       displayFlightData(flightData);
     }
 
+    // Check if date is in DST (same logic as calendar)
+    function isDSTDate(date) {
+      const jan = new Date(date.getFullYear(), 0, 1);
+      const jul = new Date(date.getFullYear(), 6, 1);
+      return date.getTimezoneOffset() < Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+    }
+
     // Display flight data
     function displayFlightData(data) {
       // Parse departure time range
@@ -265,6 +268,13 @@
       // Create dates from UTC timestamps (same as calendar)
       const depDate = new Date(departureTime);
       const arrDate = new Date(arrivalTime);
+      
+      // Add Pacific offset for floating times (exact same logic as calendar)
+      const isDST = isDSTDate(depDate);
+      const offsetHours = isDST ? 7 : 8;
+      
+      depDate.setHours(depDate.getHours() + offsetHours);
+      arrDate.setHours(arrDate.getHours() + offsetHours);
       
       
       // Update airport codes and times
