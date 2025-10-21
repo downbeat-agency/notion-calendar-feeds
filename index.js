@@ -1938,7 +1938,7 @@ app.get('/subscribe/:personId', async (req, res) => {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             margin: 0; 
             padding: 40px 20px; 
-            background: #0a0a0a; 
+            background: #000000; 
             color: #e0e0e0; 
             min-height: 100vh;
             line-height: 1.6;
