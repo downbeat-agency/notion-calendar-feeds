@@ -1494,22 +1494,29 @@ app.get('/api/flight/:flightId/status', async (req, res) => {
       });
     }
     
-    // Parse flightId: {notionPageId}-{direction}
-    const parts = flightId.split('-');
-    if (parts.length < 2) {
-      return res.status(400).json({ error: 'Invalid flight ID format' });
-    }
-    
-    const direction = parts.pop();
-    let notionPageId = parts.join('-');
-    
-    // Convert 32-character page ID to UUID format if needed
-    if (notionPageId.length === 32 && !notionPageId.includes('-')) {
-      notionPageId = notionPageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
-    }
-    
-    if (!['departure', 'return'].includes(direction)) {
-      return res.status(400).json({ error: 'Invalid direction. Must be "departure" or "return"' });
+    // Check if this is a flight ident (like "AS271") or a Notion page ID
+    if (flightId.includes('-') && flightId.split('-').length >= 2) {
+      // This is a Notion page ID format: {notionPageId}-{direction}
+      const parts = flightId.split('-');
+      const direction = parts.pop();
+      let notionPageId = parts.join('-');
+      
+      // Convert 32-character page ID to UUID format if needed
+      if (notionPageId.length === 32 && !notionPageId.includes('-')) {
+        notionPageId = notionPageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+      }
+      
+      if (!['departure', 'return'].includes(direction)) {
+        return res.status(400).json({ error: 'Invalid direction. Must be "departure" or "return"' });
+      }
+    } else {
+      // This is a flight ident (like "AS271") - we can't get Notion data, so return early
+      return res.json({
+        status: 'No Data',
+        message: 'Flight ident provided - cannot fetch Notion data',
+        lastUpdated: new Date().toISOString(),
+        source: 'flight_ident'
+      });
     }
     
     // Get basic flight data from Notion first

@@ -448,10 +448,10 @@
           const airline = params.get('airline');
           
           if (flight && airline) {
-            // For now, use 'test' as flightId since we don't have the actual Notion page ID
-            // In production, you'd need to pass the actual Notion page ID
-            flightId = 'test';
-            console.log('Using test flightId for FlightAware API');
+            // Use a combination of airline and flight number for FlightAware
+            // This will work better than 'test' for real flights
+            flightId = `${airline}${flight}`.replace(/\s+/g, '');
+            console.log(`Using flight ident: ${flightId} for FlightAware API`);
           } else {
             console.log('No flight ID found in URL path or parameters');
             return;
