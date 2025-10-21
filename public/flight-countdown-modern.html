@@ -403,10 +403,24 @@
     // Load real-time flight status from FlightAware
     async function loadFlightStatus() {
       try {
-        const flightId = window.location.pathname.split('/')[2]; // e.g., "pageId-departure"
+        // Try to get flightId from URL path first (new format)
+        let flightId = window.location.pathname.split('/')[2]; // e.g., "pageId-departure"
+        
+        // If not found, try to construct from URL parameters (current format)
         if (!flightId) {
-          console.log('No flight ID found in URL');
-          return;
+          const params = new URLSearchParams(window.location.search);
+          const flight = params.get('flight');
+          const airline = params.get('airline');
+          
+          if (flight && airline) {
+            // For now, use 'test' as flightId since we don't have the actual Notion page ID
+            // In production, you'd need to pass the actual Notion page ID
+            flightId = 'test';
+            console.log('Using test flightId for FlightAware API');
+          } else {
+            console.log('No flight ID found in URL path or parameters');
+            return;
+          }
         }
 
         const response = await fetch(`/api/flight/${flightId}/status`);
