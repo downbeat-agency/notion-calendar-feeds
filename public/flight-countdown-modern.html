@@ -439,7 +439,18 @@
       const statusBadge = qsid('statusBadge');
       const lastUpdated = qsid('lastUpdated');
       
-      // Show the status section
+      // Check if we have real data to display
+      if (!statusData || 
+          statusData.status === 'No Data' || 
+          statusData.status === 'Scheduled' ||
+          statusData.source === 'test' ||
+          statusData.message) {
+        // Hide the status section if no real data
+        statusInfo.style.display = 'none';
+        return;
+      }
+      
+      // Show the status section only if we have real data
       statusInfo.style.display = 'block';
       
       // Update status badge

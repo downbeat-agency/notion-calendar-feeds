@@ -1484,16 +1484,11 @@ app.get('/api/flight/:flightId/status', async (req, res) => {
   try {
     const { flightId } = req.params;
     
-    // Special case for test flight
+    // Special case for test flight - return no data to hide the section
     if (flightId === 'test') {
       return res.json({
-        status: 'On Time',
-        departureGate: 'A12',
-        departureTerminal: 'Terminal 1',
-        arrivalGate: 'B8',
-        arrivalTerminal: 'Terminal 2',
-        baggageClaim: '3',
-        delay: 0,
+        status: 'No Data',
+        message: 'Test flight - no real-time data available',
         lastUpdated: new Date().toISOString(),
         source: 'test'
       });
