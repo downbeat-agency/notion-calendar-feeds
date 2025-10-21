@@ -4,6 +4,7 @@ import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 import { createClient } from 'redis';
 import path from 'path';
+import axios from 'axios';
 
 // Server refresh - October 1, 2025
 // Updated with event_personnel field support - October 8, 2025
@@ -45,6 +46,75 @@ try {
   console.warn('⚠️  Continuing without cache');
   redis = null;
   cacheEnabled = false;
+}
+
+// FlightAware AeroAPI configuration
+const FLIGHTAWARE_API_KEY = process.env.FLIGHTAWARE_API_KEY;
+const FLIGHTAWARE_BASE_URL = 'https://aeroapi.flightaware.com/aeroapi';
+
+// FlightAware API helper functions
+async function fetchFlightStatus(airline, flightNumber, departureDate) {
+  if (!FLIGHTAWARE_API_KEY) {
+    throw new Error('FlightAware API key not configured');
+  }
+
+  // Create flight ident (e.g., "DL915")
+  const ident = `${airline}${flightNumber}`.replace(/\s+/g, '');
+  
+  // Create date range for the flight (24 hours before and after departure)
+  const depDate = new Date(departureDate);
+  const startDate = new Date(depDate.getTime() - 24 * 60 * 60 * 1000);
+  const endDate = new Date(depDate.getTime() + 24 * 60 * 60 * 1000);
+  
+  const start = startDate.toISOString().split('T')[0];
+  const end = endDate.toISOString().split('T')[0];
+
+  try {
+    const response = await axios.get(`${FLIGHTAWARE_BASE_URL}/flights/${ident}`, {
+      headers: {
+        'x-apikey': FLIGHTAWARE_API_KEY
+      },
+      params: {
+        start: start,
+        end: end,
+        max_pages: 1
+      },
+      timeout: 10000 // 10 second timeout
+    });
+
+    if (response.data && response.data.flights && response.data.flights.length > 0) {
+      // Find the flight closest to our departure date
+      const flights = response.data.flights;
+      const targetFlight = flights.find(flight => {
+        const flightDate = new Date(flight.scheduled_out);
+        return Math.abs(flightDate - depDate) < 24 * 60 * 60 * 1000; // Within 24 hours
+      }) || flights[0]; // Fallback to first flight
+
+      return {
+        ident: targetFlight.ident,
+        status: targetFlight.status,
+        scheduled_out: targetFlight.scheduled_out,
+        estimated_out: targetFlight.estimated_out,
+        actual_out: targetFlight.actual_out,
+        scheduled_in: targetFlight.scheduled_in,
+        estimated_in: targetFlight.estimated_in,
+        actual_in: targetFlight.actual_in,
+        origin: targetFlight.origin,
+        destination: targetFlight.destination,
+        origin_gate: targetFlight.origin_gate,
+        destination_gate: targetFlight.destination_gate,
+        origin_terminal: targetFlight.origin_terminal,
+        destination_terminal: targetFlight.destination_terminal,
+        baggage_claim: targetFlight.baggage_claim,
+        delay: targetFlight.delay
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('FlightAware API error:', error.response?.status, error.response?.data || error.message);
+    throw error;
+  }
 }
 
 // Serve static files from public directory
@@ -1406,6 +1476,176 @@ app.get('/api/flight/:flightId', async (req, res) => {
     }
     
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// FlightAware real-time status endpoint
+app.get('/api/flight/:flightId/status', async (req, res) => {
+  try {
+    const { flightId } = req.params;
+    
+    // Special case for test flight
+    if (flightId === 'test') {
+      return res.json({
+        status: 'On Time',
+        departureGate: 'A12',
+        departureTerminal: 'Terminal 1',
+        arrivalGate: 'B8',
+        arrivalTerminal: 'Terminal 2',
+        baggageClaim: '3',
+        delay: 0,
+        lastUpdated: new Date().toISOString(),
+        source: 'test'
+      });
+    }
+    
+    // Parse flightId: {notionPageId}-{direction}
+    const parts = flightId.split('-');
+    if (parts.length < 2) {
+      return res.status(400).json({ error: 'Invalid flight ID format' });
+    }
+    
+    const direction = parts.pop();
+    let notionPageId = parts.join('-');
+    
+    // Convert 32-character page ID to UUID format if needed
+    if (notionPageId.length === 32 && !notionPageId.includes('-')) {
+      notionPageId = notionPageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+    
+    if (!['departure', 'return'].includes(direction)) {
+      return res.status(400).json({ error: 'Invalid direction. Must be "departure" or "return"' });
+    }
+    
+    // Get basic flight data from Notion first
+    const page = await notion.pages.retrieve({ page_id: notionPageId });
+    const properties = page.properties;
+    
+    let airline, flightNumber, departureDate;
+    
+    if (direction === 'departure') {
+      airline = properties.departure_airline?.select?.name;
+      flightNumber = properties.departure_flightnumber?.title?.[0]?.text?.content;
+      departureDate = properties.departure_time?.date?.start;
+    } else {
+      airline = properties.return_airline?.select?.name || properties.departure_airline?.select?.name;
+      flightNumber = properties.return_flightnumber?.title?.[0]?.text?.content;
+      departureDate = properties.return_time?.date?.start;
+    }
+    
+    if (!airline || !flightNumber || !departureDate) {
+      return res.status(400).json({ error: 'Missing required flight information' });
+    }
+    
+    // Check if we should fetch real-time data (within 24 hours of departure)
+    const now = new Date();
+    const depDate = new Date(departureDate);
+    const hoursUntilDeparture = (depDate - now) / (1000 * 60 * 60);
+    
+    // Only fetch real-time data if within 24 hours of departure and not more than 2 hours past arrival
+    if (hoursUntilDeparture > 24 || hoursUntilDeparture < -2) {
+      return res.json({
+        status: 'Scheduled',
+        message: 'Real-time tracking not available for this flight',
+        lastUpdated: new Date().toISOString(),
+        source: 'notion'
+      });
+    }
+    
+    // Create cache key
+    const cacheKey = `flight-status:${airline}:${flightNumber}:${departureDate.split('T')[0]}`;
+    
+    // Check cache first
+    if (cacheEnabled && redis) {
+      try {
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          const cachedData = JSON.parse(cached);
+          console.log(`✅ Flight status cache hit for ${airline}${flightNumber}`);
+          return res.json({
+            ...cachedData,
+            source: 'cache'
+          });
+        }
+      } catch (cacheError) {
+        console.warn('Cache read error:', cacheError.message);
+      }
+    }
+    
+    // Fetch from FlightAware API
+    console.log(`🔄 Fetching real-time status for ${airline}${flightNumber}`);
+    const flightStatus = await fetchFlightStatus(airline, flightNumber, departureDate);
+    
+    if (!flightStatus) {
+      return res.json({
+        status: 'No Data',
+        message: 'Flight status not available from FlightAware',
+        lastUpdated: new Date().toISOString(),
+        source: 'notion'
+      });
+    }
+    
+    // Format the response
+    const statusData = {
+      status: flightStatus.status || 'Unknown',
+      departureGate: flightStatus.origin_gate || null,
+      departureTerminal: flightStatus.origin_terminal || null,
+      arrivalGate: flightStatus.destination_gate || null,
+      arrivalTerminal: flightStatus.destination_terminal || null,
+      baggageClaim: flightStatus.baggage_claim || null,
+      delay: flightStatus.delay || 0,
+      estimatedDeparture: flightStatus.estimated_out || flightStatus.scheduled_out,
+      estimatedArrival: flightStatus.estimated_in || flightStatus.scheduled_in,
+      actualDeparture: flightStatus.actual_out,
+      actualArrival: flightStatus.actual_in,
+      lastUpdated: new Date().toISOString(),
+      source: 'flightaware'
+    };
+    
+    // Cache the result for 1 hour (3600 seconds)
+    if (cacheEnabled && redis) {
+      try {
+        await redis.setex(cacheKey, 3600, JSON.stringify(statusData));
+        console.log(`💾 Cached flight status for ${airline}${flightNumber}`);
+      } catch (cacheError) {
+        console.warn('Cache write error:', cacheError.message);
+      }
+    }
+    
+    res.json(statusData);
+    
+  } catch (error) {
+    console.error('Flight status API error:', error);
+    
+    // Handle specific errors
+    if (error.message === 'FlightAware API key not configured') {
+      return res.status(503).json({ 
+        error: 'Flight tracking service not configured',
+        message: 'Real-time flight status is not available'
+      });
+    }
+    
+    if (error.response?.status === 401) {
+      return res.status(503).json({ 
+        error: 'Flight tracking service authentication failed',
+        message: 'Real-time flight status is not available'
+      });
+    }
+    
+    if (error.response?.status === 429) {
+      return res.status(503).json({ 
+        error: 'Flight tracking service rate limit exceeded',
+        message: 'Please try again later'
+      });
+    }
+    
+    // For other errors, return a fallback response
+    res.json({
+      status: 'Error',
+      message: 'Unable to fetch real-time status',
+      lastUpdated: new Date().toISOString(),
+      source: 'error'
+    });
   }
 });
 

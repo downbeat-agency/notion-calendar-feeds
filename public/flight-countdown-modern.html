@@ -104,6 +104,100 @@
       text-align: center;
       padding: 20px;
     }
+
+    /* Real-time status styles */
+    .status-info {
+      background: var(--surface);
+      border: 1px solid var(--hair);
+      border-radius: 12px;
+      padding: 12px;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 6px 0;
+    }
+
+    .status-label {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .status-value {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .status-badge.on-time {
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    .status-badge.delayed {
+      background: rgba(247, 190, 0, 0.15);
+      color: var(--warn);
+    }
+
+    .status-badge.cancelled {
+      background: rgba(255, 69, 58, 0.15);
+      color: var(--err);
+    }
+
+    .status-badge.unknown {
+      background: rgba(153, 153, 153, 0.15);
+      color: var(--muted);
+    }
+
+    .refresh-button {
+      background: var(--ok);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .refresh-button:hover {
+      background: color-mix(in oklab, var(--ok) 80%, black);
+    }
+
+    .refresh-button:disabled {
+      background: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .last-updated {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .gate-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
+
+    .gate-icon {
+      font-size: 16px;
+    }
   </style>
 </head>
 <body>
@@ -152,6 +246,55 @@
           </div>
 
           <div class="divider"></div>
+
+          <!-- Real-time Status Section -->
+          <div class="status-info" id="statusInfo" style="display: none;">
+            <div class="status-row">
+              <span class="status-label">Status</span>
+              <span class="status-badge" id="statusBadge">Loading...</span>
+            </div>
+            
+            <div class="status-row" id="departureGateRow" style="display: none;">
+              <span class="status-label">Departure Gate</span>
+              <div class="gate-info">
+                <span class="gate-icon">🚪</span>
+                <span class="status-value" id="departureGate">--</span>
+                <span class="status-value" id="departureTerminal">--</span>
+              </div>
+            </div>
+            
+            <div class="status-row" id="arrivalGateRow" style="display: none;">
+              <span class="status-label">Arrival Gate</span>
+              <div class="gate-info">
+                <span class="gate-icon">🚪</span>
+                <span class="status-value" id="arrivalGate">--</span>
+                <span class="status-value" id="arrivalTerminal">--</span>
+              </div>
+            </div>
+            
+            <div class="status-row" id="baggageRow" style="display: none;">
+              <span class="status-label">Baggage Claim</span>
+              <div class="gate-info">
+                <span class="gate-icon">🧳</span>
+                <span class="status-value" id="baggageClaim">--</span>
+              </div>
+            </div>
+            
+            <div class="status-row" id="delayRow" style="display: none;">
+              <span class="status-label">Delay</span>
+              <span class="status-value" id="delayInfo">--</span>
+            </div>
+            
+            <div style="margin-top: 12px; text-align: center;">
+              <button class="refresh-button" id="refreshButton" onclick="refreshFlightStatus()">
+                🔄 Refresh Status
+              </button>
+            </div>
+            
+            <div class="last-updated" id="lastUpdated">
+              Last updated: Loading...
+            </div>
+          </div>
 
           <footer class="footer">
             <div>Total <span id="totalDur">Loading...</span></div>
@@ -252,6 +395,123 @@
       }
 
       displayFlightData(flightData);
+      
+      // Load real-time status
+      loadFlightStatus();
+    }
+
+    // Load real-time flight status from FlightAware
+    async function loadFlightStatus() {
+      try {
+        const flightId = window.location.pathname.split('/')[2]; // e.g., "pageId-departure"
+        if (!flightId) {
+          console.log('No flight ID found in URL');
+          return;
+        }
+
+        const response = await fetch(`/api/flight/${flightId}/status`);
+        const statusData = await response.json();
+        
+        displayFlightStatus(statusData);
+      } catch (error) {
+        console.error('Error loading flight status:', error);
+        // Don't show error to user - just log it and continue with Notion data
+      }
+    }
+
+    // Display real-time flight status
+    function displayFlightStatus(statusData) {
+      const statusInfo = qsid('statusInfo');
+      const statusBadge = qsid('statusBadge');
+      const lastUpdated = qsid('lastUpdated');
+      
+      // Show the status section
+      statusInfo.style.display = 'block';
+      
+      // Update status badge
+      const status = statusData.status || 'Unknown';
+      statusBadge.textContent = status;
+      statusBadge.className = 'status-badge';
+      
+      // Add appropriate class based on status
+      if (status.toLowerCase().includes('on time') || status.toLowerCase().includes('scheduled')) {
+        statusBadge.classList.add('on-time');
+      } else if (status.toLowerCase().includes('delayed')) {
+        statusBadge.classList.add('delayed');
+      } else if (status.toLowerCase().includes('cancelled')) {
+        statusBadge.classList.add('cancelled');
+      } else {
+        statusBadge.classList.add('unknown');
+      }
+      
+      // Show departure gate info
+      if (statusData.departureGate || statusData.departureTerminal) {
+        const departureGateRow = qsid('departureGateRow');
+        const departureGate = qsid('departureGate');
+        const departureTerminal = qsid('departureTerminal');
+        
+        departureGateRow.style.display = 'flex';
+        departureGate.textContent = statusData.departureGate || 'TBD';
+        departureTerminal.textContent = statusData.departureTerminal ? `(${statusData.departureTerminal})` : '';
+      }
+      
+      // Show arrival gate info
+      if (statusData.arrivalGate || statusData.arrivalTerminal) {
+        const arrivalGateRow = qsid('arrivalGateRow');
+        const arrivalGate = qsid('arrivalGate');
+        const arrivalTerminal = qsid('arrivalTerminal');
+        
+        arrivalGateRow.style.display = 'flex';
+        arrivalGate.textContent = statusData.arrivalGate || 'TBD';
+        arrivalTerminal.textContent = statusData.arrivalTerminal ? `(${statusData.arrivalTerminal})` : '';
+      }
+      
+      // Show baggage claim
+      if (statusData.baggageClaim) {
+        const baggageRow = qsid('baggageRow');
+        const baggageClaim = qsid('baggageClaim');
+        
+        baggageRow.style.display = 'flex';
+        baggageClaim.textContent = statusData.baggageClaim;
+      }
+      
+      // Show delay info
+      if (statusData.delay && statusData.delay > 0) {
+        const delayRow = qsid('delayRow');
+        const delayInfo = qsid('delayInfo');
+        
+        delayRow.style.display = 'flex';
+        delayInfo.textContent = `${statusData.delay} minutes`;
+      }
+      
+      // Update last updated time
+      if (statusData.lastUpdated) {
+        const updateTime = new Date(statusData.lastUpdated);
+        const timeStr = updateTime.toLocaleTimeString();
+        lastUpdated.textContent = `Last updated: ${timeStr}`;
+      }
+    }
+
+    // Manual refresh function
+    async function refreshFlightStatus() {
+      const refreshButton = qsid('refreshButton');
+      const lastUpdated = qsid('lastUpdated');
+      
+      // Disable button and show loading
+      refreshButton.disabled = true;
+      refreshButton.textContent = '🔄 Refreshing...';
+      lastUpdated.textContent = 'Refreshing...';
+      
+      try {
+        await loadFlightStatus();
+      } catch (error) {
+        console.error('Error refreshing flight status:', error);
+        lastUpdated.textContent = 'Refresh failed';
+      } finally {
+        // Re-enable button
+        refreshButton.disabled = false;
+        refreshButton.textContent = '🔄 Refresh Status';
+      }
     }
 
     // Check if date is in DST (same logic as calendar)
