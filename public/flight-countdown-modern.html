@@ -386,10 +386,16 @@
     }
 
     // Load flight data
-    function loadFlightData() {
-      const flightData = getFlightDataFromParams();
+    async function loadFlightData() {
+      // Try to get flight data from URL parameters first
+      let flightData = getFlightDataFromParams();
       
+      // If no data from URL params, try to get from the new URL format
       if (!flightData.departureTime) {
+        flightData = await getFlightDataFromPath();
+      }
+      
+      if (!flightData || !flightData.departureTime) {
         showError('Invalid flight URL - missing departure time');
         return;
       }
@@ -398,6 +404,35 @@
       
       // Load real-time status
       loadFlightStatus();
+    }
+
+    // Get flight data from URL path format: /flight/notion-page-id-departure
+    async function getFlightDataFromPath() {
+      const pathParts = window.location.pathname.split('/');
+      if (pathParts.length < 3 || !pathParts[2].includes('-')) {
+        return null;
+      }
+      
+      const flightId = pathParts[2];
+      const parts = flightId.split('-');
+      const direction = parts.pop();
+      
+      if (!['departure', 'return'].includes(direction)) {
+        return null;
+      }
+      
+      try {
+        // Fetch flight data from the backend API
+        const response = await fetch(`/api/flight/${flightId}`);
+        if (response.ok) {
+          const data = await response.json();
+          return data;
+        }
+      } catch (error) {
+        console.error('Error fetching flight data:', error);
+      }
+      
+      return null;
     }
 
     // Load real-time flight status from FlightAware
