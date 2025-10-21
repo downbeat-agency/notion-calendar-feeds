@@ -34,19 +34,82 @@
     .screen{min-height:100svh;display:flex;flex-direction:column}
 
 
-    /* Status banner */
-    .status{background:rgba(20, 180, 92, 0.15);
-            border-bottom:0.5px solid rgba(20, 180, 92, 0.3);
-            max-width:860px;margin:0 auto}
-    .status.warn{background:rgba(247, 190, 0, 0.15);
-                 border-bottom-color:rgba(247, 190, 0, 0.3)}
-    .status.err{background:rgba(255, 69, 58, 0.15);
-                border-bottom-color:rgba(255, 69, 58, 0.3)}
-    .status-in{padding:12px 16px}
-    .status-big{font-weight:800;font-size:18px;color:var(--ok)}
-    .status.warn .status-big{color:#926a00}
-    .status.err .status-big{color:#ff453a}
-    .status-sub{font-size:13px;opacity:.9}
+    /* Status banner - matching card design */
+    .status{
+      background: var(--surface);
+      border: 1px solid var(--hair);
+      border-radius: 20px;
+      max-width: 860px;
+      margin: 16px auto 0;
+      overflow: hidden;
+      box-shadow: 0 1px 0 rgba(0,0,0,.05);
+    }
+    .status.warn{
+      border-color: rgba(247, 190, 0, 0.3);
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(247, 190, 0, 0.05) 100%);
+    }
+    .status.err{
+      border-color: rgba(255, 69, 58, 0.3);
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(255, 69, 58, 0.05) 100%);
+    }
+    .status-in{
+      padding: 20px;
+    }
+    .status-grid{
+      display: grid;
+      grid-template-columns: 1fr 46px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+    .status-section{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .status-big{
+      font-weight: 800;
+      font-size: 24px;
+      color: var(--ok);
+      line-height: 1.2;
+    }
+    .status.warn .status-big{
+      color: var(--warn);
+    }
+    .status.err .status-big{
+      color: var(--err);
+    }
+    .status-sub{
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .status-rail{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 60px;
+    }
+    .status-rail-line{
+      width: 8px;
+      height: 40px;
+      border-radius: 8px;
+      background: linear-gradient(to bottom, rgba(20, 180, 92, 0.2), rgba(20, 180, 92, 0.4));
+      position: relative;
+    }
+    .status.warn .status-rail-line{
+      background: linear-gradient(to bottom, rgba(247, 190, 0, 0.2), rgba(247, 190, 0, 0.4));
+    }
+    .status.err .status-rail-line{
+      background: linear-gradient(to bottom, rgba(255, 69, 58, 0.2), rgba(255, 69, 58, 0.4));
+    }
+    .status-plane{
+      position: absolute;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 16px;
+      filter: saturate(1.2);
+    }
 
     /* Content */
     .main{padding:16px;max-width:860px;margin:0 auto;flex:1}
@@ -85,6 +148,26 @@
     @media (max-width:480px){
       .iata{font-size:40px}
       .time-actual{font-size:28px}
+      
+      /* Mobile banner adjustments */
+      .status-grid{
+        grid-template-columns: 1fr;
+        gap: 16px;
+        text-align: center;
+      }
+      .status-rail{
+        order: -1;
+        height: 40px;
+      }
+      .status-rail-line{
+        height: 30px;
+      }
+      .status-big{
+        font-size: 20px;
+      }
+      .status-sub{
+        font-size: 13px;
+      }
     }
 
     .loading {
@@ -204,9 +287,24 @@
   <div class="screen">
     <!-- Status Banner -->
     <section class="status" id="status">
-      <div class="status-in safe">
-        <div class="status-big" id="statusBig">Loading...</div>
-        <div class="status-sub" id="statusSub">Please wait</div>
+      <div class="status-in">
+        <div class="status-grid">
+          <div class="status-section">
+            <div class="status-big" id="statusBig">Loading...</div>
+            <div class="status-sub" id="statusSub">Please wait</div>
+          </div>
+          
+          <div class="status-rail">
+            <div class="status-rail-line">
+              <div class="status-plane" id="statusPlane">✈️</div>
+            </div>
+          </div>
+          
+          <div class="status-section">
+            <div class="status-big" id="statusBigRight" style="opacity: 0.6;">Flight Status</div>
+            <div class="status-sub" id="statusSubRight">Real-time updates</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -565,6 +663,9 @@
       const status = qsid('status');
       const statusBig = qsid('statusBig');
       const statusSub = qsid('statusSub');
+      const statusBigRight = qsid('statusBigRight');
+      const statusSubRight = qsid('statusSubRight');
+      const statusPlane = qsid('statusPlane');
       const plane = qsid('plane');
       const railLine = qsid('railLine');
       
@@ -595,23 +696,33 @@
           status.className = 'status warn';
           statusBig.textContent = `Departs in ${fmtDur(depDate-now)}`;
           statusSub.textContent = 'Boarding soon';
+          statusBigRight.textContent = 'Pre-Flight';
+          statusSubRight.textContent = 'Getting ready';
+          statusPlane.style.top = '0px';
           plane.style.top = '0px';
         } else if (now >= depDate && now <= arrDate) {
           // In flight
           status.className = 'status';
           statusBig.textContent = `Lands in ${fmtDur(arrDate-now)}`;
           statusSub.textContent = 'Flight is En Route';
+          statusBigRight.textContent = 'In Flight';
+          statusSubRight.textContent = 'Airborne';
           
-          // Update plane position
+          // Update plane position in both banner and main card
           const t = (now - depDate) / (arrDate - depDate);
           const clamped = Math.max(0, Math.min(1, t));
           const h = railLine.getBoundingClientRect().height;
+          const statusRailHeight = 40; // Height of status rail line
           plane.style.top = `${clamped * h}px`;
+          statusPlane.style.top = `${clamped * statusRailHeight}px`;
         } else {
           // After arrival
           status.className = 'status';
           statusBig.textContent = 'Landed';
           statusSub.textContent = `Arrived ${fmtDur(now-arrDate)} ago`;
+          statusBigRight.textContent = 'Arrived';
+          statusSubRight.textContent = 'Flight complete';
+          statusPlane.style.top = '100%';
           plane.style.top = '100%';
         }
       }
