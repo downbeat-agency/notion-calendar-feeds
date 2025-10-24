@@ -648,7 +648,6 @@ async function regenerateCalendarForPerson(personId) {
               arrivalCode: flight.return_airport || 'N/A',
               departureName: flight.departure_airport_name || 'N/A',
               arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'departure');
 
             allCalendarEvents.push({
@@ -656,9 +655,8 @@ async function regenerateCalendarForPerson(personId) {
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
               start: departureTimes.start,
               end: departureTimes.end,
-              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -690,7 +688,6 @@ async function regenerateCalendarForPerson(personId) {
               arrivalCode: flight.departure_airport || 'N/A',
               departureName: flight.return_airport_name || 'N/A',
               arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'return');
 
             allCalendarEvents.push({
@@ -698,9 +695,8 @@ async function regenerateCalendarForPerson(personId) {
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
               start: returnTimes.start,
               end: returnTimes.end,
-              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -914,7 +910,7 @@ async function regenerateCalendarForPerson(personId) {
         if (flight.departure_time && flight.departure_name) {
           let departureTimes = parseUnifiedDateTime(flight.departure_time);
           if (departureTimes) {
-            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
+            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`;
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
             // Generate countdown URL for flight departure
@@ -932,7 +928,6 @@ async function regenerateCalendarForPerson(personId) {
               arrivalCode: flight.return_airport || 'N/A',
               departureName: flight.departure_airport_name || 'N/A',
               arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'departure');
 
             allCalendarEvents.push({
@@ -942,7 +937,6 @@ async function regenerateCalendarForPerson(personId) {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -954,7 +948,7 @@ async function regenerateCalendarForPerson(personId) {
         if (flight.return_time && flight.return_name) {
           let returnTimes = parseUnifiedDateTime(flight.return_time);
           if (returnTimes) {
-            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
+            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`;
             if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             
             // Generate countdown URL for flight return
@@ -972,7 +966,6 @@ async function regenerateCalendarForPerson(personId) {
               arrivalCode: flight.departure_airport || 'N/A',
               departureName: flight.return_airport_name || 'N/A',
               arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'return');
 
             allCalendarEvents.push({
@@ -982,7 +975,6 @@ async function regenerateCalendarForPerson(personId) {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2620,7 +2612,6 @@ app.get('/calendar/:personId', async (req, res) => {
               arrivalCode: flight.return_airport || 'N/A',
               departureName: flight.departure_airport_name || 'N/A',
               arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'departure');
 
             allCalendarEvents.push({
@@ -2628,9 +2619,8 @@ app.get('/calendar/:personId', async (req, res) => {
               title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
               start: departureTimes.start,
               end: departureTimes.end,
-              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2664,7 +2654,6 @@ app.get('/calendar/:personId', async (req, res) => {
               arrivalCode: flight.departure_airport || 'N/A',
               departureName: flight.return_airport_name || 'N/A',
               arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'return');
 
             allCalendarEvents.push({
@@ -2672,9 +2661,8 @@ app.get('/calendar/:personId', async (req, res) => {
               title: `✈️ ${flight.return_name || 'Flight Return'}`,
               start: returnTimes.start,
               end: returnTimes.end,
-              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
+              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2937,10 +2925,8 @@ app.get('/calendar/:personId', async (req, res) => {
           let departureTimes = parseUnifiedDateTime(flight.departure_time);
           if (departureTimes) {
             // Build description with optional Notion link
-            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
-            if (flight.flight_url) {
-              description += `\n\nNotion Link: ${flight.flight_url}`;
-            }
+            if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
+            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`;
             
             // Generate countdown URL for flight departure
             const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
@@ -2957,7 +2943,6 @@ app.get('/calendar/:personId', async (req, res) => {
               arrivalCode: flight.return_airport || 'N/A',
               departureName: flight.departure_airport_name || 'N/A',
               arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'departure');
 
             allCalendarEvents.push({
@@ -2967,7 +2952,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2980,11 +2964,9 @@ app.get('/calendar/:personId', async (req, res) => {
         if (flight.return_time && flight.return_name) {
           let returnTimes = parseUnifiedDateTime(flight.return_time);
           if (returnTimes) {
+            if (flight.flight_url) description += `\n\nNotion Link: ${flight.flight_url}`;
             // Build description with optional Notion link
-            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
-            if (flight.flight_url) {
-              description += `\n\nNotion Link: ${flight.flight_url}`;
-            }
+            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking${flight.flight_url ? '\\n\\nNotion Link: ' + flight.flight_url : ''}`;
             
             // Generate countdown URL for flight return
             const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
@@ -3001,7 +2983,6 @@ app.get('/calendar/:personId', async (req, res) => {
               arrivalCode: flight.departure_airport || 'N/A',
               departureName: flight.return_airport_name || 'N/A',
               arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
             }, 'return');
 
             allCalendarEvents.push({
@@ -3011,7 +2992,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
