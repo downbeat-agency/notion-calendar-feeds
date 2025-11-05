@@ -570,9 +570,41 @@ async function regenerateCalendarForPerson(personId) {
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 const utcDate = new Date(event.calltime);
-                const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
-                const hours = laDate.getHours();
-                const minutes = laDate.getMinutes().toString().padStart(2, '0');
+                // Convert to America/Los_Angeles timezone and extract time components
+                const laTimeString = utcDate.toLocaleString('en-US', {
+                  timeZone: 'America/Los_Angeles',
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                });
+                const timeMatch = laTimeString.match(/(\d{2}):(\d{2}):(\d{2})/);
+                if (timeMatch) {
+                  const hours = parseInt(timeMatch[1]);
+                  const minutes = parseInt(timeMatch[2]);
+                  let displayHours = hours;
+                  let period = 'AM';
+                  if (hours === 0) {
+                    displayHours = 12;
+                  } else if (hours === 12) {
+                    period = 'PM';
+                  } else if (hours > 12) {
+                    displayHours = hours - 12;
+                    period = 'PM';
+                  }
+                  displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                }
+              } catch (e) {
+                console.warn('Failed to parse calltime:', event.calltime, e);
+              }
+            } else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+              // Extract time components directly from Pacific timezone string (floating time)
+              const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
+              if (match) {
+                const hours = parseInt(match[1]);
+                const minutes = parseInt(match[2]);
+                
+                // Convert to 12-hour format
                 let displayHours = hours;
                 let period = 'AM';
                 if (hours === 0) {
@@ -583,9 +615,8 @@ async function regenerateCalendarForPerson(personId) {
                   displayHours = hours - 12;
                   period = 'PM';
                 }
-                displayCalltime = `${displayHours}:${minutes} ${period}`;
-              } catch (e) {
-                console.warn('Failed to parse calltime:', event.calltime, e);
+                
+                displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
               }
             }
             
@@ -2496,17 +2527,50 @@ app.get('/calendar/:personId', async (req, res) => {
                 // Parse the UTC timestamp
                 const utcDate = new Date(event.calltime);
                 
-                // Convert to America/Los_Angeles timezone
-                const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                // Convert to America/Los_Angeles timezone and extract time components
+                const laTimeString = utcDate.toLocaleString('en-US', {
+                  timeZone: 'America/Los_Angeles',
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                });
                 
-                // Format as floating time (no timezone info)
-                const hours = laDate.getHours();
-                const minutes = laDate.getMinutes().toString().padStart(2, '0');
+                // Extract hours and minutes from formatted string (format: "HH:MM:SS")
+                const timeMatch = laTimeString.match(/(\d{2}):(\d{2}):(\d{2})/);
+                if (timeMatch) {
+                  const hours = parseInt(timeMatch[1]);
+                  const minutes = parseInt(timeMatch[2]);
+                  
+                  // Convert to 12-hour format
+                  let displayHours = hours;
+                  let period = 'AM';
+                  
+                  if (hours === 0) {
+                    displayHours = 12;
+                  } else if (hours === 12) {
+                    period = 'PM';
+                  } else if (hours > 12) {
+                    displayHours = hours - 12;
+                    period = 'PM';
+                  }
+                  
+                  displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                }
+              } catch (e) {
+                console.warn('Failed to parse calltime ISO timestamp:', event.calltime, e);
+                // Fall back to original value
+              }
+            } else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+              // Extract time components directly from Pacific timezone string (floating time)
+              const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
+              if (match) {
+                const hours = parseInt(match[1]);
+                const minutes = parseInt(match[2]);
                 
                 // Convert to 12-hour format
                 let displayHours = hours;
                 let period = 'AM';
-                
                 if (hours === 0) {
                   displayHours = 12;
                 } else if (hours === 12) {
@@ -2516,10 +2580,7 @@ app.get('/calendar/:personId', async (req, res) => {
                   period = 'PM';
                 }
                 
-                displayCalltime = `${displayHours}:${minutes} ${period}`;
-              } catch (e) {
-                console.warn('Failed to parse calltime ISO timestamp:', event.calltime, e);
-                // Fall back to original value
+                displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
               }
             } else {
               // Try to parse the time and adjust for timezone (legacy format)
