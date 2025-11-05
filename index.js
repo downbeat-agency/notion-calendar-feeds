@@ -567,24 +567,56 @@ async function regenerateCalendarForPerson(personId) {
           if (event.calltime && event.calltime.trim()) {
             let displayCalltime = event.calltime;
             
-            if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
-              try {
-                // Parse UTC timestamp
-                const utcDate = new Date(event.calltime);
-                
-                // Convert UTC to America/Los_Angeles timezone and display as floating time
-                // Floating time means: display the Pacific time components directly without
-                // further timezone conversion (as if UTC = Pacific time)
-                const formatter = new Intl.DateTimeFormat('en-US', {
-                  timeZone: 'America/Los_Angeles',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true
-                });
-                
-                displayCalltime = formatter.format(utcDate);
-              } catch (e) {
-                console.warn('Failed to parse calltime:', event.calltime, e);
+            if (event.calltime.includes('T')) {
+              // Check if UTC (Z or +00:00)
+              if (event.calltime.includes('Z') || event.calltime.includes('+00:00')) {
+                try {
+                  // Parse UTC timestamp
+                  const utcDate = new Date(event.calltime);
+                  
+                  // Convert UTC to America/Los_Angeles timezone and display as floating time
+                  // Floating time means: display the Pacific time components directly without
+                  // further timezone conversion (as if UTC = Pacific time)
+                  const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Los_Angeles',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                  });
+                  
+                  displayCalltime = formatter.format(utcDate);
+                } catch (e) {
+                  console.warn('Failed to parse calltime:', event.calltime, e);
+                }
+              } 
+              // Check if Pacific timezone offset (-08:00 for PST or -07:00 for PDT)
+              else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+                try {
+                  // Extract time components directly from Pacific timezone string (floating time)
+                  // The time is already in Pacific, so we just extract and display it
+                  const match = event.calltime.trim().match(/T(\d{2}):(\d{2}):(\d{2})/);
+                  if (match) {
+                    const hours = parseInt(match[1]);
+                    const minutes = parseInt(match[2]);
+                    
+                    // Convert to 12-hour format
+                    let displayHours = hours;
+                    let period = 'AM';
+                    
+                    if (hours === 0) {
+                      displayHours = 12;
+                    } else if (hours === 12) {
+                      period = 'PM';
+                    } else if (hours > 12) {
+                      displayHours = hours - 12;
+                      period = 'PM';
+                    }
+                    
+                    displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                  }
+                } catch (e) {
+                  console.warn('Failed to parse Pacific timezone calltime:', event.calltime, e);
+                }
               }
             }
             
@@ -2489,26 +2521,57 @@ app.get('/calendar/:personId', async (req, res) => {
           if (event.calltime && event.calltime.trim()) {
             let displayCalltime = event.calltime;
             
-            // Check if calltime is an ISO timestamp (UTC)
-            if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
-              try {
-                // Parse UTC timestamp
-                const utcDate = new Date(event.calltime);
-                
-                // Convert UTC to America/Los_Angeles timezone and display as floating time
-                // Floating time means: display the Pacific time components directly without
-                // further timezone conversion (as if UTC = Pacific time)
-                const formatter = new Intl.DateTimeFormat('en-US', {
-                  timeZone: 'America/Los_Angeles',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true
-                });
-                
-                displayCalltime = formatter.format(utcDate);
-              } catch (e) {
-                console.warn('Failed to parse calltime ISO timestamp:', event.calltime, e);
-                // Fall back to original value
+            if (event.calltime.includes('T')) {
+              // Check if UTC (Z or +00:00)
+              if (event.calltime.includes('Z') || event.calltime.includes('+00:00')) {
+                try {
+                  // Parse UTC timestamp
+                  const utcDate = new Date(event.calltime);
+                  
+                  // Convert UTC to America/Los_Angeles timezone and display as floating time
+                  // Floating time means: display the Pacific time components directly without
+                  // further timezone conversion (as if UTC = Pacific time)
+                  const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Los_Angeles',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                  });
+                  
+                  displayCalltime = formatter.format(utcDate);
+                } catch (e) {
+                  console.warn('Failed to parse calltime ISO timestamp:', event.calltime, e);
+                  // Fall back to original value
+                }
+              } 
+              // Check if Pacific timezone offset (-08:00 for PST or -07:00 for PDT)
+              else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+                try {
+                  // Extract time components directly from Pacific timezone string (floating time)
+                  // The time is already in Pacific, so we just extract and display it
+                  const match = event.calltime.trim().match(/T(\d{2}):(\d{2}):(\d{2})/);
+                  if (match) {
+                    const hours = parseInt(match[1]);
+                    const minutes = parseInt(match[2]);
+                    
+                    // Convert to 12-hour format
+                    let displayHours = hours;
+                    let period = 'AM';
+                    
+                    if (hours === 0) {
+                      displayHours = 12;
+                    } else if (hours === 12) {
+                      period = 'PM';
+                    } else if (hours > 12) {
+                      displayHours = hours - 12;
+                      period = 'PM';
+                    }
+                    
+                    displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                  }
+                } catch (e) {
+                  console.warn('Failed to parse Pacific timezone calltime:', event.calltime, e);
+                }
               }
             } else {
               // Try to parse the time and adjust for timezone (legacy format)
