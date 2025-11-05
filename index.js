@@ -570,20 +570,16 @@ async function regenerateCalendarForPerson(personId) {
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 const utcDate = new Date(event.calltime);
-                const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
-                const hours = laDate.getHours();
-                const minutes = laDate.getMinutes().toString().padStart(2, '0');
-                let displayHours = hours;
-                let period = 'AM';
-                if (hours === 0) {
-                  displayHours = 12;
-                } else if (hours === 12) {
-                  period = 'PM';
-                } else if (hours > 12) {
-                  displayHours = hours - 12;
-                  period = 'PM';
-                }
-                displayCalltime = `${displayHours}:${minutes} ${period}`;
+                
+                // Use Intl.DateTimeFormat to get Pacific time components directly
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                  timeZone: 'America/Los_Angeles',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true
+                });
+                
+                displayCalltime = formatter.format(utcDate);
               } catch (e) {
                 console.warn('Failed to parse calltime:', event.calltime, e);
               }
@@ -2496,27 +2492,15 @@ app.get('/calendar/:personId', async (req, res) => {
                 // Parse the UTC timestamp
                 const utcDate = new Date(event.calltime);
                 
-                // Convert to America/Los_Angeles timezone
-                const laDate = new Date(utcDate.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                // Use Intl.DateTimeFormat to get Pacific time components directly
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                  timeZone: 'America/Los_Angeles',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true
+                });
                 
-                // Format as floating time (no timezone info)
-                const hours = laDate.getHours();
-                const minutes = laDate.getMinutes().toString().padStart(2, '0');
-                
-                // Convert to 12-hour format
-                let displayHours = hours;
-                let period = 'AM';
-                
-                if (hours === 0) {
-                  displayHours = 12;
-                } else if (hours === 12) {
-                  period = 'PM';
-                } else if (hours > 12) {
-                  displayHours = hours - 12;
-                  period = 'PM';
-                }
-                
-                displayCalltime = `${displayHours}:${minutes} ${period}`;
+                displayCalltime = formatter.format(utcDate);
               } catch (e) {
                 console.warn('Failed to parse calltime ISO timestamp:', event.calltime, e);
                 // Fall back to original value
