@@ -457,29 +457,53 @@ function parseUnifiedDateTime(dateTimeStr) {
   }
   
   // Special handling for date range format: "2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00"
+  // or "2025-11-08T16:30:00-08:00/2025-11-09T01:30:00-08:00" (Pacific timezone)
   if (cleanStr.includes('/')) {
     try {
       const [startStr, endStr] = cleanStr.split('/');
-      const startDate = new Date(startStr.trim());
-      const endDate = new Date(endStr.trim());
       
-      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-        // Check if these are UTC timestamps and convert to Pacific floating time
-        const isUTCStart = startStr.includes('T') && (startStr.includes('Z') || startStr.includes('+00:00'));
-        const isUTCEnd = endStr.includes('T') && (endStr.includes('Z') || endStr.includes('+00:00'));
+      // Helper function to parse date string and convert to floating time
+      const parseToFloatingTime = (dateStr) => {
+        const trimmed = dateStr.trim();
         
-        if (isUTCStart) {
-          const isDST = isDSTDate(startDate);
-          const offsetHours = isDST ? 7 : 8;
-          startDate.setHours(startDate.getHours() - offsetHours);
+        // Check if it has Pacific timezone offset (-08:00 or -07:00)
+        const pacificOffsetMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(-0[78]:00)$/);
+        if (pacificOffsetMatch) {
+          // Extract time components directly from Pacific timezone string (floating time)
+          // Create UTC date where UTC time = Pacific time (no conversion)
+          const year = parseInt(pacificOffsetMatch[1]);
+          const month = parseInt(pacificOffsetMatch[2]) - 1; // Month is 0-indexed
+          const day = parseInt(pacificOffsetMatch[3]);
+          const hour = parseInt(pacificOffsetMatch[4]);
+          const minute = parseInt(pacificOffsetMatch[5]);
+          const second = parseInt(pacificOffsetMatch[6] || 0);
+          
+          // Create floating time: UTC time = Pacific time
+          return new Date(Date.UTC(year, month, day, hour, minute, second));
         }
         
-        if (isUTCEnd) {
-          const isDST = isDSTDate(endDate);
-          const offsetHours = isDST ? 7 : 8;
-          endDate.setHours(endDate.getHours() - offsetHours);
+        // Check if it's UTC (Z or +00:00)
+        const isUTC = trimmed.includes('T') && (trimmed.includes('Z') || trimmed.includes('+00:00'));
+        const date = new Date(trimmed);
+        
+        if (!isNaN(date.getTime())) {
+          if (isUTC) {
+            // Convert UTC to Pacific floating time
+            const isDST = isDSTDate(date);
+            const offsetHours = isDST ? 7 : 8;
+            date.setHours(date.getHours() - offsetHours);
+          }
+          // If it has other timezone offsets, JavaScript's Date constructor handles it
+          return date;
         }
         
+        return null;
+      };
+      
+      const startDate = parseToFloatingTime(startStr);
+      const endDate = parseToFloatingTime(endStr);
+      
+      if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
         return {
           start: startDate,
           end: endDate
