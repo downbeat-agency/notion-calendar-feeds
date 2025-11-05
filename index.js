@@ -569,9 +569,12 @@ async function regenerateCalendarForPerson(personId) {
             
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
+                // Parse UTC timestamp
                 const utcDate = new Date(event.calltime);
                 
-                // Use Intl.DateTimeFormat to get Pacific time components directly
+                // Convert UTC to America/Los_Angeles timezone and display as floating time
+                // Floating time means: display the Pacific time components directly without
+                // further timezone conversion (as if UTC = Pacific time)
                 const formatter = new Intl.DateTimeFormat('en-US', {
                   timeZone: 'America/Los_Angeles',
                   hour: 'numeric',
@@ -2489,10 +2492,12 @@ app.get('/calendar/:personId', async (req, res) => {
             // Check if calltime is an ISO timestamp (UTC)
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
-                // Parse the UTC timestamp
+                // Parse UTC timestamp
                 const utcDate = new Date(event.calltime);
                 
-                // Use Intl.DateTimeFormat to get Pacific time components directly
+                // Convert UTC to America/Los_Angeles timezone and display as floating time
+                // Floating time means: display the Pacific time components directly without
+                // further timezone conversion (as if UTC = Pacific time)
                 const formatter = new Intl.DateTimeFormat('en-US', {
                   timeZone: 'America/Los_Angeles',
                   hour: 'numeric',
