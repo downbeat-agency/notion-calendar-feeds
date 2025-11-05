@@ -461,6 +461,8 @@ function parseUnifiedDateTime(dateTimeStr) {
   if (cleanStr.includes('/')) {
     try {
       const [startStr, endStr] = cleanStr.split('/');
+      console.log('DEBUG parseUnifiedDateTime - event_date:', cleanStr);
+      console.log('DEBUG - startStr:', startStr.trim(), 'endStr:', endStr.trim());
       
       // Helper function to parse date string and convert to floating time
       const parseToFloatingTime = (dateStr) => {
@@ -469,6 +471,7 @@ function parseUnifiedDateTime(dateTimeStr) {
         // Check if it has Pacific timezone offset (-08:00 or -07:00)
         const pacificOffsetMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(-0[78]:00)$/);
         if (pacificOffsetMatch) {
+          console.log('DEBUG - Pacific offset detected:', trimmed);
           // Extract time components directly from Pacific timezone string (floating time)
           // Create UTC date where UTC time = Pacific time (no conversion)
           const year = parseInt(pacificOffsetMatch[1]);
@@ -479,11 +482,14 @@ function parseUnifiedDateTime(dateTimeStr) {
           const second = parseInt(pacificOffsetMatch[6] || 0);
           
           // Create floating time: UTC time = Pacific time
-          return new Date(Date.UTC(year, month, day, hour, minute, second));
+          const result = new Date(Date.UTC(year, month, day, hour, minute, second));
+          console.log('DEBUG - Pacific result:', result.toISOString());
+          return result;
         }
         
         // Check if it's UTC (Z or +00:00)
         const isUTC = trimmed.includes('T') && (trimmed.includes('Z') || trimmed.includes('+00:00'));
+        console.log('DEBUG - isUTC:', isUTC, 'for:', trimmed);
         const date = new Date(trimmed);
         
         if (!isNaN(date.getTime())) {
@@ -491,7 +497,9 @@ function parseUnifiedDateTime(dateTimeStr) {
             // Convert UTC to Pacific floating time
             const isDST = isDSTDate(date);
             const offsetHours = isDST ? 7 : 8;
+            console.log('DEBUG - Converting UTC to Pacific, offsetHours:', offsetHours);
             date.setHours(date.getHours() - offsetHours);
+            console.log('DEBUG - UTC conversion result:', date.toISOString());
           }
           // If it has other timezone offsets, JavaScript's Date constructor handles it
           return date;
@@ -504,6 +512,7 @@ function parseUnifiedDateTime(dateTimeStr) {
       const endDate = parseToFloatingTime(endStr);
       
       if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        console.log('DEBUG - Final result start:', startDate.toISOString(), 'end:', endDate.toISOString());
         return {
           start: startDate,
           end: endDate
