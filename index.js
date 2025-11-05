@@ -275,6 +275,11 @@ async function getCalendarDataFromDatabase(personId) {
   
   try {
     events = JSON.parse(calendarData.Events?.formula?.string || '[]');
+    // Log first event's event_date and calltime to see what Notion sends
+    if (events.length > 0 && events[0].event_date) {
+      console.log('🔍 RAW from Notion - event_date:', events[0].event_date);
+      console.log('🔍 RAW from Notion - calltime:', events[0].calltime);
+    }
   } catch (e) {
     console.error('Error parsing Events JSON:', calendarData.Events?.formula?.string?.substring(0, 100));
     throw new Error(`Events JSON parse error: ${e.message}`);
