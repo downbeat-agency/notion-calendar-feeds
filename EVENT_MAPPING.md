@@ -212,11 +212,12 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 6. **Team Calendar Events**
 **Triggers:** Top-level `Team Calendar` field
 
-**Available Fields (5 total):**
+**Available Fields (6 total):**
 - `title` - Event title (required)
 - `address` - Location address
 - `date` - ISO 8601 date range (required)
 - `notes` - Additional notes
+- `dcos` - Downbeat Chain of Support context (formatted text)
 - `notion_link` - Link to Notion page
 
 **Team Calendar Mapping:**
@@ -227,7 +228,7 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: "📅 " + (teamEvent.title || "Team Event"),  // "📅 Office"
   start: teamEvent.date,                   // "2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00"
   end: teamEvent.date,                     // Same as start (date range)
-  description: teamEvent.notes || "",      // Additional notes
+  description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join("\n\n"),  // DCOS context followed by notes
   location: teamEvent.address || "",       // "123 W Bellevue Dr Ste 4, Pasadena CA 91105"
   url: teamEvent.notion_link || ""         // "https://www.notion.so/17839e4a65a980fb8409c4b2231408b9"
 }
@@ -250,7 +251,7 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
   
-  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
+  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
 }
 ```
 
