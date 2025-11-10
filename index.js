@@ -1155,7 +1155,7 @@ async function regenerateCalendarForPerson(personId) {
               title: `${emoji} ${teamEvent.title || 'Team Event'}`,
               start: eventTimes.start,
               end: eventTimes.end,
-              description: teamEvent.notes || '',
+              description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
               mainEvent: ''
@@ -3227,7 +3227,7 @@ app.get('/calendar/:personId', async (req, res) => {
               title: `${emoji} ${teamEvent.title || 'Team Event'}`,
               start: eventTimes.start,
               end: eventTimes.end,
-              description: teamEvent.notes || '',
+              description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
               mainEvent: '' // Top-level team calendar events aren't tied to a specific event
