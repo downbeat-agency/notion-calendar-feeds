@@ -315,6 +315,61 @@ async function getCalendarDataFromDatabase(personId) {
     throw new Error(`Team Calendar JSON parse error: ${e.message}`);
   }
 
+  // Normalize Team Calendar keys (handle variations like DCOS vs dcos, Title vs title, etc.)
+  teamCalendar = teamCalendar.map(original => {
+    const normalized = { ...original };
+
+    Object.keys(original || {}).forEach(key => {
+      const normalizedKey = key.toLowerCase().trim();
+      const value = original[key];
+
+      switch (normalizedKey) {
+        case 'title':
+          if (!normalized.title && typeof value === 'string') {
+            normalized.title = value;
+          }
+          break;
+        case 'address':
+        case 'location':
+          if (!normalized.address && typeof value === 'string') {
+            normalized.address = value;
+          }
+          break;
+        case 'notion_link':
+        case 'notionlink':
+        case 'link':
+          if (!normalized.notion_link && typeof value === 'string') {
+            normalized.notion_link = value;
+          }
+          break;
+        case 'notes':
+          if (normalized.notes === undefined) {
+            normalized.notes = value ?? '';
+          }
+          break;
+        case 'dcos':
+        case 'dcos_text':
+          if (!normalized.dcos && typeof value === 'string') {
+            normalized.dcos = value;
+          }
+          break;
+        case 'date':
+        case 'date_range':
+          if (!normalized.date && typeof value === 'string') {
+            normalized.date = value;
+          }
+          break;
+        default:
+          break;
+      }
+    });
+
+    normalized.notes = normalized.notes ?? '';
+    normalized.dcos = normalized.dcos ?? '';
+
+    return normalized;
+  });
+
   // Transform into the same format as the old system
   // Return events with shared flights, hotels, rehearsals, and transportation
   return {
