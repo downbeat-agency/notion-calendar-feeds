@@ -273,14 +273,26 @@ async function getCalendarDataFromDatabase(personId) {
   // Parse all the JSON strings with better error handling
   let events, flights, transportation, hotels, rehearsals, teamCalendar;
   
+  // DEBUG: Log raw formula string before parsing
+  const rawFormulaString = calendarData.Events?.formula?.string || '';
+  if (rawFormulaString.includes('Pacific Palisades') || rawFormulaString.includes('2025-11-15')) {
+    console.log('[DEBUG FORMULA OUTPUT] Raw formula string length:', rawFormulaString.length);
+    // Find the calltime value in the raw string for 11/15 event
+    const calltimeMatch = rawFormulaString.match(/"calltime":"([^"]*2025-11-15[^"]*)"/);
+    if (calltimeMatch) {
+      console.log('[DEBUG FORMULA OUTPUT] Raw calltime from formula string:', calltimeMatch[1]);
+    }
+  }
+  
   try {
-    events = JSON.parse(calendarData.Events?.formula?.string || '[]');
+    events = JSON.parse(rawFormulaString || '[]');
     // DEBUG: Log raw calltime values from database for 11/15 event
     if (events && Array.isArray(events)) {
       events.forEach(event => {
         if (event.event_name && event.event_name.includes('Pacific Palisades')) {
           console.log('[DEBUG RAW FROM DB] Event:', event.event_name);
           console.log('[DEBUG RAW FROM DB] Raw calltime from JSON:', event.calltime);
+          console.log('[DEBUG RAW FROM DB] Raw calltime type:', typeof event.calltime);
           console.log('[DEBUG RAW FROM DB] Raw event_date from JSON:', event.event_date);
           console.log('[DEBUG RAW FROM DB] Full event JSON:', JSON.stringify(event, null, 2));
         }
@@ -1883,9 +1895,13 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
         // DEBUG: Extract calltime info for specific events
         eventsArray.forEach(evt => {
           if (evt.event_name && (evt.event_name.includes('Pacific Palisades') || evt.event_name.includes('11-15') || (evt.calltime && evt.calltime.includes('2025-11-15')))) {
+            // Extract raw calltime from formula string before parsing - find the event by name and extract its calltime
+            const escapedEventName = evt.event_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const eventMatch = (event.events || '').match(new RegExp(`"event_name":"[^"]*${escapedEventName.substring(0, 10)}[^"]*"[^}]*"calltime":"([^"]*)"`));
             calltimeDebug.push({
               event_name: evt.event_name,
-              raw_calltime_from_formula: evt.calltime,
+              raw_calltime_from_formula_string: eventMatch ? eventMatch[1] : null,
+              raw_calltime_from_parsed_json: evt.calltime,
               raw_event_date_from_formula: evt.event_date,
               calltime_type: typeof evt.calltime,
               calltime_length: evt.calltime ? evt.calltime.length : 0,
