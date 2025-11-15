@@ -275,6 +275,17 @@ async function getCalendarDataFromDatabase(personId) {
   
   try {
     events = JSON.parse(calendarData.Events?.formula?.string || '[]');
+    // DEBUG: Log raw calltime values from database for 11/15 event
+    if (events && Array.isArray(events)) {
+      events.forEach(event => {
+        if (event.event_name && event.event_name.includes('Pacific Palisades')) {
+          console.log('[DEBUG RAW FROM DB] Event:', event.event_name);
+          console.log('[DEBUG RAW FROM DB] Raw calltime from JSON:', event.calltime);
+          console.log('[DEBUG RAW FROM DB] Raw event_date from JSON:', event.event_date);
+          console.log('[DEBUG RAW FROM DB] Full event JSON:', JSON.stringify(event, null, 2));
+        }
+      });
+    }
   } catch (e) {
     console.error('Error parsing Events JSON:', calendarData.Events?.formula?.string?.substring(0, 100));
     throw new Error(`Events JSON parse error: ${e.message}`);
@@ -620,16 +631,18 @@ async function regenerateCalendarForPerson(personId) {
 
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime);
+            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime, 'Type:', typeof event.calltime);
             let displayCalltime = event.calltime;
             
             // PRIORITY 1: Handle Pacific timezone format (-08:00 or -07:00) - this is what Notion formulas output
             // Extract time components directly from Pacific timezone string (the time is already in Pacific)
             if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+              console.log(`[DEBUG] Matched -08:00/-07:00 format for ${event.event_name}`);
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
                 const hours = parseInt(match[1]);
                 const minutes = parseInt(match[2]);
+                console.log(`[DEBUG] Extracted hours: ${hours}, minutes: ${minutes}`);
                 
                 // Convert to 12-hour format
                 let displayHours = hours;
@@ -644,8 +657,12 @@ async function regenerateCalendarForPerson(personId) {
                 }
                 
                 displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                console.log(`[DEBUG] Final calltime display: ${displayCalltime}`);
+              } else {
+                console.log(`[DEBUG] No regex match found for ${event.event_name}`);
               }
             } else if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
+              console.log(`[DEBUG] Matched UTC format for ${event.event_name}`);
               // PRIORITY 2: Handle UTC format (+00:00 or Z suffix) - if Notion API converts to UTC
               // Convert UTC calltimes to America/Los_Angeles timezone for display
               // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
@@ -1847,8 +1864,10 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
       };
     });
     
-    // Count actual events from all JSON arrays
+    // Count actual events from all JSON arrays and extract calltime info
     let totalActualEvents = 0;
+    let calltimeDebug = [];
+    
     events.forEach(event => {
       try {
         const eventsArray = JSON.parse(event.events || '[]');
@@ -1860,6 +1879,20 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
         
         totalActualEvents += eventsArray.length + flightsArray.length + rehearsalsArray.length + 
                            transportationArray.length + hotelsArray.length + teamCalendarArray.length;
+        
+        // DEBUG: Extract calltime info for specific events
+        eventsArray.forEach(evt => {
+          if (evt.event_name && (evt.event_name.includes('Pacific Palisades') || evt.event_name.includes('11-15') || (evt.calltime && evt.calltime.includes('2025-11-15')))) {
+            calltimeDebug.push({
+              event_name: evt.event_name,
+              raw_calltime_from_formula: evt.calltime,
+              raw_event_date_from_formula: evt.event_date,
+              calltime_type: typeof evt.calltime,
+              calltime_length: evt.calltime ? evt.calltime.length : 0,
+              full_event: evt
+            });
+          }
+        });
       } catch (e) {
         console.warn('Error parsing JSON in debug endpoint:', e);
       }
@@ -1869,6 +1902,7 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
       personId: personId,
       totalDatabaseRows: response.results.length,
       totalActualEvents: totalActualEvents,
+      calltimeDebug: calltimeDebug,
       events: events
     });
   } catch (error) {
@@ -2579,16 +2613,18 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime);
+            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime, 'Type:', typeof event.calltime);
             let displayCalltime = event.calltime;
             
             // PRIORITY 1: Handle Pacific timezone format (-08:00 or -07:00) - this is what Notion formulas output
             // Extract time components directly from Pacific timezone string (the time is already in Pacific)
             if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
+              console.log(`[DEBUG] Matched -08:00/-07:00 format for ${event.event_name}`);
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
                 const hours = parseInt(match[1]);
                 const minutes = parseInt(match[2]);
+                console.log(`[DEBUG] Extracted hours: ${hours}, minutes: ${minutes}`);
                 
                 // Convert to 12-hour format
                 let displayHours = hours;
@@ -2603,8 +2639,12 @@ app.get('/calendar/:personId', async (req, res) => {
                 }
                 
                 displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+                console.log(`[DEBUG] Final calltime display: ${displayCalltime}`);
+              } else {
+                console.log(`[DEBUG] No regex match found for ${event.event_name}`);
               }
             } else if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
+              console.log(`[DEBUG] Matched UTC format for ${event.event_name}`);
               // PRIORITY 2: Handle UTC format (+00:00 or Z suffix) - if Notion API converts to UTC
               // Convert UTC calltimes to America/Los_Angeles timezone for display
               // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
