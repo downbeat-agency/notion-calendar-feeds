@@ -622,10 +622,9 @@ async function regenerateCalendarForPerson(personId) {
           if (event.calltime && event.calltime.trim()) {
             let displayCalltime = event.calltime;
             
-            // NOTE: Notion API always outputs calltimes in UTC format (+00:00 or Z suffix)
-            // Even if the calltime is stored as Pacific time in Notion, it will be converted to UTC
-            // We must convert UTC calltimes to America/Los_Angeles timezone for display
-            // Example: Notion sends "2025-11-08T21:00:00+00:00" (UTC) → displays as "1:00 PM" (Pacific)
+            // PRIORITY 1: Handle UTC format (+00:00 or Z suffix) - Notion API outputs calltimes in UTC
+            // Convert UTC calltimes to America/Los_Angeles timezone for display
+            // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 const utcDate = new Date(event.calltime);
@@ -657,7 +656,7 @@ async function regenerateCalendarForPerson(personId) {
                 console.warn('Failed to parse calltime:', event.calltime, e);
               }
             } else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
-              // Fallback handler: If Notion ever outputs Pacific timezone directly (unlikely, but future-proof)
+              // PRIORITY 2: Handle Pacific timezone format directly (if formula outputs it before API conversion)
               // Extract time components directly from Pacific timezone string (floating time)
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
@@ -2581,11 +2580,9 @@ app.get('/calendar/:personId', async (req, res) => {
           if (event.calltime && event.calltime.trim()) {
             let displayCalltime = event.calltime;
             
-            // NOTE: Notion API always outputs calltimes in UTC format (+00:00 or Z suffix)
-            // Even if the calltime is stored as Pacific time in Notion, it will be converted to UTC
-            // We must convert UTC calltimes to America/Los_Angeles timezone for display
-            // Example: Notion sends "2025-11-08T21:00:00+00:00" (UTC) → displays as "1:00 PM" (Pacific)
-            // Check if calltime is an ISO timestamp (UTC)
+            // PRIORITY 1: Handle UTC format (+00:00 or Z suffix) - Notion API outputs calltimes in UTC
+            // Convert UTC calltimes to America/Los_Angeles timezone for display
+            // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
             if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
               try {
                 // Parse the UTC timestamp
@@ -2626,7 +2623,7 @@ app.get('/calendar/:personId', async (req, res) => {
                 // Fall back to original value
               }
             } else if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
-              // Fallback handler: If Notion ever outputs Pacific timezone directly (unlikely, but future-proof)
+              // PRIORITY 2: Handle Pacific timezone format directly (if formula outputs it before API conversion)
               // Extract time components directly from Pacific timezone string (floating time)
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
