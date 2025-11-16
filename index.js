@@ -601,7 +601,16 @@ async function regenerateCalendarForPerson(personId) {
   try {
     console.log(`🔄 Regenerating calendar for ${personId}...`);
     
-    // Get calendar data from Calendar Data database
+    // CLEAR CACHE FIRST to ensure fresh data from Notion
+    if (redis && cacheEnabled) {
+      const icsKey = `calendar:${personId}:ics`;
+      const jsonKey = `calendar:${personId}:json`;
+      const icsDeleted = await redis.del(icsKey);
+      const jsonDeleted = await redis.del(jsonKey);
+      console.log(`🗑️  Cleared cache for ${personId} (ICS: ${icsDeleted}, JSON: ${jsonDeleted})`);
+    }
+    
+    // Get calendar data from Calendar Data database (fresh from Notion API)
     const calendarData = await getCalendarDataFromDatabase(personId);
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       console.log(`⚠️  No events found for ${personId}, skipping...`);
@@ -2540,9 +2549,17 @@ app.get('/calendar/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Check Redis cache first (if enabled)
+    // Check Redis cache first (if enabled, unless ?fresh=true is specified)
+    const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:${personId}:${shouldReturnICS ? 'ics' : 'json'}`;
-    if (redis && cacheEnabled) {
+    
+    if (forceFresh && redis && cacheEnabled) {
+      // Clear cache if forcing fresh data
+      await redis.del(cacheKey);
+      console.log(`🗑️  Cache cleared for ${personId} (forced fresh fetch)`);
+    }
+    
+    if (redis && cacheEnabled && !forceFresh) {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
