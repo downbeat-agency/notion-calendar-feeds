@@ -546,6 +546,33 @@ function parseUnifiedDateTime(dateTimeStr) {
         const isUTCStart = startStr.includes('T') && (startStr.includes('Z') || startStr.includes('+00:00'));
         const isUTCEnd = endStr.includes('T') && (endStr.includes('Z') || endStr.includes('+00:00'));
         
+        // Check if this appears to be an all-day event (midnight UTC times)
+        // All-day events typically have times at 00:00:00 UTC
+        const isAllDayStart = isUTCStart && startStr.match(/T00:00:00/);
+        const isAllDayEnd = isUTCEnd && endStr.match(/T00:00:00/);
+        
+        if (isAllDayStart && isAllDayEnd) {
+          // For all-day events, extract date components and create dates at midnight Pacific
+          // This prevents date shifting when converting from UTC
+          const startYear = startDate.getUTCFullYear();
+          const startMonth = startDate.getUTCMonth();
+          const startDay = startDate.getUTCDate();
+          
+          const endYear = endDate.getUTCFullYear();
+          const endMonth = endDate.getUTCMonth();
+          const endDay = endDate.getUTCDate();
+          
+          // Create new dates at midnight Pacific time (floating, no timezone)
+          const pacificStart = new Date(startYear, startMonth, startDay, 0, 0, 0);
+          const pacificEnd = new Date(endYear, endMonth, endDay, 0, 0, 0);
+          
+          return {
+            start: pacificStart,
+            end: pacificEnd
+          };
+        }
+        
+        // For timed events, convert UTC to Pacific floating time
         if (isUTCStart) {
           const isDST = isDSTDate(startDate);
           const offsetHours = isDST ? 7 : 8;
@@ -577,7 +604,26 @@ function parseUnifiedDateTime(dateTimeStr) {
       const isUTCTime = cleanStr.includes('T') && (cleanStr.includes('Z') || cleanStr.includes('+00:00'));
       
       if (isUTCTime) {
-        // Subtract Pacific offset to convert UTC to Pacific floating time
+        // Check if this appears to be an all-day event (midnight UTC time)
+        const isAllDay = cleanStr.match(/T00:00:00/);
+        
+        if (isAllDay) {
+          // For all-day events, extract date components and create date at midnight Pacific
+          // This prevents date shifting when converting from UTC
+          const year = date.getUTCFullYear();
+          const month = date.getUTCMonth();
+          const day = date.getUTCDate();
+          
+          // Create new date at midnight Pacific time (floating, no timezone)
+          const pacificDate = new Date(year, month, day, 0, 0, 0);
+          
+          return {
+            start: pacificDate,
+            end: pacificDate
+          };
+        }
+        
+        // For timed events, subtract Pacific offset to convert UTC to Pacific floating time
         // UTC is ahead of Pacific, so we subtract hours
         const isDST = isDSTDate(date);
         const offsetHours = isDST ? 7 : 8;
