@@ -1306,11 +1306,19 @@ async function regenerateCalendarForPerson(personId) {
             const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
             const emoji = isOOO ? '⛔️' : '📅';
             
+            // For OOO events, add one day to end date to make it inclusive
+            // In iCal format, end date is exclusive, so we need Dec 17 to block through Dec 16
+            let endDate = eventTimes.end;
+            if (isOOO) {
+              endDate = new Date(eventTimes.end);
+              endDate.setDate(endDate.getDate() + 1);
+            }
+            
             allCalendarEvents.push({
               type: 'team_calendar',
               title: `${emoji} ${teamEvent.title || 'Team Event'}`,
               start: eventTimes.start,
-              end: eventTimes.end,
+              end: endDate,
               description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
@@ -3429,11 +3437,19 @@ app.get('/calendar/:personId', async (req, res) => {
             const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
             const emoji = isOOO ? '⛔️' : '📅';
             
+            // For OOO events, add one day to end date to make it inclusive
+            // In iCal format, end date is exclusive, so we need Dec 17 to block through Dec 16
+            let endDate = eventTimes.end;
+            if (isOOO) {
+              endDate = new Date(eventTimes.end);
+              endDate.setDate(endDate.getDate() + 1);
+            }
+            
             allCalendarEvents.push({
               type: 'team_calendar',
               title: `${emoji} ${teamEvent.title || 'Team Event'}`,
               start: eventTimes.start,
-              end: eventTimes.end,
+              end: endDate,
               description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
