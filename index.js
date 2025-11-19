@@ -850,7 +850,6 @@ async function regenerateCalendarForPerson(personId) {
               end: departureTimes.end,
               description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -892,7 +891,6 @@ async function regenerateCalendarForPerson(personId) {
               end: returnTimes.end,
               description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -1134,7 +1132,6 @@ async function regenerateCalendarForPerson(personId) {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -1174,7 +1171,6 @@ async function regenerateCalendarForPerson(personId) {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2916,7 +2912,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: departureTimes.end,
               description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -2960,7 +2955,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: returnTimes.end,
               description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -3253,7 +3247,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: departureTimes.end,
               description: description,
               location: flight.departure_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.departure_airline || '',
               flightNumber: flight.departure_flightnumber || '',
               confirmation: flight.confirmation || '',
@@ -3297,7 +3290,6 @@ app.get('/calendar/:personId', async (req, res) => {
               end: returnTimes.end,
               description: description,
               location: flight.return_airport || '',
-              url: countdownUrl, // Always use countdown URL as the main event URL // Always use countdown URL as the main event URL
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
               confirmation: flight.confirmation || '',
