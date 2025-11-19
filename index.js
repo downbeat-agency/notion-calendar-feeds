@@ -1459,30 +1459,50 @@ async function regenerateAllCalendars() {
   }
 }
 
-// Background job to update 100 people in parallel batches every 5 minutes
+// Background job to update all people in parallel batches every 5 minutes
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
-  console.log('   Processing 100 people in parallel each cycle');
+  console.log('   Processing all people in parallel batches each cycle');
   
   setInterval(async () => {
     try {
       const jobStart = Date.now();
-      console.log('\n⏰ Background job triggered - updating 100 people in parallel...');
+      console.log('\n⏰ Background job triggered - fetching all people...');
       
-      // Get all person IDs from Personnel database
-      const response = await notion.databases.query({
-        database_id: PERSONNEL_DB,
-        page_size: 100
-      });
-
-      const personIds = response.results.map(page => page.id);
+      // Get all person IDs from Personnel database with pagination
+      const personIds = [];
+      let cursor = undefined;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const queryParams = {
+          database_id: PERSONNEL_DB,
+          page_size: 100
+        };
+        
+        if (cursor) {
+          queryParams.start_cursor = cursor;
+        }
+        
+        const response = await notion.databases.query(queryParams);
+        
+        // Add person IDs from this page
+        const pagePersonIds = response.results.map(page => page.id);
+        personIds.push(...pagePersonIds);
+        
+        // Check if there are more pages
+        hasMore = response.has_more;
+        cursor = response.next_cursor;
+        
+        console.log(`   Fetched ${pagePersonIds.length} people (total so far: ${personIds.length})`);
+      }
       
       if (personIds.length === 0) {
         console.log('⚠️  No personnel found in database');
         return;
       }
       
-      console.log(`   Found ${personIds.length} people to update`);
+      console.log(`   Found ${personIds.length} total people to update`);
       
       // Process all people in parallel (batches of 100)
       const batchSize = 100;
@@ -1522,7 +1542,7 @@ function startBackgroundJob() {
       }
       
       const jobTime = Math.round((Date.now() - jobStart) / 1000);
-      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped`);
+      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people)`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
@@ -1551,8 +1571,8 @@ app.get('/', (_req, res) => {
     },
     backgroundJob: {
       status: 'running',
-      interval: '30 minutes',
-      description: 'Updates one random person every 30 minutes'
+      interval: '5 minutes',
+      description: 'Updates all people every 5 minutes (paginated, batched parallel)'
     }
   });
 });
@@ -3550,5 +3570,5 @@ startBackgroundJob();
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
-  console.log(`Background job active - updating all people every 5 minutes (batched parallel)`);
+  console.log(`Background job active - updating all people every 5 minutes (paginated, batched parallel)`);
 });
