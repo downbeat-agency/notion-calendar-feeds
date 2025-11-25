@@ -3,7 +3,7 @@
 ## Overview
 The server processes calendar data from Notion's "Calendar Data" database with separate formula fields for each event type.
 
-Each data source can generate multiple calendar events (main events + flights + rehearsals + hotels + transportation + team calendar).
+Each data source can generate multiple calendar events (main events + flights + layovers + rehearsals + hotels + transportation + team calendar).
 
 ## Data Source
 
@@ -12,12 +12,12 @@ Each data source can generate multiple calendar events (main events + flights + 
 - **Format**: Individual formula fields for each event type
 - **Fields**:
   - `Events` - Main events (weddings/gigs) - **12 fields**
-  - `Flights` - Flight information - **15 fields**
+  - `Flights` - Flight information - **25 fields**
   - `Rehearsals` - Rehearsal schedules - **6 fields**
   - `Hotels` - Hotel bookings - **9 fields**
   - `Transportation` - Ground transport - **7 fields**
   - `Team Calendar` - Office days and team events - **5 fields**
-- **Total**: 54 fields across 6 event types
+- **Total**: 64 fields across 6 event types
 
 ## Event Detection Rules
 
@@ -66,7 +66,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 2. **Flight Events** 
 **Triggers:** Top-level `Flights` field
 
-**Available Fields (17 total):**
+**Available Fields (25 total):**
 - `confirmation` - Booking confirmation number
 - `flight_url` - Link to Notion page for this flight
 - `airport_arrival` - Arrival time recommendations
@@ -78,12 +78,20 @@ Each data source can generate multiple calendar events (main events + flights + 
 - `departure_time` - Departure time as ISO 8601 date range (required)
 - `departure_airport` - Departure airport address
 - `departure_airport_name` - Departure airport name
+- `departure_lo_flightnumber` - Departure layover flight number
+- `departure_lo_time` - Departure layover time as ISO 8601 date range
+- `departure_lo_from_airport` - Departure layover origin airport
+- `departure_lo_to_airport` - Departure layover destination airport
 - `return_name` - Return flight name (required for return event)
 - `return_airline` - Return airline
 - `return_airport` - Return airport address
 - `return_airport_name` - Return airport name
 - `return_flightnumber` - Return flight number
 - `return_time` - Return time as ISO 8601 date range (required)
+- `return_lo_flightnumber` - Return layover flight number
+- `return_lo_time` - Return layover time as ISO 8601 date range
+- `return_lo_from_airport` - Return layover origin airport
+- `return_lo_to_airport` - Return layover destination airport
 
 **Departure Flight Mapping:**
 ```javascript
@@ -122,6 +130,42 @@ Each data source can generate multiple calendar events (main events + flights + 
   flightStatus: flight.flight_status,        // "Booked"
   flightType: flight.flight_type,            // "Round Trip"
   airportArrival: flight.airport_arrival     // Arrival recommendations
+}
+```
+
+**Departure Layover Flight Mapping:**
+```javascript
+// Requires: flight.departure_lo_time AND flight.departure_lo_flightnumber
+{
+  type: 'flight_departure_layover',
+  title: "✈️ Layover: ATL → JFK",           // From departure_lo_from_airport → departure_lo_to_airport
+  start: flight.departure_lo_time,           // "2025-10-10T12:00:00+00:00/2025-10-10T14:30:00+00:00"
+  end: flight.departure_lo_time,             // Same as start (date range)
+  description: "Confirmation: HWSV8Y\nFlight #: DL 456\nFrom: ATL\nTo: JFK",
+  location: flight.departure_lo_from_airport, // "Atlanta International Airport"
+  url: flight.flight_url,                    // "https://www.notion.so/26939e4a65a980f6839bd853232eaa52"
+  airline: flight.departure_airline,         // "Delta"
+  flightNumber: flight.departure_lo_flightnumber, // "DL 456"
+  confirmation: flight.confirmation,          // "HWSV8Y"
+  mainEvent: event.event_name                // Associated main event
+}
+```
+
+**Return Layover Flight Mapping:**
+```javascript
+// Requires: flight.return_lo_time AND flight.return_lo_flightnumber
+{
+  type: 'flight_return_layover',
+  title: "✈️ Layover: JFK → ATL",           // From return_lo_from_airport → return_lo_to_airport
+  start: flight.return_lo_time,              // "2025-10-12T18:00:00+00:00/2025-10-12T20:30:00+00:00"
+  end: flight.return_lo_time,                // Same as start (date range)
+  description: "Confirmation: HWSV8Y\nFlight #: DL 789\nFrom: JFK\nTo: ATL",
+  location: flight.return_lo_from_airport,  // "John F. Kennedy International Airport"
+  url: flight.flight_url,                    // "https://www.notion.so/26939e4a65a980f6839bd853232eaa52"
+  airline: flight.return_airline,           // "Delta"
+  flightNumber: flight.return_lo_flightnumber, // "DL 789"
+  confirmation: flight.confirmation,         // "HWSV8Y"
+  mainEvent: event.event_name                // Associated main event
 }
 ```
 
@@ -264,14 +308,14 @@ The database uses separate formula fields for each event type. Each field contai
   "totalCalendarEvents": 117,     // Count of all calendar events generated
   "breakdown": {
     "mainEvents": 31,             // Wedding/gig events
-    "flights": 10,                // Flight departure + return events  
+    "flights": 10,                // Flight departure + return + layover events  
     "rehearsals": 16,             // Rehearsal events
     "hotels": 7,                  // Hotel bookings
     "groundTransport": 10,        // Ground transportation events (pickup, dropoff, meeting)
     "teamCalendar": 53            // Office days and team events
   },
   "events": [
-    // Array of all calendar events (main + flights + rehearsals + hotels + transport + team)
+    // Array of all calendar events (main + flights + layovers + rehearsals + hotels + transport + team)
   ]
 }
 ```
@@ -280,11 +324,13 @@ The database uses separate formula fields for each event type. Each field contai
 
 1. **Main Events**: `type: 'main_event'` - One per event in Events array
 2. **Flight Departures**: `type: 'flight_departure'` - One per flight with departure info
-3. **Flight Returns**: `type: 'flight_return'` - One per flight with return info  
-4. **Rehearsals**: `type: 'rehearsal'` - One per rehearsal with valid time
-5. **Hotels**: `type: 'hotel'` - One per hotel booking
-6. **Transportation**: `type: 'ground_transport_pickup'|'ground_transport_dropoff'|'ground_transport_meeting'|'ground_transport'` - One per transport event
-7. **Team Calendar**: `type: 'team_calendar'` - One per office day or team event
+3. **Flight Returns**: `type: 'flight_return'` - One per flight with return info
+4. **Flight Departure Layovers**: `type: 'flight_departure_layover'` - One per departure layover flight
+5. **Flight Return Layovers**: `type: 'flight_return_layover'` - One per return layover flight
+6. **Rehearsals**: `type: 'rehearsal'` - One per rehearsal with valid time
+7. **Hotels**: `type: 'hotel'` - One per hotel booking
+8. **Transportation**: `type: 'ground_transport_pickup'|'ground_transport_dropoff'|'ground_transport_meeting'|'ground_transport'` - One per transport event
+9. **Team Calendar**: `type: 'team_calendar'` - One per office day or team event
 
 ## Calendar Integration
 

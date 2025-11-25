@@ -161,6 +161,12 @@ function getAlarmsForEvent(eventType, eventTitle = '') {
     'flight_return': [
       { type: 'display', trigger: 10800 }   // 3 hours
     ],
+    'flight_departure_layover': [
+      { type: 'display', trigger: 10800 }   // 3 hours
+    ],
+    'flight_return_layover': [
+      { type: 'display', trigger: 10800 }   // 3 hours
+    ],
     
     // MAIN EVENTS: 1 hour before
     'main_event': [
@@ -899,6 +905,56 @@ async function regenerateCalendarForPerson(personId) {
               mainEvent: event.event_name
             });
           }
+
+          // Departure layover flight
+          if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
+            let departureLoTimes = parseUnifiedDateTime(flight.departure_lo_time);
+            if (!departureLoTimes) {
+              departureLoTimes = {
+                start: flight.departure_lo_time,
+                end: flight.departure_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_departure_layover',
+              title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`,
+              start: departureLoTimes.start,
+              end: departureLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}\nFrom: ${flight.departure_lo_from_airport || 'N/A'}\nTo: ${flight.departure_lo_to_airport || 'N/A'}`,
+              location: flight.departure_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.departure_airline || '',
+              flightNumber: flight.departure_lo_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+            });
+          }
+
+          // Return layover flight
+          if (flight.return_lo_time && flight.return_lo_flightnumber) {
+            let returnLoTimes = parseUnifiedDateTime(flight.return_lo_time);
+            if (!returnLoTimes) {
+              returnLoTimes = {
+                start: flight.return_lo_time,
+                end: flight.return_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_return_layover',
+              title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`,
+              start: returnLoTimes.start,
+              end: returnLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}\nFrom: ${flight.return_lo_from_airport || 'N/A'}\nTo: ${flight.return_lo_to_airport || 'N/A'}`,
+              location: flight.return_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.return_airline || '',
+              flightNumber: flight.return_lo_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+            });
+          }
         });
       }
 
@@ -1175,6 +1231,56 @@ async function regenerateCalendarForPerson(personId) {
               url: flight.flight_url || '',
               airline: flight.return_airline || '',
               flightNumber: flight.return_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: ''
+            });
+          }
+
+          // Departure layover flight
+          if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
+            let departureLoTimes = parseUnifiedDateTime(flight.departure_lo_time);
+            if (!departureLoTimes) {
+              departureLoTimes = {
+                start: flight.departure_lo_time,
+                end: flight.departure_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_departure_layover',
+              title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`,
+              start: departureLoTimes.start,
+              end: departureLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}\nFrom: ${flight.departure_lo_from_airport || 'N/A'}\nTo: ${flight.departure_lo_to_airport || 'N/A'}`,
+              location: flight.departure_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.departure_airline || '',
+              flightNumber: flight.departure_lo_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: ''
+            });
+          }
+
+          // Return layover flight
+          if (flight.return_lo_time && flight.return_lo_flightnumber) {
+            let returnLoTimes = parseUnifiedDateTime(flight.return_lo_time);
+            if (!returnLoTimes) {
+              returnLoTimes = {
+                start: flight.return_lo_time,
+                end: flight.return_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_return_layover',
+              title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`,
+              start: returnLoTimes.start,
+              end: returnLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}\nFrom: ${flight.return_lo_from_airport || 'N/A'}\nTo: ${flight.return_lo_to_airport || 'N/A'}`,
+              location: flight.return_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.return_airline || '',
+              flightNumber: flight.return_lo_flightnumber || '',
               confirmation: flight.confirmation || '',
               mainEvent: ''
             });
@@ -2985,6 +3091,56 @@ app.get('/calendar/:personId', async (req, res) => {
               mainEvent: event.event_name
             });
           }
+
+          // Departure layover flight
+          if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
+            let departureLoTimes = parseUnifiedDateTime(flight.departure_lo_time);
+            if (!departureLoTimes) {
+              departureLoTimes = {
+                start: flight.departure_lo_time,
+                end: flight.departure_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_departure_layover',
+              title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`,
+              start: departureLoTimes.start,
+              end: departureLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}\nFrom: ${flight.departure_lo_from_airport || 'N/A'}\nTo: ${flight.departure_lo_to_airport || 'N/A'}`,
+              location: flight.departure_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.departure_airline || '',
+              flightNumber: flight.departure_lo_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+            });
+          }
+
+          // Return layover flight
+          if (flight.return_lo_time && flight.return_lo_flightnumber) {
+            let returnLoTimes = parseUnifiedDateTime(flight.return_lo_time);
+            if (!returnLoTimes) {
+              returnLoTimes = {
+                start: flight.return_lo_time,
+                end: flight.return_lo_time
+              };
+            }
+
+            allCalendarEvents.push({
+              type: 'flight_return_layover',
+              title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`,
+              start: returnLoTimes.start,
+              end: returnLoTimes.end,
+              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}\nFrom: ${flight.return_lo_from_airport || 'N/A'}\nTo: ${flight.return_lo_to_airport || 'N/A'}`,
+              location: flight.return_lo_from_airport || '',
+              url: flight.flight_url || '',
+              airline: flight.return_airline || '',
+              flightNumber: flight.return_lo_flightnumber || '',
+              confirmation: flight.confirmation || '',
+              mainEvent: event.event_name
+            });
+          }
         });
       }
 
@@ -3524,7 +3680,7 @@ app.get('/calendar/:personId', async (req, res) => {
       dataSource: 'calendar_data_database',
       breakdown: {
         mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
-        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return').length,
+        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
         rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
         hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
         groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
