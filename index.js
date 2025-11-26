@@ -260,8 +260,10 @@ async function getCalendarDataFromDatabase(personId) {
   }
 
   // Query Calendar Data database for events related to this person
+  // Use page_size: 1 since we only expect one result per person
   const response = await notion.databases.query({
     database_id: CALENDAR_DATA_DB,
+    page_size: 1, // Optimize: only fetch one result
     filter: {
       property: 'Personnel',
       relation: {
