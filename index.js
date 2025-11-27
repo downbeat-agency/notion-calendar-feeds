@@ -2742,6 +2742,7 @@ app.get('/calendar/:personId', async (req, res) => {
     // Check Redis cache first (if enabled, unless ?fresh=true is specified)
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:${personId}:${shouldReturnICS ? 'ics' : 'json'}`;
+    let calendarData = null; // Store fetched data to avoid duplicate fetches
     
     if (forceFresh && redis && cacheEnabled) {
       // Clear cache if forcing fresh data (clear BOTH ICS and JSON to be safe)
@@ -2780,7 +2781,64 @@ app.get('/calendar/:personId', async (req, res) => {
             return res.json(JSON.parse(cachedData));
           }
         }
-        console.log(`❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'}) - fetching from Notion...`);
+        console.log(`❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`);
+        
+        // Try a quick synchronous fetch with 30-second timeout
+        // If Notion responds quickly, serve immediately. If slow, trigger background regeneration.
+        console.log(`⏱️  Attempting quick fetch for ${personId} (30s timeout)...`);
+        
+        try {
+          const quickTimeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Quick fetch timeout')), 30000);
+          });
+          
+          // Check if Calendar Data database is configured
+          if (!CALENDAR_DATA_DB) {
+            throw new Error('Calendar Data database not configured');
+          }
+          
+          calendarData = await Promise.race([
+            getCalendarDataFromDatabase(personId),
+            quickTimeoutPromise
+          ]);
+          
+          if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
+            throw new Error('No events found');
+          }
+          
+          // Quick fetch succeeded! Continue with normal processing flow below
+          console.log(`✅ Quick fetch succeeded for ${personId}, processing and caching...`);
+        } catch (quickError) {
+          // Quick fetch failed or timed out - trigger background regeneration
+          console.log(`⏱️  Quick fetch ${quickError.message === 'Quick fetch timeout' ? 'timed out' : 'failed'} for ${personId}, triggering background regeneration...`);
+          regenerateCalendarForPerson(personId).catch(err => {
+            console.error(`Background regeneration failed for ${personId}:`, err);
+          });
+          
+          if (shouldReturnICS) {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.status(503).send(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Calendar Feed//EN
+BEGIN:VEVENT
+DTSTART:19900101T000000Z
+DTEND:19900101T000000Z
+SUMMARY:Calendar is being regenerated
+DESCRIPTION:Your calendar is being regenerated. Please try again in a few moments.
+END:VEVENT
+END:VCALENDAR`);
+          } else {
+            return res.status(503).json({
+              error: 'Calendar cache is empty',
+              message: 'Your calendar is being regenerated in the background. Please try again in a few moments.',
+              retryAfter: 30
+            });
+          }
+          return;
+        }
+        
+        // If we get here, quick fetch succeeded - continue with normal processing
+        console.log(`✅ Quick fetch succeeded for ${personId}, continuing with normal flow...`);
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
         // Continue without cache if Redis fails
@@ -2795,8 +2853,50 @@ app.get('/calendar/:personId', async (req, res) => {
       });
     }
     
-    // Get calendar data from Calendar Data database
-    const calendarData = await getCalendarDataFromDatabase(personId);
+    // Only reach here if cache is disabled or forceFresh=true, or if quick fetch already succeeded
+    // If we already have calendarData from quick fetch, skip this
+    if (!calendarData) {
+      try {
+        // Set a timeout promise that rejects after 50 seconds (before Railway's 60s timeout and Notion's 60s limit)
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Notion API query timeout')), 50000);
+        });
+        
+        calendarData = await Promise.race([
+          getCalendarDataFromDatabase(personId),
+          timeoutPromise
+        ]);
+    } catch (error) {
+      if (error.message === 'Notion API query timeout') {
+        console.error(`⏱️  Notion query timeout for ${personId}, triggering background regeneration...`);
+        regenerateCalendarForPerson(personId).catch(err => {
+          console.error(`Background regeneration failed for ${personId}:`, err);
+        });
+        
+        if (shouldReturnICS) {
+          res.setHeader('Content-Type', 'text/calendar');
+          return res.status(503).send(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Calendar Feed//EN
+BEGIN:VEVENT
+DTSTART:19900101T000000Z
+DTEND:19900101T000000Z
+SUMMARY:Calendar generation in progress
+DESCRIPTION:Calendar generation is taking longer than expected. Please try again in a few moments.
+END:VEVENT
+END:VCALENDAR`);
+        } else {
+          return res.status(503).json({
+            error: 'Calendar generation timeout',
+            message: 'Calendar generation is taking longer than expected. It is being regenerated in the background. Please try again in a few moments.',
+            retryAfter: 30
+          });
+        }
+      }
+      throw error;
+    }
+    }
+    
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       return res.status(404).json({ 
         error: 'No events found',
