@@ -723,18 +723,15 @@ async function regenerateCalendarForPerson(personId) {
 
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime, 'Type:', typeof event.calltime);
             let displayCalltime = event.calltime;
             
             // PRIORITY 1: Handle Pacific timezone format (-08:00 or -07:00) - this is what Notion formulas output
             // Extract time components directly from Pacific timezone string (the time is already in Pacific)
             if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
-              console.log(`[DEBUG] Matched -08:00/-07:00 format for ${event.event_name}`);
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
                 const hours = parseInt(match[1]);
                 const minutes = parseInt(match[2]);
-                console.log(`[DEBUG] Extracted hours: ${hours}, minutes: ${minutes}`);
                 
                 // Convert to 12-hour format
                 let displayHours = hours;
@@ -749,12 +746,8 @@ async function regenerateCalendarForPerson(personId) {
                 }
                 
                 displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
-                console.log(`[DEBUG] Final calltime display: ${displayCalltime}`);
-              } else {
-                console.log(`[DEBUG] No regex match found for ${event.event_name}`);
               }
             } else if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
-              console.log(`[DEBUG] Matched UTC format for ${event.event_name}`);
               // PRIORITY 2: Handle UTC format (+00:00 or Z suffix) - if Notion API converts to UTC
               // Convert UTC calltimes to America/Los_Angeles timezone for display
               // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
@@ -2860,18 +2853,15 @@ app.get('/calendar/:personId', async (req, res) => {
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime && event.calltime.trim()) {
-            console.log(`[DEBUG] Event: ${event.event_name}, Raw calltime from DB:`, event.calltime, 'Type:', typeof event.calltime);
             let displayCalltime = event.calltime;
             
             // PRIORITY 1: Handle Pacific timezone format (-08:00 or -07:00) - this is what Notion formulas output
             // Extract time components directly from Pacific timezone string (the time is already in Pacific)
             if (event.calltime.includes('-08:00') || event.calltime.includes('-07:00')) {
-              console.log(`[DEBUG] Matched -08:00/-07:00 format for ${event.event_name}`);
               const match = event.calltime.match(/T(\d{2}):(\d{2}):(\d{2})/);
               if (match) {
                 const hours = parseInt(match[1]);
                 const minutes = parseInt(match[2]);
-                console.log(`[DEBUG] Extracted hours: ${hours}, minutes: ${minutes}`);
                 
                 // Convert to 12-hour format
                 let displayHours = hours;
@@ -2886,12 +2876,8 @@ app.get('/calendar/:personId', async (req, res) => {
                 }
                 
                 displayCalltime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
-                console.log(`[DEBUG] Final calltime display: ${displayCalltime}`);
-              } else {
-                console.log(`[DEBUG] No regex match found for ${event.event_name}`);
               }
             } else if (event.calltime.includes('T') && (event.calltime.includes('Z') || event.calltime.includes('+00:00'))) {
-              console.log(`[DEBUG] Matched UTC format for ${event.event_name}`);
               // PRIORITY 2: Handle UTC format (+00:00 or Z suffix) - if Notion API converts to UTC
               // Convert UTC calltimes to America/Los_Angeles timezone for display
               // Example: Notion sends "2025-11-15T21:30:00.000Z" (UTC) → displays as "1:30 PM" (Pacific)
