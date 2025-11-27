@@ -1,0 +1,836 @@
+"[" +
+
+prop("Personnel")
+
+  .map(current.prop("Flights"))
+
+  .flat()
+
+  .filter(
+
+    current
+
+      .prop("Passengers")
+
+      .map(current.prop("Full Name"))
+
+      .contains(
+
+        prop("Personnel").map(current.prop("Full Name")).first()
+
+      )
+
+  )
+
+  .filter(not current.prop("Cancel"))
+
+  .filter(
+
+    or(
+
+      current.prop("Depart. Time").dateEnd() >=
+
+        dateSubtract(now(), 4, "weeks"),
+
+      current.prop("Return Time").dateEnd() >=
+
+        dateSubtract(now(), 4, "weeks")
+
+    )
+
+  )
+
+  .map(
+
+    lets(
+
+      /* existing flags */
+
+      has_departure, not empty(current.prop("Depart PCO Name")),
+
+      has_return, not empty(current.prop("Return PCO Name")),
+
+
+
+      /* NEW – layover flags */
+
+      has_depart_lo, not empty(current.prop("Depart. (LO) From")),
+
+      has_return_lo, not empty(current.prop("Return (LO) From")),
+
+
+
+      /* existing airports */
+
+      depart_address,
+
+        current.prop("Depart. From").map(current.prop("Address")).first(),
+
+      return_address,
+
+        current.prop("Return From").map(current.prop("Address")).first(),
+
+      depart_name,
+
+        current.prop("Depart. From").map(current.prop("Airport Name")).first(),
+
+      return_name,
+
+        current.prop("Return From").map(current.prop("Airport Name")).first(),
+
+      depart_code,
+
+        current.prop("Depart. From").map(current.prop("IATA")).first(),
+
+      return_code,
+
+        current.prop("Return From").map(current.prop("IATA")).first(),
+
+
+
+      /* NEW – layover airports */
+
+      depart_lo_from_code,
+
+        current
+
+          .prop("Depart. (LO) From")
+
+          .map(current.prop("IATA"))
+
+          .first(),
+
+      depart_lo_to_code,
+
+        current
+
+          .prop("Depart. (LO) To")
+
+          .map(current.prop("IATA"))
+
+          .first(),
+
+      return_lo_from_code,
+
+        current
+
+          .prop("Return (LO) From")
+
+          .map(current.prop("IATA"))
+
+          .first(),
+
+      return_lo_to_code,
+
+        current
+
+          .prop("Return (LO) To")
+
+          .map(current.prop("IATA"))
+
+          .first(),
+
+      /* NEW – layover airport addresses */
+
+      depart_lo_from_address,
+
+        current
+
+          .prop("Depart. (LO) From")
+
+          .map(current.prop("Address"))
+
+          .first(),
+
+      depart_lo_to_address,
+
+        current
+
+          .prop("Depart. (LO) To")
+
+          .map(current.prop("Address"))
+
+          .first(),
+
+      return_lo_from_address,
+
+        current
+
+          .prop("Return (LO) From")
+
+          .map(current.prop("Address"))
+
+          .first(),
+
+      return_lo_to_address,
+
+        current
+
+          .prop("Return (LO) To")
+
+          .map(current.prop("Address"))
+
+          .first(),
+
+
+
+      /* existing times */
+
+      depart_time, current.prop("Depart. Time"),
+
+      return_time, current.prop("Return Time"),
+
+
+
+      /* NEW – layover times */
+
+      depart_lo_time, current.prop("Depart. (LO) Time"),
+
+      return_lo_time, current.prop("Return (LO) Time"),
+
+
+
+      "{" + [
+
+        "\"confirmation\":" +
+
+          if(
+
+            empty(current.prop("Confirmation #")),
+
+            "null",
+
+            "\"" + current.prop("Confirmation #").format() + "\""
+
+          ),
+
+
+
+        if(
+
+          prop("Personnel").map(current.prop("Team Rates")).first(),
+
+          "\"flight_url\":\"https://www.notion.so/" +
+
+            replaceAll(current.id(), "-", "") + "\"",
+
+          ""
+
+        ),
+
+
+
+        "\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\"",
+
+
+
+        "\"flight_status\":" +
+
+          if(
+
+            empty(current.prop("Status")),
+
+            "null",
+
+            "\"" + current.prop("Status") + "\""
+
+          ),
+
+
+
+        "\"flight_type\":" +
+
+          if(
+
+            empty(current.prop("Flight Type")),
+
+            "null",
+
+            "\"" + current.prop("Flight Type") + "\""
+
+          ),
+
+
+
+        "\"departure_name\":" +
+
+          if(
+
+            has_departure and not empty(current.prop("Depart PCO Name")),
+
+            "\"" + current.prop("Depart PCO Name") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_airline\":" +
+
+          if(
+
+            has_departure and not empty(current.prop("Depart Airline")),
+
+            "\"" + current.prop("Depart Airline").format() + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_flightnumber\":" +
+
+          if(
+
+            has_departure and not empty(current.prop("Depart Flight #")),
+
+            "\"" + current.prop("Depart Flight #") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_time\":" +
+
+          if(
+
+            has_departure and not empty(depart_time),
+
+            "\"" +
+
+              depart_time.dateStart().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "/" +
+
+              depart_time.dateEnd().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_airport\":" +
+
+          if(
+
+            has_departure and not empty(depart_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_airport_address\":" +
+
+          if(
+
+            has_departure and not empty(depart_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_airport_name\":" +
+
+          if(
+
+            has_departure and not empty(depart_name),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_name, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        /* NEW – departure layover segment */
+
+        "\"departure_lo_flightnumber\":" +
+
+          if(
+
+            has_depart_lo and not empty(current.prop("Depart. (LO) #")),
+
+            "\"" + current.prop("Depart. (LO) #") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_lo_time\":" +
+
+          if(
+
+            has_depart_lo and not empty(depart_lo_time),
+
+            "\"" +
+
+              depart_lo_time.dateStart().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "/" +
+
+              depart_lo_time.dateEnd().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_lo_from_airport\":" +
+
+          if(
+
+            has_depart_lo and not empty(depart_lo_from_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_lo_from_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_lo_from_airport_address\":" +
+
+          if(
+
+            has_depart_lo and not empty(depart_lo_from_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_lo_from_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_lo_to_airport\":" +
+
+          if(
+
+            has_depart_lo and not empty(depart_lo_to_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_lo_to_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"departure_lo_to_airport_address\":" +
+
+          if(
+
+            has_depart_lo and not empty(depart_lo_to_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(depart_lo_to_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_name\":" +
+
+          if(
+
+            has_return and not empty(current.prop("Return PCO Name")),
+
+            "\"" + current.prop("Return PCO Name") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_airline\":" +
+
+          if(
+
+            has_return and not empty(current.prop("Return Airline")),
+
+            "\"" + current.prop("Return Airline").format() + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_airport\":" +
+
+          if(
+
+            has_return and not empty(return_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_airport_address\":" +
+
+          if(
+
+            has_return and not empty(return_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_airport_name\":" +
+
+          if(
+
+            has_return and not empty(return_name),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_name, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_flightnumber\":" +
+
+          if(
+
+            has_return and not empty(current.prop("Return Flight #")),
+
+            "\"" + current.prop("Return Flight #") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_time\":" +
+
+          if(
+
+            has_return and not empty(return_time),
+
+            "\"" +
+
+              return_time.dateStart().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "/" +
+
+              return_time.dateEnd().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        /* NEW – return layover segment */
+
+        "\"return_lo_flightnumber\":" +
+
+          if(
+
+            has_return_lo and not empty(current.prop("Return (LO) # ")),
+
+            "\"" + current.prop("Return (LO) # ") + "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_lo_time\":" +
+
+          if(
+
+            has_return_lo and not empty(return_lo_time),
+
+            "\"" +
+
+              return_lo_time.dateStart().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "/" +
+
+              return_lo_time.dateEnd().formatDate("YYYY-MM-DDTHH:mm:ssZ") +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_lo_from_airport\":" +
+
+          if(
+
+            has_return_lo and not empty(return_lo_from_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_lo_from_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_lo_from_airport_address\":" +
+
+          if(
+
+            has_return_lo and not empty(return_lo_from_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_lo_from_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_lo_to_airport\":" +
+
+          if(
+
+            has_return_lo and not empty(return_lo_to_code),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_lo_to_code, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          ),
+
+
+
+        "\"return_lo_to_airport_address\":" +
+
+          if(
+
+            has_return_lo and not empty(return_lo_to_address),
+
+            "\"" +
+
+              replaceAll(
+
+                replaceAll(return_lo_to_address, "\n", "\\n"),
+
+                "\r",
+
+                "\\r"
+
+              ) +
+
+              "\"",
+
+            "null"
+
+          )
+
+      ]
+
+      .filter(not empty(current))
+
+      .join(",") +
+
+      "}"
+
+    )
+
+  )
+
+  .join(",") +
+
+"]"
+
