@@ -262,14 +262,14 @@ async function getCalendarDataFromDatabase(personId) {
   // Query Calendar Data database for events related to this person
   // Use page_size: 1 since we only expect one result per person
   const response = await notion.databases.query({
-    database_id: CALENDAR_DATA_DB,
+            database_id: CALENDAR_DATA_DB,
     page_size: 1, // Optimize: only fetch one result
-    filter: {
-      property: 'Personnel',
-      relation: {
-        contains: personId
-      }
-    }
+            filter: {
+              property: 'Personnel',
+              relation: {
+                contains: personId
+              }
+            }
   });
 
   if (response.results.length === 0) {
@@ -2136,30 +2136,97 @@ app.get('/regenerate/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    const result = await regenerateCalendarForPerson(personId);
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        message: `Calendar regenerated successfully for ${result.personName}`,
-        personId: result.personId,
-        personName: result.personName,
-        eventCount: result.eventCount,
-        cacheTTL: CACHE_TTL
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: 'Failed to regenerate calendar',
-        personId: result.personId,
-        reason: result.reason || result.error
-      });
+    // Set status to 'in_progress' in Redis if available
+    if (redis && cacheEnabled) {
+      await redis.set(`regenerate:status:${personId}`, 'in_progress', 'EX', 300); // 5 minute expiry
     }
+
+    // Return immediately and run regeneration in background
+    res.json({
+      success: true,
+      message: 'Calendar regeneration started',
+      personId: personId,
+      note: 'Regeneration is running in the background. This may take a minute or two.'
+    });
+    
+    // Run regeneration in the background (don't await)
+    regenerateCalendarForPerson(personId).then(result => {
+      if (redis && cacheEnabled) {
+        if (result.success) {
+          redis.set(`regenerate:status:${personId}`, 'completed', 'EX', 300);
+          console.log(`✅ Calendar regenerated successfully for ${result.personName} (${result.eventCount} events)`);
+        } else {
+          redis.set(`regenerate:status:${personId}`, 'failed', 'EX', 300);
+          console.error(`❌ Calendar regeneration failed for ${personId}: ${result.reason || result.error}`);
+        }
+      }
+    }).catch(error => {
+      if (redis && cacheEnabled) {
+        redis.set(`regenerate:status:${personId}`, 'failed', 'EX', 300);
+      }
+      console.error(`❌ Calendar regeneration error for ${personId}:`, error);
+    });
+    
   } catch (error) {
     console.error('Regeneration endpoint error:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Error regenerating calendar',
+      error: 'Error starting calendar regeneration',
+      details: error.message
+    });
+  }
+});
+
+// Status endpoint to check regeneration progress
+app.get('/regenerate/:personId/status', async (req, res) => {
+  try {
+    let { personId } = req.params;
+    
+    // Convert personId to proper UUID format if needed
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    if (redis && cacheEnabled) {
+      const status = await redis.get(`regenerate:status:${personId}`);
+      if (status) {
+        return res.json({
+          success: true,
+          personId: personId,
+          status: status,
+          message: status === 'in_progress' ? 'Regeneration in progress' :
+                   status === 'completed' ? 'Regeneration completed' :
+                   status === 'failed' ? 'Regeneration failed' : 'Unknown status'
+        });
+      }
+    }
+
+    // If no status found, check if calendar exists in cache
+    const cacheKey = `calendar:${personId}:ics`;
+    if (redis && cacheEnabled) {
+      const cached = await redis.exists(cacheKey);
+      if (cached) {
+        return res.json({
+          success: true,
+          personId: personId,
+          status: 'not_regenerating',
+          message: 'Calendar is cached. No regeneration in progress.',
+          cached: true
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      personId: personId,
+      status: 'unknown',
+      message: 'No regeneration status found. Calendar may not be cached.'
+    });
+  } catch (error) {
+    console.error('Status endpoint error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error checking regeneration status',
       details: error.message
     });
   }
