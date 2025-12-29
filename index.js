@@ -2136,42 +2136,30 @@ app.get('/regenerate/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Set status to 'in_progress' in Redis if available
-    if (redis && cacheEnabled) {
-      await redis.set(`regenerate:status:${personId}`, 'in_progress', 'EX', 300); // 5 minute expiry
+    const result = await regenerateCalendarForPerson(personId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Calendar regenerated successfully for ${result.personName}`,
+        personId: result.personId,
+        personName: result.personName,
+        eventCount: result.eventCount,
+        cacheTTL: CACHE_TTL
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Failed to regenerate calendar',
+        personId: result.personId,
+        reason: result.reason || result.error
+      });
     }
-
-    // Return immediately and run regeneration in background
-    res.json({
-      success: true,
-      message: 'Calendar regeneration started',
-      personId: personId,
-      note: 'Regeneration is running in the background. This may take a minute or two.'
-    });
-    
-    // Run regeneration in the background (don't await)
-    regenerateCalendarForPerson(personId).then(result => {
-      if (redis && cacheEnabled) {
-        if (result.success) {
-          redis.set(`regenerate:status:${personId}`, 'completed', 'EX', 300);
-          console.log(`✅ Calendar regenerated successfully for ${result.personName} (${result.eventCount} events)`);
-        } else {
-          redis.set(`regenerate:status:${personId}`, 'failed', 'EX', 300);
-          console.error(`❌ Calendar regeneration failed for ${personId}: ${result.reason || result.error}`);
-        }
-      }
-    }).catch(error => {
-      if (redis && cacheEnabled) {
-        redis.set(`regenerate:status:${personId}`, 'failed', 'EX', 300);
-      }
-      console.error(`❌ Calendar regeneration error for ${personId}:`, error);
-    });
-    
   } catch (error) {
     console.error('Regeneration endpoint error:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Error starting calendar regeneration',
+      error: 'Error regenerating calendar',
       details: error.message
     });
   }
