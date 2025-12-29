@@ -14,7 +14,10 @@ import axios from 'axios';
 
 const app = express();
 const port = process.env.PORT || 3000;
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+const notion = new Client({ 
+  auth: process.env.NOTION_API_KEY,
+  timeoutMs: 90000 // 90 seconds - longer than Railway's 60s timeout to handle slow Notion responses
+});
 
 // Redis client setup
 let redis = null;
