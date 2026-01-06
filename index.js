@@ -256,6 +256,36 @@ function isDSTDate(date) {
   return checkDate >= dstStart && checkDate < dstEnd;
 }
 
+// Helper function to retry Notion API calls with exponential backoff
+async function retryNotionCall(apiCall, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await apiCall();
+    } catch (error) {
+      lastError = error;
+      const isRetryable = error.code === 'notionhq_client_request_timeout' || 
+                         error.status === 504 || 
+                         error.message?.includes('504') ||
+                         error.message?.includes('timeout') ||
+                         error.message?.includes('Request to Notion API failed');
+      
+      if (isRetryable && attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+        console.log(`⚠️  Notion API timeout (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // Not retryable or max retries reached
+      throw error;
+    }
+  }
+  
+  throw lastError;
+}
+
 // Helper function to get calendar data from Calendar Data database
 async function getCalendarDataFromDatabase(personId) {
   if (!CALENDAR_DATA_DB) {
@@ -264,22 +294,30 @@ async function getCalendarDataFromDatabase(personId) {
 
   // Query Calendar Data database for events related to this person
   // Use page_size: 1 since we only expect one result per person
-  const response = await notion.databases.query({
-            database_id: CALENDAR_DATA_DB,
-    page_size: 1, // Optimize: only fetch one result
-            filter: {
-              property: 'Personnel',
-              relation: {
-                contains: personId
-              }
-            }
-  });
+  const response = await retryNotionCall(() => 
+    notion.databases.query({
+      database_id: CALENDAR_DATA_DB,
+      page_size: 1, // Optimize: only fetch one result
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    })
+  );
+  
+  return processCalendarDataResponse(response);
+}
 
+// Helper function to process the response after successful query
+function processCalendarDataResponse(response) {
   if (response.results.length === 0) {
     return null;
   }
 
   const calendarData = response.results[0].properties;
+
   
   // Parse all the JSON strings with better error handling
   let events, flights, transportation, hotels, rehearsals, teamCalendar;
@@ -694,7 +732,9 @@ async function regenerateCalendarForPerson(personId) {
     const events = calendarData;
     
     // Get person name from Personnel database
-    const person = await notion.pages.retrieve({ page_id: personId });
+    const person = await retryNotionCall(() => 
+      notion.pages.retrieve({ page_id: personId })
+    );
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
