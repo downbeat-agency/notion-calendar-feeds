@@ -1446,7 +1446,15 @@ async function regenerateCalendarForPerson(personId) {
           let eventTimes = parseUnifiedDateTime(teamEvent.date);
           if (eventTimes) {
             const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
-            const emoji = isOOO ? '⛔️' : '📅';
+            const isMeeting = teamEvent.title && teamEvent.title.trim().toUpperCase().includes('MEETING');
+            let emoji;
+            if (isOOO) {
+              emoji = '⛔️';
+            } else if (isMeeting) {
+              emoji = '💼';
+            } else {
+              emoji = '📅';
+            }
             
             // For OOO events, add one day to end date to make it inclusive
             // In iCal format, end date is exclusive, so we need Dec 17 to block through Dec 16
@@ -3787,9 +3795,17 @@ END:VCALENDAR`);
         if (teamEvent.date) {
           let eventTimes = parseUnifiedDateTime(teamEvent.date);
           if (eventTimes) {
-            // Use ⛔️ emoji for OOO events, 📅 for regular events
+            // Use ⛔️ emoji for OOO events, 💼 for Meeting events, 📅 for Office and other events
             const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
-            const emoji = isOOO ? '⛔️' : '📅';
+            const isMeeting = teamEvent.title && teamEvent.title.trim().toUpperCase().includes('MEETING');
+            let emoji;
+            if (isOOO) {
+              emoji = '⛔️';
+            } else if (isMeeting) {
+              emoji = '💼';
+            } else {
+              emoji = '📅';
+            }
             
             // For OOO events, add one day to end date to make it inclusive
             // In iCal format, end date is exclusive, so we need Dec 17 to block through Dec 16
