@@ -2621,7 +2621,7 @@ app.get('/subscribe/admin', async (req, res) => {
         
         <!-- Apple Calendar -->
         <div class="calendar-card">
-            <a href="webcal://${req.get('host')}/calendar/admin.ics" class="calendar-button">
+            <a href="webcal://${req.get('host')}/calendar/admin" class="calendar-button">
                 <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM5 8V6h14v2H5z'/%3E%3C/svg%3E" alt="Calendar">
                 <span>Subscribe with Apple Calendar</span>
             </a>
