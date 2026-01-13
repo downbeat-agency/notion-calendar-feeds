@@ -1827,12 +1827,22 @@ function processAdminEvents(eventsArray) {
           description += `🎸 Gear: ${event.gear}\n`;
         }
         
-        // Personnel
-        if (event.event_personnel && Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
-          description += `\n👥 Personnel:\n`;
-          event.event_personnel.forEach(person => {
-            description += `  • ${person}\n`;
-          });
+        // Personnel (handle both string and array formats)
+        if (event.event_personnel) {
+          if (typeof event.event_personnel === 'string') {
+            // Split by newlines if it's a string
+            description += `\n👥 Personnel:\n${event.event_personnel}\n`;
+          } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
+            description += `\n👥 Personnel:\n`;
+            event.event_personnel.forEach(person => {
+              description += `  • ${person}\n`;
+            });
+          }
+        }
+        
+        // General Info / Notes
+        if (event.general_info) {
+          description += `\n📋 General Info:\n${event.general_info}\n`;
         }
         
         // Notion URL at the bottom
@@ -1852,12 +1862,22 @@ function processAdminEvents(eventsArray) {
           title = `🎸 ${title}`;
         }
 
+        // Build location from venue and venue_address
+        let location = '';
+        if (event.venue && event.venue_address) {
+          location = `${event.venue}, ${event.venue_address}`;
+        } else if (event.venue_address) {
+          location = event.venue_address;
+        } else if (event.venue) {
+          location = event.venue;
+        }
+
         allCalendarEvents.push({
           start: eventTimes.start,
           end: eventTimes.end,
           title: title,
           description: description.trim(),
-          location: event.venue || '',
+          location: location,
           url: event.notion_url || '',
           type: 'main_event'
         });
