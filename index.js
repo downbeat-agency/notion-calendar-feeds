@@ -2532,6 +2532,11 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
 // Calendar subscription endpoint with proper headers
 // Admin calendar subscription page
 app.get('/subscribe/admin', async (req, res) => {
+  // Redirect if URL has extra characters (malformed URL like /subscribe/admin%20%20...)
+  const originalPath = decodeURIComponent(req.originalUrl.split('?')[0]);
+  if (originalPath !== '/subscribe/admin' && originalPath.startsWith('/subscribe/admin')) {
+    return res.redirect(301, '/subscribe/admin');
+  }
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/admin`;
     
