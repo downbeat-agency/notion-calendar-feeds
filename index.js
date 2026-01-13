@@ -3302,6 +3302,94 @@ app.get('/admin/calendar', async (req, res) => {
   }
 });
 
+// Admin calendar regeneration endpoint (clears cache and regenerates)
+app.get('/admin/calendar/regen', async (req, res) => {
+  try {
+    if (!ADMIN_CALENDAR_PAGE_ID) {
+      return res.status(500).json({ 
+        error: 'Admin calendar not configured',
+        message: 'ADMIN_CALENDAR_PAGE_ID environment variable not set'
+      });
+    }
+
+    console.log('🔄 Regenerating admin calendar (clearing cache)...');
+    
+    // Clear both ICS and JSON caches
+    if (redis && cacheEnabled) {
+      try {
+        await redis.del('calendar:admin:ics');
+        await redis.del('calendar:admin:json');
+        console.log('✅ Admin calendar cache cleared');
+      } catch (cacheError) {
+        console.error('Redis cache clear error:', cacheError);
+      }
+    }
+
+    // Fetch fresh data
+    const adminEvents = await getAdminCalendarData();
+    const allCalendarEvents = processAdminEvents(adminEvents);
+
+    // Generate and cache ICS
+    const calendar = ical({ 
+      name: 'Admin Calendar',
+      description: 'All upcoming events',
+      ttl: 300
+    });
+    
+    allCalendarEvents.forEach(event => {
+      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+      
+      calendar.createEvent({
+        start: startDate,
+        end: endDate,
+        summary: event.title,
+        description: event.description,
+        location: event.location,
+        url: event.url || '',
+        floating: true,
+        alarms: getAlarmsForEvent(event.type, event.title)
+      });
+    });
+    
+    const icsData = calendar.toString();
+    
+    // Generate JSON
+    const jsonData = JSON.stringify({
+      calendar_name: 'Admin Calendar',
+      total_events: allCalendarEvents.length,
+      events: allCalendarEvents
+    }, null, 2);
+
+    // Cache both formats
+    if (redis && cacheEnabled) {
+      try {
+        await redis.setEx('calendar:admin:ics', CACHE_TTL, icsData);
+        await redis.setEx('calendar:admin:json', CACHE_TTL, jsonData);
+        console.log(`💾 Admin calendar regenerated and cached (${allCalendarEvents.length} events)`);
+      } catch (cacheError) {
+        console.error('Redis cache write error:', cacheError);
+      }
+    }
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Admin calendar regenerated successfully',
+      total_events: allCalendarEvents.length,
+      cache_cleared: true,
+      cached_for_seconds: CACHE_TTL
+    });
+
+  } catch (error) {
+    console.error('Admin calendar regen error:', error);
+    res.status(500).json({ 
+      error: 'Error regenerating admin calendar',
+      message: error.message
+    });
+  }
+});
+
 // Admin calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/admin.ics', async (req, res) => {
   return res.redirect(301, '/admin/calendar?format=ics');
