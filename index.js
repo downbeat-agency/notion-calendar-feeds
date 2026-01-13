@@ -2533,7 +2533,7 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
 // Admin calendar subscription page
 app.get('/subscribe/admin', async (req, res) => {
   try {
-    const subscriptionUrl = `https://${req.get('host')}/calendar/admin.ics`;
+    const subscriptionUrl = `https://${req.get('host')}/calendar/admin`;
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -2548,6 +2548,9 @@ app.get('/subscribe/admin', async (req, res) => {
     
     // For web browsers, show a subscription page
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.send(`
 <!DOCTYPE html>
 <html>
