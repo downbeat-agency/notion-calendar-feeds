@@ -2610,13 +2610,13 @@ app.get('/subscribe/admin', async (req, res) => {
 <body>
     <div class="container">
         <div class="header">
-            <h1>Admin Calendar</h1>
+            <h1>Subscribe to Admin Calendar</h1>
             <div class="separator"></div>
             <p class="subtitle">All Upcoming Events</p>
         </div>
         
         <p class="description">
-            Subscribe to the <strong>Admin Calendar</strong> to see all upcoming events in your calendar app.
+            View all upcoming events across all personnel in your calendar app. Includes event details, venues, personnel, general info, and more. Subscribe once and stay organized across all your devices.
         </p>
         
         <!-- Apple Calendar -->
