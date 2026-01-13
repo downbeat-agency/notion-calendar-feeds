@@ -2551,68 +2551,281 @@ app.get('/subscribe/admin', async (req, res) => {
       return res.redirect(302, '/calendar/admin.ics');
     }
     
-    // For web browsers, show a subscription page
+    // For web browsers, show a subscription page with same styling as personal calendars
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    res.send(`
+    
+    // Use the same template as personal calendars but with admin-specific content
+    const adminSubscriptionPage = `
 <!DOCTYPE html>
 <html>
 <head>
     <title>Subscribe to Admin Calendar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        * { box-sizing: border-box; }
+        * {
+            box-sizing: border-box;
+        }
+        
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             margin: 0; 
             padding: 40px 20px; 
-            background: #000; 
+            background: #000000; 
             color: #e0e0e0; 
             min-height: 100vh;
             line-height: 1.6;
         }
-        .container { max-width: 560px; margin: 0 auto; }
-        .header { text-align: center; margin-bottom: 50px; }
-        h1 { color: #fff; margin: 0 0 12px 0; font-size: 2.2rem; font-weight: 500; }
-        .subtitle { color: #888; font-size: 1rem; margin: 0; }
-        .separator { width: 100px; height: 1px; background: #2a2a2a; margin: 16px auto; }
-        .description { color: #999; font-size: 0.95rem; text-align: center; margin: 24px auto 40px; }
-        .calendar-card { background: #141414; border-radius: 12px; padding: 32px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); border: 2px solid #2c2c2c; }
-        .calendar-button { 
-            display: flex; align-items: center; justify-content: center; gap: 16px; 
-            padding: 20px 32px; background: #1a1a1a; border: 2px solid #4a4a4a; 
-            border-radius: 10px; color: #fff; text-decoration: none; font-size: 1.1rem; 
-            font-weight: 500; cursor: pointer; width: 100%; transition: all 0.3s ease;
+        
+        .container { 
+            max-width: 560px; 
+            margin: 0 auto;
         }
-        .calendar-button:hover { background: #222; border-color: #555; transform: translateY(-1px); }
-        .calendar-button img { width: 36px; height: 36px; filter: brightness(0) invert(1); }
-        .steps { margin-top: 24px; padding-top: 24px; border-top: 1px solid #2a2a2a; }
-        .step { display: flex; gap: 16px; margin-bottom: 16px; }
-        .step-number { 
-            flex-shrink: 0; width: 28px; height: 28px; background: #2a2a2a; 
-            color: #fff; border-radius: 50%; display: flex; align-items: center; 
-            justify-content: center; font-weight: 600; font-size: 0.9rem;
+        
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
         }
-        .step-text { flex: 1; color: #bbb; font-size: 0.95rem; }
-        .step-text code { 
-            background: #1a1a1a; padding: 2px 8px; border-radius: 4px; 
-            font-size: 0.85rem; color: #2ecc71; font-family: monospace;
+        
+        h1 { 
+            color: #fff; 
+            margin: 0 0 12px 0; 
+            font-size: 2.2rem; 
+            font-weight: 500;
+            letter-spacing: 0.5px;
         }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1rem;
+            font-weight: 400;
+            margin: 0;
+        }
+        
+        .separator {
+            width: 100px;
+            height: 1px;
+            background: #2a2a2a;
+            margin: 16px auto;
+        }
+        
+        .description {
+            color: #999;
+            font-size: 0.95rem;
+            font-weight: 400;
+            text-align: center;
+            margin: 24px auto 40px auto;
+            max-width: 480px;
+            line-height: 1.5;
+        }
+        
+        .description strong {
+            color: #bbb;
+            font-weight: 600;
+        }
+        
+        .calendar-card {
+            background: #141414;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .calendar-card.primary {
+            border: 2px solid #2c2c2c;
+        }
+        
+        .calendar-card.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+        }
+        
+        .calendar-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 20px 32px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            width: 100%;
+            position: relative;
+        }
+        
+        .calendar-button:hover {
+            background: #222;
+            border-color: #444;
+            transform: translateY(-1px);
+        }
+        
+        .calendar-button:active {
+            transform: translateY(0);
+        }
+        
+        .calendar-button.primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            border-color: #4a4a4a;
+        }
+        
+        .calendar-button img {
+            width: 36px;
+            height: 36px;
+            object-fit: contain;
+        }
+        
+        .calendar-button.primary img {
+            filter: brightness(0) invert(1);
+        }
+        
+        .badge {
+            position: absolute;
+            top: -8px;
+            right: 16px;
+            background: #2ecc71;
+            color: #000;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .steps {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .step {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            align-items: start;
+        }
+        
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        
+        .step-number {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            background: #2a2a2a;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .step-text {
+            color: #b0b0b0;
+            font-size: 0.95rem;
+            padding-top: 4px;
+        }
+        
+        .step-text strong {
+            color: #e0e0e0;
+        }
+        
         .url-box { 
-            background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 8px; 
-            padding: 16px; margin-top: 12px; font-family: monospace; font-size: 0.9rem; 
-            color: #2ecc71; word-break: break-all; cursor: pointer; transition: all 0.2s;
+            background: #0a0a0a; 
+            padding: 16px; 
+            border-radius: 6px; 
+            border: 1px solid #2a2a2a; 
+            margin: 16px 0; 
+            word-break: break-all; 
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #888;
+            font-size: 13px;
+            line-height: 1.5;
+            cursor: pointer;
         }
-        .url-box:hover { background: #111; border-color: #333; }
-        .copy-button { 
-            margin-top: 12px; padding: 12px 24px; background: #1a1a1a; 
-            border: 1px solid #333; border-radius: 6px; color: #fff; 
-            cursor: pointer; font-size: 0.9rem; transition: all 0.2s;
+        
+        .copy-btn { 
+            background: #1a1a1a; 
+            color: #fff; 
+            border: 1px solid #333; 
+            padding: 12px 24px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            width: 100%;
         }
-        .copy-button:hover { background: #222; border-color: #444; }
-        .copy-button.copied { background: #2ecc71; color: #000; border-color: #2ecc71; }
+        
+        .copy-btn:hover { 
+            background: #222; 
+            border-color: #444;
+        }
+        
+        .copy-btn.copied {
+            background: #2ecc71;
+            color: #000;
+            border-color: #2ecc71;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #2ecc71;
+            color: #000;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 20px rgba(46, 204, 113, 0.4);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 20px 16px;
+            }
+            
+            .calendar-card {
+                padding: 24px 20px;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .calendar-button {
+                padding: 18px 24px;
+                font-size: 1rem;
+            }
+            
+            .badge {
+                font-size: 0.65rem;
+                padding: 3px 8px;
+                right: 12px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2620,63 +2833,102 @@ app.get('/subscribe/admin', async (req, res) => {
         <div class="header">
             <h1>Subscribe to Admin Calendar</h1>
             <div class="separator"></div>
-            <p class="subtitle">All Upcoming Events</p>
+            <div class="description">View all upcoming events across all personnel in your calendar app. Includes event details, venues, personnel, general info, and more. Subscribe once and stay organized across all your devices.</div>
         </div>
         
-        <p class="description">
-            View all upcoming events across all personnel in your calendar app. Includes event details, venues, personnel, general info, and more. Subscribe once and stay organized across all your devices.
-        </p>
-        
-        <!-- Apple Calendar -->
-        <div class="calendar-card">
-            <a href="webcal://${req.get('host')}/calendar/admin" class="calendar-button">
-                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM5 8V6h14v2H5z'/%3E%3C/svg%3E" alt="Calendar">
+        <!-- Apple Calendar - Primary -->
+        <div class="calendar-card primary">
+            <a href="webcal://${req.get('host')}/calendar/admin" class="calendar-button primary">
+                <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
                 <span>Subscribe with Apple Calendar</span>
+                <span class="badge">One Click</span>
             </a>
         </div>
         
-        <!-- Google Calendar -->
+        <!-- Google Calendar - Secondary -->
         <div class="calendar-card">
+            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+                <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
+                <span>Subscribe with Google Calendar</span>
+            </button>
+            
             <div class="steps">
-                <h3 style="margin: 0 0 20px 0; color: #fff; font-size: 1.1rem;">Google Calendar</h3>
                 <div class="step">
                     <div class="step-number">1</div>
-                    <div class="step-text">Copy this URL:</div>
+                    <div class="step-text">Click the button above to <strong>copy the URL</strong> and open Google Calendar</div>
                 </div>
-                <div class="url-box" id="urlBox" onclick="copyUrl()">${subscriptionUrl}</div>
-                <button class="copy-button" id="copyBtn" onclick="copyUrl()">Copy URL</button>
-                
-                <div class="step" style="margin-top: 24px;">
+                <div class="step">
                     <div class="step-number">2</div>
-                    <div class="step-text">Open <strong>Google Calendar</strong> → Click <code>+</code> next to "Other calendars"</div>
+                    <div class="step-text">Select <strong>"From URL"</strong> in the left menu</div>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
-                    <div class="step-text">Select <strong>"From URL"</strong> and paste the URL</div>
+                    <div class="step-text">Paste the URL and click <strong>"Add calendar"</strong></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Other Apps - Collapsible -->
+        <div class="calendar-card">
+            <div class="collapsible">
+                <div class="collapsible-header" onclick="toggleCollapsible()">
+                    Other Calendar Apps (Outlook, etc.)
+                </div>
+                <div class="collapsible-content" id="collapsibleContent">
+                    <div class="collapsible-inner">
+                        <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
+                        <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
+                        <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                        <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
+                            <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
+                            <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
     
+    <div class="toast" id="toast">✓ URL copied to clipboard!</div>
+    
     <script>
+        function copyAndOpenGoogle() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+                setTimeout(() => {
+                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
+                }, 300);
+            });
+        }
+        
         function copyUrl() {
             const url = '${subscriptionUrl}';
-            const btn = document.getElementById('copyBtn');
-            
             navigator.clipboard.writeText(url).then(() => {
-                btn.textContent = 'Copied!';
-                btn.classList.add('copied');
-                
-                setTimeout(() => {
-                    btn.textContent = 'Copy URL';
-                    btn.classList.remove('copied');
-                }, 2000);
+                showToast();
             });
+        }
+        
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+        
+        function toggleCollapsible() {
+            const header = event.currentTarget;
+            const content = document.getElementById('collapsibleContent');
+            header.classList.toggle('active');
+            content.classList.toggle('active');
         }
     </script>
 </body>
 </html>
-    `);
+    `;
+    
+    res.send(adminSubscriptionPage);
   } catch (error) {
     console.error('Error loading admin subscription page:', error);
     res.status(500).json({ error: 'Error loading subscription page' });
