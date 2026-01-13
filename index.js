@@ -126,6 +126,7 @@ app.use(express.static('public'));
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
+const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 
 // Cache TTL in seconds (8 minutes for 5-minute background refresh cycle)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
@@ -1702,6 +1703,121 @@ function startBackgroundJob() {
   }, 5 * 60 * 1000); // 5 minutes
 }
 
+// ============================================
+// ADMIN CALENDAR FUNCTIONS
+// ============================================
+
+// Helper function to get admin calendar data by page ID
+async function getAdminCalendarData() {
+  if (!ADMIN_CALENDAR_PAGE_ID) {
+    throw new Error('ADMIN_CALENDAR_PAGE_ID not configured');
+  }
+
+  // Format the page ID properly (add dashes if needed)
+  let pageId = ADMIN_CALENDAR_PAGE_ID;
+  if (pageId.length === 32 && !pageId.includes('-')) {
+    pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
+
+  // Fetch the page directly by ID
+  const page = await retryNotionCall(() => 
+    notion.pages.retrieve({ page_id: pageId })
+  );
+
+  // Extract Admin Events property
+  const adminEventsString = page.properties['Admin Events']?.formula?.string || 
+                            page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
+                            '[]';
+
+  try {
+    const adminEvents = JSON.parse(adminEventsString);
+    return Array.isArray(adminEvents) ? adminEvents : [];
+  } catch (e) {
+    console.error('Error parsing Admin Events JSON:', adminEventsString?.substring(0, 100));
+    throw new Error(`Admin Events JSON parse error: ${e.message}`);
+  }
+}
+
+// Helper function to process admin events into calendar format
+function processAdminEvents(eventsArray) {
+  const allCalendarEvents = [];
+
+  eventsArray.forEach(event => {
+    // Process main events (same logic as existing main_event processing)
+    if (event.event_name && event.event_date) {
+      let eventTimes = parseUnifiedDateTime(event.event_date);
+      
+      if (eventTimes) {
+        // Build payroll info for description (put at TOP)
+        let payrollInfo = '';
+        
+        if (event.position || event.pay_total || event.assignments) {
+          if (event.position) {
+            payrollInfo += `Position: ${event.position}\n`;
+          }
+          if (event.pay_total) {
+            payrollInfo += `Pay: ${event.pay_total}\n`;
+          }
+          if (event.assignments) {
+            payrollInfo += `Assignments: ${event.assignments}\n`;
+          }
+          payrollInfo += '\n---\n\n';
+        }
+
+        // Build description sections
+        let description = payrollInfo; // Payroll info at top
+        
+        // Calltime
+        if (event.calltime) {
+          description += `🕐 Calltime: ${event.calltime}\n`;
+        }
+        
+        // Gear
+        if (event.gear) {
+          description += `🎸 Gear: ${event.gear}\n`;
+        }
+        
+        // Personnel
+        if (event.event_personnel && Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
+          description += `\n👥 Personnel:\n`;
+          event.event_personnel.forEach(person => {
+            description += `  • ${person}\n`;
+          });
+        }
+        
+        // Notion URL at the bottom
+        if (event.notion_url) {
+          description += `\n🔗 ${event.notion_url}`;
+        }
+
+        let title = event.event_name;
+        
+        // Add guitar emoji for gigs
+        if (title && (
+          title.toLowerCase().includes('gig') ||
+          title.toLowerCase().includes('show') ||
+          title.toLowerCase().includes('performance') ||
+          title.toLowerCase().includes('concert')
+        )) {
+          title = `🎸 ${title}`;
+        }
+
+        allCalendarEvents.push({
+          start: eventTimes.start,
+          end: eventTimes.end,
+          title: title,
+          description: description.trim(),
+          location: event.venue || '',
+          url: event.notion_url || '',
+          type: 'main_event'
+        });
+      }
+    }
+  });
+
+  return allCalendarEvents;
+}
+
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
@@ -2802,6 +2918,172 @@ app.get('/subscribe/:personId', async (req, res) => {
   } catch (error) {
     console.error('Subscription page error:', error);
     res.status(500).json({ error: 'Error loading subscription page' });
+  }
+});
+
+// ============================================
+// ADMIN CALENDAR ENDPOINT
+// ============================================
+app.get('/admin/calendar', async (req, res) => {
+  try {
+    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const forceFresh = req.query.fresh === 'true';
+    const cacheKey = `calendar:admin:${format}`;
+    
+    // Check cache first (unless fresh requested)
+    if (redis && cacheEnabled && !forceFresh) {
+      try {
+        const cachedData = await redis.get(cacheKey);
+        if (cachedData) {
+          console.log(`✅ Cache HIT for admin calendar (${format.toUpperCase()})`);
+          
+          if (format === 'json') {
+            res.setHeader('Content-Type', 'application/json');
+            return res.send(cachedData);
+          } else {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
+            return res.send(cachedData);
+          }
+        }
+        console.log(`❌ Cache MISS for admin calendar (${format.toUpperCase()})`);
+      } catch (cacheError) {
+        console.error('Redis cache error:', cacheError);
+      }
+    }
+    
+    // Check if admin calendar is configured
+    if (!ADMIN_CALENDAR_PAGE_ID) {
+      const errorMsg = { 
+        error: 'Admin calendar not configured',
+        message: 'ADMIN_CALENDAR_PAGE_ID environment variable not set'
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        // Return empty calendar for calendar apps
+        const emptyCalendar = ical({ 
+          name: 'Admin Calendar',
+          description: 'Admin calendar not configured'
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(emptyCalendar.toString());
+      }
+    }
+    
+    // Fetch admin calendar data
+    let adminEvents;
+    try {
+      adminEvents = await getAdminCalendarData();
+      
+      if (!adminEvents || adminEvents.length === 0) {
+        const noEventsMsg = {
+          error: 'No events found',
+          message: 'Admin Events property is empty or contains no events'
+        };
+        
+        if (format === 'json') {
+          return res.status(404).json(noEventsMsg);
+        } else {
+          const emptyCalendar = ical({ 
+            name: 'Admin Calendar',
+            description: 'No events found'
+          });
+          res.setHeader('Content-Type', 'text/calendar');
+          return res.send(emptyCalendar.toString());
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching admin calendar data:', error);
+      
+      const errorMsg = {
+        error: 'Error fetching admin calendar data',
+        message: error.message
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        const errorCalendar = ical({ 
+          name: 'Admin Calendar',
+          description: `Error: ${error.message}`
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(errorCalendar.toString());
+      }
+    }
+    
+    // Process events
+    const allCalendarEvents = processAdminEvents(adminEvents);
+    
+    // Return based on format
+    if (format === 'json') {
+      const jsonData = JSON.stringify({
+        calendar_name: 'Admin Calendar',
+        total_events: allCalendarEvents.length,
+        events: allCalendarEvents
+      }, null, 2);
+      
+      // Cache the JSON
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
+          console.log(`💾 Cached admin calendar JSON (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(jsonData);
+    } else {
+      // Generate ICS
+      const calendar = ical({ 
+        name: 'Admin Calendar',
+        description: 'All upcoming events',
+        ttl: 300
+      });
+      
+      allCalendarEvents.forEach(event => {
+        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+        
+        calendar.createEvent({
+          start: startDate,
+          end: endDate,
+          summary: event.title,
+          description: event.description,
+          location: event.location,
+          url: event.url || '',
+          floating: true,
+          alarms: getAlarmsForEvent(event.type, event.title)
+        });
+      });
+      
+      const icsData = calendar.toString();
+      
+      // Cache the ICS
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, icsData);
+          console.log(`💾 Cached admin calendar ICS (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'text/calendar');
+      res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
+      return res.send(icsData);
+    }
+    
+  } catch (error) {
+    console.error('Admin calendar error:', error);
+    res.status(500).json({ 
+      error: 'Error generating admin calendar',
+      message: error.message
+    });
   }
 });
 
