@@ -2208,8 +2208,8 @@ function processTravelEvents(travelGroupsArray) {
               location = hotel.hotel_name;
             }
 
-            // URL: prefer notion_url, fallback to Google Maps, then Apple Maps
-            const url = hotel.notion_url || hotel.hotel_google_maps || hotel.hotel_apple_maps || '';
+            // URL: always use notion_url if available (maps links are in description, not URL field)
+            const url = hotel.notion_url || '';
 
             allCalendarEvents.push({
               start: checkIn,
@@ -2247,8 +2247,8 @@ function processTravelEvents(travelGroupsArray) {
               location = hotel.hotel_name;
             }
 
-            // URL: prefer notion_url, fallback to Google Maps, then Apple Maps
-            const url = hotel.notion_url || hotel.hotel_google_maps || hotel.hotel_apple_maps || '';
+            // URL: always use notion_url if available (maps links are in description, not URL field)
+            const url = hotel.notion_url || '';
 
             allCalendarEvents.push({
               start: checkOut,
