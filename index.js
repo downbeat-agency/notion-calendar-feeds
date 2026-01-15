@@ -2041,13 +2041,16 @@ function processTravelEvents(travelGroupsArray) {
               ? `${flight.departure_from} (${flight.departure_from_city})`
               : flight.departure_from || '';
 
+            // URL: use notion_url if available
+            const url = flight.notion_url || '';
+
             allCalendarEvents.push({
               start: depStart,
               end: depEnd,
               title: title,
               description: description.trim(),
               location: location,
-              url: '',
+              url: url,
               type: 'flight_departure'
             });
           }
@@ -2094,13 +2097,16 @@ function processTravelEvents(travelGroupsArray) {
               ? `${flight.return_from} (${flight.return_from_city})`
               : flight.return_from || '';
 
+            // URL: use notion_url if available
+            const url = flight.notion_url || '';
+
             allCalendarEvents.push({
               start: retStart,
               end: retEnd,
               title: title,
               description: description.trim(),
               location: location,
-              url: '',
+              url: url,
               type: 'flight_return'
             });
           }
@@ -2258,14 +2264,89 @@ function processTravelEvents(travelGroupsArray) {
       });
     }
 
-    // Process ground transportation (if it has date fields)
+    // Process ground transportation
     if (travelGroup.ground_transportation && Array.isArray(travelGroup.ground_transportation)) {
       travelGroup.ground_transportation.forEach(transport => {
-        // Add ground transportation events if they have date/time fields
-        // Adjust based on actual structure of ground_transportation objects
-        if (transport.date || transport.time || transport.pickup_time) {
-          // Implementation depends on actual structure
-          // For now, skip if structure is unknown
+        // Pickup event
+        if (transport.pickup_time) {
+          const pickupTime = new Date(transport.pickup_time);
+          if (!isNaN(pickupTime.getTime())) {
+            let description = '';
+            
+            if (transport.transportation_name) {
+              description += `🚗 ${transport.transportation_name}\n`;
+            }
+            
+            if (transport.pickup_name) {
+              description += `Pickup: ${transport.pickup_name}\n`;
+            }
+            
+            if (transport.confirmation) {
+              description += `\n📋 Confirmation: ${transport.confirmation}\n`;
+            }
+            
+            if (transport.pickup_address) {
+              description += `\n📍 ${transport.pickup_address}`;
+            }
+            
+            if (transport.pickup_address_apple) {
+              description += `\n🗺️ Apple Maps: ${transport.pickup_address_apple}`;
+            }
+            
+            if (transport.pickup_address_google) {
+              description += `\n🗺️ Google Maps: ${transport.pickup_address_google}`;
+            }
+
+            const location = transport.pickup_name || transport.pickup_address || '';
+            const url = transport.notion_url || transport.pickup_address_google || transport.pickup_address_apple || '';
+
+            allCalendarEvents.push({
+              start: pickupTime,
+              end: new Date(pickupTime.getTime() + 30 * 60 * 1000), // 30 minute event
+              title: transport.transportation_name || `Transportation Pickup: ${transport.pickup_name || 'Pickup'}`,
+              description: description.trim(),
+              location: location,
+              url: url,
+              type: 'transportation_pickup'
+            });
+          }
+        }
+
+        // Drop-off event
+        if (transport.drop_off_time) {
+          const dropOffTime = new Date(transport.drop_off_time);
+          if (!isNaN(dropOffTime.getTime())) {
+            let description = '';
+            
+            if (transport.transportation_name) {
+              description += `🚗 ${transport.transportation_name} - Drop-off\n`;
+            }
+            
+            if (transport.drop_off_name) {
+              description += `Drop-off: ${transport.drop_off_name}\n`;
+            }
+            
+            if (transport.confirmation) {
+              description += `\n📋 Confirmation: ${transport.confirmation}\n`;
+            }
+            
+            if (transport.drop_off_address) {
+              description += `\n📍 ${transport.drop_off_address}`;
+            }
+
+            const location = transport.drop_off_name || transport.drop_off_address || '';
+            const url = transport.notion_url || '';
+
+            allCalendarEvents.push({
+              start: dropOffTime,
+              end: new Date(dropOffTime.getTime() + 30 * 60 * 1000), // 30 minute event
+              title: transport.transportation_name ? `${transport.transportation_name} - Drop-off` : `Transportation Drop-off: ${transport.drop_off_name || 'Drop-off'}`,
+              description: description.trim(),
+              location: location,
+              url: url,
+              type: 'transportation_dropoff'
+            });
+          }
         }
       });
     }
