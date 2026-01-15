@@ -2023,7 +2023,12 @@ async function getTravelCalendarData() {
   
   // Fix malformed arrays where "personnel_ids" appears as a key inside the personnel array
   // Pattern: ["Name1","Name2","personnel_ids":[...] should become ["Name1","Name2"]
-  travelEventsString = travelEventsString.replace(/("personnel":\[[^\]]*)"personnel_ids":/g, '$1');
+  // This handles cases where personnel_ids key appears inside the personnel array
+  travelEventsString = travelEventsString.replace(/"personnel":\[([^\]]*)"personnel_ids":/g, (match, personnelList) => {
+    // Remove any trailing commas from personnel list
+    const cleaned = personnelList.replace(/,\s*$/, '');
+    return `"personnel":[${cleaned}]`;
+  });
 
   try {
     const travelEvents = JSON.parse(travelEventsString);
