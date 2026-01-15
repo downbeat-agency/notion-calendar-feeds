@@ -2068,7 +2068,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               flight.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
@@ -2133,7 +2133,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               flight.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
@@ -2221,7 +2221,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               hotel.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
@@ -2307,7 +2307,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               hotel.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
@@ -2366,7 +2366,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               transport.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
@@ -2422,7 +2422,7 @@ function processTravelEvents(travelGroupsArray) {
             
             // Personnel
             if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
-              description += `\nPersonnel:\n`;
+              description += `\n👥 Personnel:\n`;
               transport.personnel.forEach(person => {
                 // Filter out "personnel_ids" if it somehow got into the array
                 if (person && typeof person === 'string' && person !== 'personnel_ids') {
