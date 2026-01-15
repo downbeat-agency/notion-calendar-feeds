@@ -1977,6 +1977,9 @@ async function getTravelCalendarData() {
     }
   }
 
+  // Fix double commas (common JSON formatting issue)
+  travelEventsString = travelEventsString.replace(/,,+/g, ',');
+
   try {
     const travelEvents = JSON.parse(travelEventsString);
     return Array.isArray(travelEvents) ? travelEvents : [];
@@ -1989,61 +1992,218 @@ async function getTravelCalendarData() {
 }
 
 // Helper function to process travel events into calendar format
-function processTravelEvents(eventsArray) {
+function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
 
-  eventsArray.forEach(event => {
-    if (event.event_name && event.event_date) {
-      let eventTimes = parseUnifiedDateTime(event.event_date);
-      
-      if (eventTimes) {
-        // Build description
-        let description = '';
-        
-        // Personnel (handle both string and array formats)
-        if (event.event_personnel) {
-          if (typeof event.event_personnel === 'string') {
-            description += `👥 Personnel:\n${event.event_personnel}\n`;
-          } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
-            description += `\n👥 Personnel:\n`;
-            event.event_personnel.forEach(person => {
-              description += `  • ${person}\n`;
+  // Each element is a travel group with flights, hotels, and ground_transportation
+  travelGroupsArray.forEach(travelGroup => {
+    // Process flights
+    if (travelGroup.flights && Array.isArray(travelGroup.flights)) {
+      travelGroup.flights.forEach(flight => {
+        // Departure flight
+        if (flight.departure_time && flight.departure_arrival_time) {
+          const depStart = new Date(flight.departure_time);
+          const depEnd = new Date(flight.departure_arrival_time);
+          
+          if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
+            let description = '';
+            
+            if (flight.departure_name) {
+              description += `✈️ ${flight.departure_name}\n`;
+            }
+            
+            if (flight.departure_airline && flight.departure_flightnumber) {
+              description += `Airline: ${flight.departure_airline} ${flight.departure_flightnumber}\n`;
+            }
+            
+            if (flight.departure_from_city && flight.departure_to_city) {
+              description += `Route: ${flight.departure_from_city} → ${flight.departure_to_city}\n`;
+            } else if (flight.departure_from && flight.departure_to) {
+              description += `Route: ${flight.departure_from} → ${flight.departure_to}\n`;
+            }
+            
+            if (flight.confirmation) {
+              description += `Confirmation: ${flight.confirmation}\n`;
+            }
+            
+            if (flight.flight_status) {
+              description += `Status: ${flight.flight_status}\n`;
+            }
+
+            const location = flight.departure_from_city 
+              ? `${flight.departure_from} (${flight.departure_from_city})`
+              : flight.departure_from || '';
+
+            allCalendarEvents.push({
+              start: depStart,
+              end: depEnd,
+              title: flight.departure_name || `Flight: ${flight.departure_from} → ${flight.departure_to}`,
+              description: description.trim(),
+              location: location,
+              url: '',
+              type: 'flight_departure'
             });
           }
         }
-        
-        // General Info / Notes
-        if (event.general_info) {
-          description += `\n📋 General Info:\n${event.general_info}\n`;
+
+        // Return flight
+        if (flight.return_time && flight.return_arrival_time) {
+          const retStart = new Date(flight.return_time);
+          const retEnd = new Date(flight.return_arrival_time);
+          
+          if (!isNaN(retStart.getTime()) && !isNaN(retEnd.getTime())) {
+            let description = '';
+            
+            if (flight.return_name) {
+              description += `✈️ ${flight.return_name}\n`;
+            }
+            
+            if (flight.return_airline && flight.return_flightnumber) {
+              description += `Airline: ${flight.return_airline} ${flight.return_flightnumber}\n`;
+            }
+            
+            if (flight.return_from_city && flight.return_to_city) {
+              description += `Route: ${flight.return_from_city} → ${flight.return_to_city}\n`;
+            } else if (flight.return_from && flight.return_to) {
+              description += `Route: ${flight.return_from} → ${flight.return_to}\n`;
+            }
+            
+            if (flight.return_confirmation) {
+              description += `Confirmation: ${flight.return_confirmation}\n`;
+            } else if (flight.confirmation) {
+              description += `Confirmation: ${flight.confirmation}\n`;
+            }
+            
+            if (flight.flight_status) {
+              description += `Status: ${flight.flight_status}\n`;
+            }
+
+            const location = flight.return_from_city 
+              ? `${flight.return_from} (${flight.return_from_city})`
+              : flight.return_from || '';
+
+            allCalendarEvents.push({
+              start: retStart,
+              end: retEnd,
+              title: flight.return_name || `Flight Return: ${flight.return_from} → ${flight.return_to}`,
+              description: description.trim(),
+              location: location,
+              url: '',
+              type: 'flight_return'
+            });
+          }
         }
-        
-        // Notion URL at the bottom
-        if (event.notion_url) {
-          description += `\n🔗 ${event.notion_url}`;
+      });
+    }
+
+    // Process hotels
+    if (travelGroup.hotels && Array.isArray(travelGroup.hotels)) {
+      travelGroup.hotels.forEach(hotel => {
+        // Hotel check-in
+        if (hotel.check_in) {
+          const checkIn = new Date(hotel.check_in);
+          if (!isNaN(checkIn.getTime())) {
+            let description = '';
+            
+            if (hotel.title) {
+              description += `🏨 ${hotel.title}\n`;
+            }
+            
+            if (hotel.hotel_name) {
+              description += `Hotel: ${hotel.hotel_name}\n`;
+            }
+            
+            if (hotel.confirmation) {
+              description += `Confirmation: ${hotel.confirmation}\n`;
+            }
+            
+            if (hotel.name_under_reservation) {
+              description += `Reservation Name: ${hotel.name_under_reservation}\n`;
+            }
+            
+            if (hotel.hotel_phone) {
+              description += `Phone: ${hotel.hotel_phone}\n`;
+            }
+            
+            if (hotel.check_out) {
+              const checkOut = new Date(hotel.check_out);
+              if (!isNaN(checkOut.getTime())) {
+                const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+                description += `Check-out: ${checkOut.toLocaleDateString()}\n`;
+                description += `Duration: ${nights} night${nights !== 1 ? 's' : ''}\n`;
+              }
+            }
+            
+            if (hotel.hotel_address) {
+              description += `\n📍 ${hotel.hotel_address}`;
+            }
+            
+            if (hotel.hotel_apple_maps) {
+              description += `\n🗺️ Apple Maps: ${hotel.hotel_apple_maps}`;
+            }
+            
+            if (hotel.hotel_google_maps) {
+              description += `\n🗺️ Google Maps: ${hotel.hotel_google_maps}`;
+            }
+
+            allCalendarEvents.push({
+              start: checkIn,
+              end: hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000),
+              title: hotel.title || `Hotel Check-in: ${hotel.hotel_name || 'Hotel'}`,
+              description: description.trim(),
+              location: hotel.hotel_address || hotel.hotel_name || '',
+              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              type: 'hotel_checkin'
+            });
+          }
         }
 
-        let title = event.event_name;
+        // Hotel check-out
+        if (hotel.check_out) {
+          const checkOut = new Date(hotel.check_out);
+          if (!isNaN(checkOut.getTime())) {
+            let description = '';
+            
+            if (hotel.title) {
+              description += `🏨 ${hotel.title} - Check-out\n`;
+            }
+            
+            if (hotel.hotel_name) {
+              description += `Hotel: ${hotel.hotel_name}\n`;
+            }
+            
+            if (hotel.confirmation) {
+              description += `Confirmation: ${hotel.confirmation}\n`;
+            }
+            
+            if (hotel.hotel_address) {
+              description += `\n📍 ${hotel.hotel_address}`;
+            }
 
-        // Build location from venue and venue_address
-        let location = '';
-        if (event.venue && event.venue_address) {
-          location = `${event.venue}, ${event.venue_address}`;
-        } else if (event.venue_address) {
-          location = event.venue_address;
-        } else if (event.venue) {
-          location = event.venue;
+            allCalendarEvents.push({
+              start: checkOut,
+              end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
+              title: hotel.title ? `${hotel.title} - Check-out` : `Hotel Check-out: ${hotel.hotel_name || 'Hotel'}`,
+              description: description.trim(),
+              location: hotel.hotel_address || hotel.hotel_name || '',
+              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              type: 'hotel_checkout'
+            });
+          }
         }
+      });
+    }
 
-        allCalendarEvents.push({
-          start: eventTimes.start,
-          end: eventTimes.end,
-          title: title,
-          description: description.trim(),
-          location: location,
-          url: event.notion_url || '',
-          type: 'main_event'
-        });
-      }
+    // Process ground transportation (if it has date fields)
+    if (travelGroup.ground_transportation && Array.isArray(travelGroup.ground_transportation)) {
+      travelGroup.ground_transportation.forEach(transport => {
+        // Add ground transportation events if they have date/time fields
+        // Adjust based on actual structure of ground_transportation objects
+        if (transport.date || transport.time || transport.pickup_time) {
+          // Implementation depends on actual structure
+          // For now, skip if structure is unknown
+        }
+      });
     }
   });
 
