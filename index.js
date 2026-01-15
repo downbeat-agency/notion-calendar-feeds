@@ -128,6 +128,7 @@ const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
+const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
 
 // Cache TTL in seconds (8 minutes for 5-minute background refresh cycle)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
@@ -1795,8 +1796,49 @@ function startBackgroundJob() {
         }
       }
       
+      // Also refresh blockout calendar
+      if (BLOCKOUT_CALENDAR_PAGE_ID && redis && cacheEnabled) {
+        try {
+          console.log('🔄 Refreshing blockout calendar...');
+          const blockoutEvents = await getBlockoutCalendarData();
+          if (blockoutEvents && blockoutEvents.length > 0) {
+            const allCalendarEvents = processBlockoutEvents(blockoutEvents);
+            const calendar = ical({ 
+              name: 'Blockout Calendar',
+              description: 'All blockout events',
+              ttl: 300
+            });
+            allCalendarEvents.forEach(event => {
+              const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+              const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+              calendar.createEvent({
+                start: startDate,
+                end: endDate,
+                summary: event.title,
+                description: event.description,
+                location: event.location,
+                url: event.url || '',
+                floating: true,
+                alarms: getAlarmsForEvent(event.type, event.title)
+              });
+            });
+            const icsData = calendar.toString();
+            await redis.setEx('calendar:blockout:ics', CACHE_TTL, icsData);
+            const jsonData = JSON.stringify({
+              calendar_name: 'Blockout Calendar',
+              total_events: allCalendarEvents.length,
+              events: allCalendarEvents
+            }, null, 2);
+            await redis.setEx('calendar:blockout:json', CACHE_TTL, jsonData);
+            console.log(`✅ Blockout calendar cached (${allCalendarEvents.length} events)`);
+          }
+        } catch (blockoutError) {
+          console.error('⚠️  Blockout calendar refresh failed:', blockoutError.message);
+        }
+      }
+      
       const jobTime = Math.round((Date.now() - jobStart) / 1000);
-      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar + travel calendar)`);
+      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar + travel calendar + blockout calendar)`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
@@ -2349,6 +2391,104 @@ function processTravelEvents(travelGroupsArray) {
           }
         }
       });
+    }
+  });
+
+  return allCalendarEvents;
+}
+
+// ============================================
+// BLOCKOUT CALENDAR FUNCTIONS
+// ============================================
+
+// Helper function to get blockout calendar data by page ID
+async function getBlockoutCalendarData() {
+  if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+    throw new Error('BLOCKOUT_CALENDAR_PAGE_ID not configured');
+  }
+
+  // Format the page ID properly (add dashes if needed)
+  let pageId = BLOCKOUT_CALENDAR_PAGE_ID;
+  if (pageId.length === 32 && !pageId.includes('-')) {
+    pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
+
+  // Fetch the page and extract Blockout Admin property
+  const page = await retryNotionCall(() => 
+    notion.pages.retrieve({ page_id: pageId })
+  );
+
+  // Extract Blockout Admin property
+  let blockoutEventsString = page.properties['Blockout Admin']?.formula?.string || 
+                            page.properties['Blockout Admin']?.rich_text?.[0]?.text?.content ||
+                            '[]';
+
+  // Clean the string - remove any leading/trailing whitespace
+  blockoutEventsString = blockoutEventsString.trim();
+
+  // Try to extract JSON if there's extra text (look for first [ and last ])
+  if (blockoutEventsString.includes('[') && blockoutEventsString.includes(']')) {
+    const firstBracket = blockoutEventsString.indexOf('[');
+    const lastBracket = blockoutEventsString.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      blockoutEventsString = blockoutEventsString.substring(firstBracket, lastBracket + 1);
+    }
+  }
+
+  // Fix double commas (common JSON formatting issue)
+  blockoutEventsString = blockoutEventsString.replace(/,,+/g, ',');
+
+  try {
+    const blockoutEvents = JSON.parse(blockoutEventsString);
+    return Array.isArray(blockoutEvents) ? blockoutEvents : [];
+  } catch (e) {
+    console.error('Error parsing Blockout Admin JSON. First 200 chars:', blockoutEventsString?.substring(0, 200));
+    console.error('Full length:', blockoutEventsString?.length);
+    console.error('Parse error:', e.message);
+    throw new Error(`Blockout Admin JSON parse error: ${e.message}. First 200 chars: ${blockoutEventsString?.substring(0, 200)}`);
+  }
+}
+
+// Helper function to process blockout events into calendar format
+// Note: This will need to be adjusted based on the actual data structure
+function processBlockoutEvents(eventsArray) {
+  const allCalendarEvents = [];
+
+  // For now, assuming similar structure to travel calendar
+  // This will need to be updated once we see the actual data structure
+  eventsArray.forEach(event => {
+    // If it's a simple event with event_name and event_date (like admin calendar)
+    if (event.event_name && event.event_date) {
+      let eventTimes = parseUnifiedDateTime(event.event_date);
+      
+      if (eventTimes) {
+        let description = '';
+        
+        // Add event details if available
+        if (event.description) {
+          description += `${event.description}\n`;
+        }
+        
+        if (event.notion_url) {
+          description += `\n🔗 ${event.notion_url}`;
+        }
+
+        allCalendarEvents.push({
+          start: eventTimes.start,
+          end: eventTimes.end,
+          title: event.event_name,
+          description: description.trim(),
+          location: event.location || event.venue || '',
+          url: event.notion_url || '',
+          type: 'blockout_event'
+        });
+      }
+    }
+    // If it's a travel-like structure with flights, hotels, etc.
+    else if (event.flights || event.hotels || event.ground_transportation) {
+      // Use the same processing as travel calendar
+      const travelEvents = processTravelEvents([event]);
+      allCalendarEvents.push(...travelEvents);
     }
   });
 
@@ -3861,6 +4001,357 @@ app.get('/subscribe/travel', async (req, res) => {
   }
 });
 
+// Blockout calendar subscription page
+app.get('/subscribe/blockout', async (req, res) => {
+  // Redirect if URL has extra characters (malformed URL)
+  const originalPath = decodeURIComponent(req.originalUrl.split('?')[0]);
+  if (originalPath !== '/subscribe/blockout' && originalPath.startsWith('/subscribe/blockout')) {
+    return res.redirect(301, '/subscribe/blockout');
+  }
+  try {
+    const subscriptionUrl = `https://${req.get('host')}/calendar/blockout`;
+    
+    // Check if this is a calendar app request
+    const userAgent = req.headers['user-agent'] || '';
+    const isCalendarApp = userAgent.toLowerCase().includes('calendar') || 
+                         userAgent.toLowerCase().includes('caldav') ||
+                         req.headers.accept?.includes('text/calendar');
+    
+    if (isCalendarApp) {
+      // Redirect calendar apps directly to the calendar feed
+      return res.redirect(302, '/calendar/blockout.ics');
+    }
+    
+    // For web browsers, show a subscription page
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Use the same template as travel calendar but with blockout-specific content
+    const blockoutSubscriptionPage = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Subscribe to Blockout Calendar</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            padding: 40px 20px; 
+            background: #000000; 
+            color: #e0e0e0; 
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .container { 
+            max-width: 560px; 
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        
+        h1 { 
+            color: #fff; 
+            margin: 0 0 12px 0; 
+            font-size: 2.2rem; 
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        
+        .separator {
+            width: 100px;
+            height: 1px;
+            background: #2a2a2a;
+            margin: 16px auto;
+        }
+        
+        .description {
+            color: #999;
+            font-size: 0.95rem;
+            font-weight: 400;
+            text-align: center;
+            margin: 24px auto 40px auto;
+            max-width: 480px;
+            line-height: 1.5;
+        }
+        
+        .calendar-card {
+            background: #141414;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        
+        .calendar-card.primary {
+            border: 2px solid #2c2c2c;
+        }
+        
+        .calendar-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 20px 32px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            width: 100%;
+            position: relative;
+        }
+        
+        .calendar-button:hover {
+            background: #222;
+            border-color: #444;
+        }
+        
+        .calendar-button.primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            border-color: #4a4a4a;
+        }
+        
+        .calendar-button img {
+            width: 36px;
+            height: 36px;
+            object-fit: contain;
+        }
+        
+        .badge {
+            position: absolute;
+            top: -8px;
+            right: 16px;
+            background: #2ecc71;
+            color: #000;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .steps {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .step {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            align-items: start;
+        }
+        
+        .step-number {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            background: #2a2a2a;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .step-text {
+            color: #b0b0b0;
+            font-size: 0.95rem;
+            padding-top: 4px;
+        }
+        
+        .collapsible-header {
+            background: transparent;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 16px 20px;
+            color: #888;
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        
+        .collapsible-header:hover {
+            background: #141414;
+            color: #b0b0b0;
+        }
+        
+        .url-box { 
+            background: #0a0a0a; 
+            padding: 16px; 
+            border-radius: 6px; 
+            border: 1px solid #2a2a2a; 
+            margin: 16px 0; 
+            word-break: break-all; 
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #888;
+            font-size: 13px;
+        }
+        
+        .copy-btn { 
+            background: #1a1a1a; 
+            color: #fff; 
+            border: 1px solid #333; 
+            padding: 12px 24px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 0.95rem;
+            width: 100%;
+            font-weight: 500;
+        }
+        
+        .copy-btn:hover { 
+            background: #222; 
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #2ecc71;
+            color: #000;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 500;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Subscribe to Blockout Calendar</h1>
+            <div class="separator"></div>
+            <div class="description">View all blockout events in your calendar app. Subscribe once and stay organized across all your devices.</div>
+        </div>
+        
+        <!-- Apple Calendar - Primary -->
+        <div class="calendar-card primary">
+            <a href="webcal://${req.get('host')}/calendar/blockout" class="calendar-button primary">
+                <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
+                <span>Subscribe with Apple Calendar</span>
+                <span class="badge">One Click</span>
+            </a>
+        </div>
+        
+        <!-- Google Calendar - Secondary -->
+        <div class="calendar-card">
+            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+                <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
+                <span>Subscribe with Google Calendar</span>
+            </button>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-text">Click the button above to <strong>copy the URL</strong> and open Google Calendar</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-text">Select <strong>"From URL"</strong> in the left menu</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-text">Paste the URL and click <strong>"Add calendar"</strong></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Other Apps - Collapsible -->
+        <div class="calendar-card">
+            <div class="collapsible-header" onclick="toggleCollapsible()">
+                Other Calendar Apps (Outlook, etc.)
+            </div>
+            <div class="collapsible-content" id="collapsibleContent" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
+                <div style="padding: 24px; background: #0a0a0a; border: 1px solid #2a2a2a; border-top: none; border-radius: 0 0 8px 8px; margin-top: -8px;">
+                    <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
+                    <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
+                    <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                    <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
+                        <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
+                        <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast" id="toast">✓ URL copied to clipboard!</div>
+    
+    <script>
+        function copyAndOpenGoogle() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+                setTimeout(() => {
+                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
+                }, 300);
+            });
+        }
+        
+        function copyUrl() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+            });
+        }
+        
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+        
+        function toggleCollapsible() {
+            const content = document.getElementById('collapsibleContent');
+            if (content.style.maxHeight === '0px' || !content.style.maxHeight) {
+                content.style.maxHeight = '500px';
+            } else {
+                content.style.maxHeight = '0px';
+            }
+        }
+    </script>
+</body>
+</html>
+    `;
+    
+    res.send(blockoutSubscriptionPage);
+  } catch (error) {
+    console.error('Error loading blockout subscription page:', error);
+    res.status(500).json({ error: 'Error loading subscription page' });
+  }
+});
+
 app.get('/subscribe/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
@@ -4855,6 +5346,282 @@ app.get('/travel/calendar/regen', async (req, res) => {
   }
 });
 
+// ============================================
+// BLOCKOUT CALENDAR ENDPOINTS
+// ============================================
+
+app.get('/blockout/calendar', async (req, res) => {
+  try {
+    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const forceFresh = req.query.fresh === 'true';
+    const cacheKey = `calendar:blockout:${format}`;
+    
+    // Check cache first (unless fresh requested)
+    if (redis && cacheEnabled && !forceFresh) {
+      try {
+        const cachedData = await redis.get(cacheKey);
+        if (cachedData) {
+          console.log(`✅ Cache HIT for blockout calendar (${format.toUpperCase()})`);
+          
+          if (format === 'json') {
+            res.setHeader('Content-Type', 'application/json');
+            return res.send(cachedData);
+          } else {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
+            return res.send(cachedData);
+          }
+        }
+        console.log(`❌ Cache MISS for blockout calendar (${format.toUpperCase()})`);
+      } catch (cacheError) {
+        console.error('Redis cache error:', cacheError);
+      }
+    }
+    
+    // Check if blockout calendar is configured
+    if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+      const errorMsg = { 
+        error: 'Blockout calendar not configured',
+        message: 'BLOCKOUT_CALENDAR_PAGE_ID environment variable not set'
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        // Return empty calendar for calendar apps
+        const emptyCalendar = ical({ 
+          name: 'Blockout Calendar',
+          description: 'Blockout calendar not configured'
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(emptyCalendar.toString());
+      }
+    }
+    
+    // Fetch blockout calendar data
+    let blockoutEvents;
+    try {
+      blockoutEvents = await getBlockoutCalendarData();
+      
+      if (!blockoutEvents || blockoutEvents.length === 0) {
+        const noEventsMsg = {
+          error: 'No events found',
+          message: 'Blockout Admin property is empty or contains no events'
+        };
+        
+        if (format === 'json') {
+          return res.status(404).json(noEventsMsg);
+        } else {
+          const emptyCalendar = ical({ 
+            name: 'Blockout Calendar',
+            description: 'No events found'
+          });
+          res.setHeader('Content-Type', 'text/calendar');
+          return res.send(emptyCalendar.toString());
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching blockout calendar data:', error);
+      
+      // If Notion API times out, try to return cached data as fallback
+      const isTimeout = error.message?.includes('504') || error.message?.includes('timeout') || error.message?.includes('Gateway Timeout');
+      
+      if (isTimeout && redis && cacheEnabled) {
+        console.log('⚠️  Notion API timeout - attempting to return cached data...');
+        try {
+          const cachedData = await redis.get(cacheKey);
+          if (cachedData) {
+            console.log(`✅ Returning cached blockout calendar data (fallback from timeout)`);
+            if (format === 'json') {
+              res.setHeader('Content-Type', 'application/json');
+              return res.send(cachedData);
+            } else {
+              res.setHeader('Content-Type', 'text/calendar');
+              res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
+              return res.send(cachedData);
+            }
+          }
+        } catch (cacheError) {
+          console.error('Error retrieving cached data:', cacheError);
+        }
+      }
+      
+      const errorMsg = {
+        error: 'Error fetching blockout calendar data',
+        message: error.message
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        // Always return a valid ICS file, even on error
+        const errorCalendar = ical({ 
+          name: 'Blockout Calendar',
+          description: `Error: ${error.message}. Please try again later.`
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(errorCalendar.toString());
+      }
+    }
+    
+    // Process events
+    const allCalendarEvents = processBlockoutEvents(blockoutEvents);
+    
+    // Return based on format
+    if (format === 'json') {
+      const jsonData = JSON.stringify({
+        calendar_name: 'Blockout Calendar',
+        total_events: allCalendarEvents.length,
+        events: allCalendarEvents
+      }, null, 2);
+      
+      // Cache the JSON
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
+          console.log(`💾 Cached blockout calendar JSON (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(jsonData);
+    } else {
+      // Generate ICS
+      const calendar = ical({ 
+        name: 'Blockout Calendar',
+        description: 'All blockout events',
+        ttl: 300
+      });
+      
+      allCalendarEvents.forEach(event => {
+        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+        
+        calendar.createEvent({
+          start: startDate,
+          end: endDate,
+          summary: event.title,
+          description: event.description,
+          location: event.location,
+          url: event.url || '',
+          floating: true,
+          alarms: getAlarmsForEvent(event.type, event.title)
+        });
+      });
+      
+      const icsData = calendar.toString();
+      
+      // Cache the ICS
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, icsData);
+          console.log(`💾 Cached blockout calendar ICS (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'text/calendar');
+      res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
+      return res.send(icsData);
+    }
+    
+  } catch (error) {
+    console.error('Blockout calendar error:', error);
+    res.status(500).json({ 
+      error: 'Error generating blockout calendar',
+      message: error.message
+    });
+  }
+});
+
+// Blockout calendar regeneration endpoint (clears cache and regenerates)
+app.get('/blockout/calendar/regen', async (req, res) => {
+  try {
+    if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+      return res.status(500).json({ 
+        error: 'Blockout calendar not configured',
+        message: 'BLOCKOUT_CALENDAR_PAGE_ID environment variable not set'
+      });
+    }
+
+    console.log('🔄 Regenerating blockout calendar (clearing cache)...');
+    
+    // Clear both ICS and JSON caches
+    if (redis && cacheEnabled) {
+      try {
+        await redis.del('calendar:blockout:ics');
+        await redis.del('calendar:blockout:json');
+        console.log('✅ Blockout calendar cache cleared');
+      } catch (cacheError) {
+        console.error('Redis cache clear error:', cacheError);
+      }
+    }
+
+    // Fetch fresh data
+    const blockoutEvents = await getBlockoutCalendarData();
+    const allCalendarEvents = processBlockoutEvents(blockoutEvents);
+
+    // Generate and cache ICS
+    const calendar = ical({ 
+      name: 'Blockout Calendar',
+      description: 'All blockout events',
+      ttl: 300
+    });
+    
+    allCalendarEvents.forEach(event => {
+      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+      
+      calendar.createEvent({
+        start: startDate,
+        end: endDate,
+        summary: event.title,
+        description: event.description,
+        location: event.location,
+        url: event.url || '',
+        floating: true,
+        alarms: getAlarmsForEvent(event.type, event.title)
+      });
+    });
+    
+    const icsData = calendar.toString();
+    
+    // Generate JSON
+    const jsonData = JSON.stringify({
+      calendar_name: 'Blockout Calendar',
+      total_events: allCalendarEvents.length,
+      events: allCalendarEvents
+    }, null, 2);
+
+    // Cache both formats
+    if (redis && cacheEnabled) {
+      try {
+        await redis.setEx('calendar:blockout:ics', CACHE_TTL, icsData);
+        await redis.setEx('calendar:blockout:json', CACHE_TTL, jsonData);
+        console.log(`💾 Blockout calendar cached (${allCalendarEvents.length} events)`);
+      } catch (cacheError) {
+        console.error('Redis cache write error:', cacheError);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Blockout calendar regenerated successfully',
+      total_events: allCalendarEvents.length,
+      cached: redis && cacheEnabled
+    });
+  } catch (error) {
+    console.error('Error regenerating blockout calendar:', error);
+    res.status(500).json({ 
+      error: 'Error regenerating blockout calendar',
+      message: error.message
+    });
+  }
+});
+
 // Admin calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/admin.ics', async (req, res) => {
   return res.redirect(301, '/admin/calendar?format=ics');
@@ -4871,6 +5638,15 @@ app.get('/calendar/travel.ics', async (req, res) => {
 
 app.get('/calendar/travel', async (req, res) => {
   return res.redirect(301, '/travel/calendar?format=ics');
+});
+
+// Blockout calendar compatibility routes (must come before /:personId routes)
+app.get('/calendar/blockout.ics', async (req, res) => {
+  return res.redirect(301, '/blockout/calendar?format=ics');
+});
+
+app.get('/calendar/blockout', async (req, res) => {
+  return res.redirect(301, '/blockout/calendar?format=ics');
 });
 
 // ICS calendar endpoint (with .ics extension) - serve calendar directly
