@@ -2006,28 +2006,33 @@ function processTravelEvents(travelGroupsArray) {
           const depEnd = new Date(flight.departure_arrival_time);
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
+            // Build route string
+            const routeFrom = flight.departure_from_city || flight.departure_from || '';
+            const routeTo = flight.departure_to_city || flight.departure_to || '';
+            const route = routeFrom && routeTo ? `${routeFrom} → ${routeTo}` : '';
+            
+            // Build title - prefer departure_name, fallback to route
+            let title = flight.departure_name || (route ? `Flight: ${route}` : 'Flight');
+            
+            // Build structured description
             let description = '';
             
-            if (flight.departure_name) {
-              description += `✈️ ${flight.departure_name}\n`;
-            }
-            
             if (flight.departure_airline && flight.departure_flightnumber) {
-              description += `Airline: ${flight.departure_airline} ${flight.departure_flightnumber}\n`;
+              description += `✈️ ${flight.departure_airline} ${flight.departure_flightnumber}\n`;
             }
             
-            if (flight.departure_from_city && flight.departure_to_city) {
-              description += `Route: ${flight.departure_from_city} → ${flight.departure_to_city}\n`;
-            } else if (flight.departure_from && flight.departure_to) {
-              description += `Route: ${flight.departure_from} → ${flight.departure_to}\n`;
+            if (route) {
+              description += `Route: ${route}\n`;
             }
             
-            if (flight.confirmation) {
-              description += `Confirmation: ${flight.confirmation}\n`;
-            }
-            
-            if (flight.flight_status) {
-              description += `Status: ${flight.flight_status}\n`;
+            if (flight.confirmation || flight.flight_status) {
+              description += `\n📋 Booking Details:\n`;
+              if (flight.confirmation) {
+                description += `   Confirmation: ${flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                description += `   Status: ${flight.flight_status}\n`;
+              }
             }
 
             const location = flight.departure_from_city 
@@ -2037,7 +2042,7 @@ function processTravelEvents(travelGroupsArray) {
             allCalendarEvents.push({
               start: depStart,
               end: depEnd,
-              title: flight.departure_name || `Flight: ${flight.departure_from} → ${flight.departure_to}`,
+              title: title,
               description: description.trim(),
               location: location,
               url: '',
@@ -2052,30 +2057,35 @@ function processTravelEvents(travelGroupsArray) {
           const retEnd = new Date(flight.return_arrival_time);
           
           if (!isNaN(retStart.getTime()) && !isNaN(retEnd.getTime())) {
+            // Build route string
+            const routeFrom = flight.return_from_city || flight.return_from || '';
+            const routeTo = flight.return_to_city || flight.return_to || '';
+            const route = routeFrom && routeTo ? `${routeFrom} → ${routeTo}` : '';
+            
+            // Build title - prefer return_name, fallback to route
+            let title = flight.return_name || (route ? `Flight Return: ${route}` : 'Flight Return');
+            
+            // Build structured description
             let description = '';
             
-            if (flight.return_name) {
-              description += `✈️ ${flight.return_name}\n`;
-            }
-            
             if (flight.return_airline && flight.return_flightnumber) {
-              description += `Airline: ${flight.return_airline} ${flight.return_flightnumber}\n`;
+              description += `✈️ ${flight.return_airline} ${flight.return_flightnumber}\n`;
             }
             
-            if (flight.return_from_city && flight.return_to_city) {
-              description += `Route: ${flight.return_from_city} → ${flight.return_to_city}\n`;
-            } else if (flight.return_from && flight.return_to) {
-              description += `Route: ${flight.return_from} → ${flight.return_to}\n`;
+            if (route) {
+              description += `Route: ${route}\n`;
             }
             
-            if (flight.return_confirmation) {
-              description += `Confirmation: ${flight.return_confirmation}\n`;
-            } else if (flight.confirmation) {
-              description += `Confirmation: ${flight.confirmation}\n`;
-            }
-            
-            if (flight.flight_status) {
-              description += `Status: ${flight.flight_status}\n`;
+            if (flight.return_confirmation || flight.confirmation || flight.flight_status) {
+              description += `\n📋 Booking Details:\n`;
+              if (flight.return_confirmation) {
+                description += `   Confirmation: ${flight.return_confirmation}\n`;
+              } else if (flight.confirmation) {
+                description += `   Confirmation: ${flight.confirmation}\n`;
+              }
+              if (flight.flight_status) {
+                description += `   Status: ${flight.flight_status}\n`;
+              }
             }
 
             const location = flight.return_from_city 
@@ -2085,7 +2095,7 @@ function processTravelEvents(travelGroupsArray) {
             allCalendarEvents.push({
               start: retStart,
               end: retEnd,
-              title: flight.return_name || `Flight Return: ${flight.return_from} → ${flight.return_to}`,
+              title: title,
               description: description.trim(),
               location: location,
               url: '',
@@ -2099,59 +2109,92 @@ function processTravelEvents(travelGroupsArray) {
     // Process hotels
     if (travelGroup.hotels && Array.isArray(travelGroup.hotels)) {
       travelGroup.hotels.forEach(hotel => {
+        // Extract location from title (e.g., "Hotel - North Beach ()" -> "North Beach")
+        let locationName = '';
+        if (hotel.title) {
+          const titleMatch = hotel.title.match(/Hotel\s*-\s*([^(]+)/);
+          if (titleMatch) {
+            locationName = titleMatch[1].trim();
+          }
+        }
+        
+        // Build better title: "Hotel: [Hotel Name]" or "Hotel - [Location]: [Hotel Name]"
+        let title = '';
+        if (hotel.hotel_name) {
+          if (locationName) {
+            title = `Hotel - ${locationName}: ${hotel.hotel_name}`;
+          } else {
+            title = `Hotel: ${hotel.hotel_name}`;
+          }
+        } else if (locationName) {
+          title = `Hotel - ${locationName}`;
+        } else {
+          title = hotel.title || 'Hotel';
+        }
+        
         // Hotel check-in
         if (hotel.check_in) {
           const checkIn = new Date(hotel.check_in);
           if (!isNaN(checkIn.getTime())) {
             let description = '';
             
-            if (hotel.title) {
-              description += `🏨 ${hotel.title}\n`;
-            }
-            
+            // Hotel name and location
             if (hotel.hotel_name) {
-              description += `Hotel: ${hotel.hotel_name}\n`;
+              description += `🏨 ${hotel.hotel_name}\n`;
+            }
+            if (locationName) {
+              description += `📍 ${locationName}\n`;
             }
             
-            if (hotel.confirmation) {
-              description += `Confirmation: ${hotel.confirmation}\n`;
+            // Booking details section
+            const hasBookingDetails = hotel.confirmation || hotel.name_under_reservation || hotel.hotel_phone;
+            if (hasBookingDetails) {
+              description += `\n📋 Booking Details:\n`;
+              if (hotel.confirmation) {
+                description += `   Confirmation: ${hotel.confirmation}\n`;
+              }
+              if (hotel.name_under_reservation) {
+                description += `   Reservation: ${hotel.name_under_reservation}\n`;
+              }
+              if (hotel.hotel_phone) {
+                description += `   Phone: ${hotel.hotel_phone}\n`;
+              }
             }
             
-            if (hotel.name_under_reservation) {
-              description += `Reservation Name: ${hotel.name_under_reservation}\n`;
-            }
-            
-            if (hotel.hotel_phone) {
-              description += `Phone: ${hotel.hotel_phone}\n`;
-            }
-            
+            // Dates section
             if (hotel.check_out) {
               const checkOut = new Date(hotel.check_out);
               if (!isNaN(checkOut.getTime())) {
                 const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
-                description += `Check-out: ${checkOut.toLocaleDateString()}\n`;
-                description += `Duration: ${nights} night${nights !== 1 ? 's' : ''}\n`;
+                description += `\n📅 Dates:\n`;
+                description += `   Check-out: ${checkOut.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
+                description += `   Duration: ${nights} night${nights !== 1 ? 's' : ''}\n`;
               }
             }
             
-            if (hotel.hotel_address) {
-              description += `\n📍 ${hotel.hotel_address}`;
+            // Maps section (only if we have maps links)
+            if (hotel.hotel_apple_maps || hotel.hotel_google_maps) {
+              description += `\n🗺️ Maps:\n`;
+              if (hotel.hotel_apple_maps) {
+                description += `   ${hotel.hotel_apple_maps}\n`;
+              }
+              if (hotel.hotel_google_maps) {
+                description += `   ${hotel.hotel_google_maps}\n`;
+              }
             }
+
+            // Use actual check-in and check-out times
+            const checkOutDate = hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000);
             
-            if (hotel.hotel_apple_maps) {
-              description += `\n🗺️ Apple Maps: ${hotel.hotel_apple_maps}`;
-            }
-            
-            if (hotel.hotel_google_maps) {
-              description += `\n🗺️ Google Maps: ${hotel.hotel_google_maps}`;
-            }
+            // Location field: use address if available, otherwise hotel name
+            const location = hotel.hotel_address || hotel.hotel_name || '';
 
             allCalendarEvents.push({
               start: checkIn,
-              end: hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000),
-              title: hotel.title || `Hotel Check-in: ${hotel.hotel_name || 'Hotel'}`,
+              end: checkOutDate,
+              title: title,
               description: description.trim(),
-              location: hotel.hotel_address || hotel.hotel_name || '',
+              location: location,
               url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
               type: 'hotel_checkin'
             });
@@ -2164,26 +2207,18 @@ function processTravelEvents(travelGroupsArray) {
           if (!isNaN(checkOut.getTime())) {
             let description = '';
             
-            if (hotel.title) {
-              description += `🏨 ${hotel.title} - Check-out\n`;
-            }
-            
             if (hotel.hotel_name) {
-              description += `Hotel: ${hotel.hotel_name}\n`;
+              description += `🏨 ${hotel.hotel_name} - Check-out\n`;
             }
             
             if (hotel.confirmation) {
-              description += `Confirmation: ${hotel.confirmation}\n`;
-            }
-            
-            if (hotel.hotel_address) {
-              description += `\n📍 ${hotel.hotel_address}`;
+              description += `\n📋 Confirmation: ${hotel.confirmation}\n`;
             }
 
             allCalendarEvents.push({
               start: checkOut,
               end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
-              title: hotel.title ? `${hotel.title} - Check-out` : `Hotel Check-out: ${hotel.hotel_name || 'Hotel'}`,
+              title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
               description: description.trim(),
               location: hotel.hotel_address || hotel.hotel_name || '',
               url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
