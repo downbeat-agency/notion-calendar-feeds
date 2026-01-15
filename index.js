@@ -1939,10 +1939,7 @@ function processAdminEvents(eventsArray) {
           description += `\n📋 General Info:\n${event.general_info}\n`;
         }
         
-        // Notion URL at the bottom
-        if (event.notion_url) {
-          description += `\n🔗 ${event.notion_url}`;
-        }
+        // Notion URL is in URL field, not in description
 
         let title = event.event_name;
         
