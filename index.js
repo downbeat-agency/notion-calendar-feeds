@@ -1974,6 +1974,50 @@ function processAdminEvents(eventsArray) {
         });
       }
     }
+
+    // Process rehearsals for this event
+    if (event.rehearsals && Array.isArray(event.rehearsals)) {
+      event.rehearsals.forEach(rehearsal => {
+        if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
+          let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+          
+          if (rehearsalTimes) {
+            // Build location from rehearsal_location and rehearsal_address
+            let location = 'TBD';
+            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
+              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
+            } else if (rehearsal.rehearsal_location) {
+              location = rehearsal.rehearsal_location;
+            } else if (rehearsal.rehearsal_address) {
+              location = rehearsal.rehearsal_address.trim().replace(/\u2060/g, '');
+            }
+
+            // Build description
+            let description = rehearsal.description || `Rehearsal`;
+            if (rehearsal.rehearsal_band) {
+              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
+            }
+
+            // Build title with event name and band if available
+            let title = `🎤 Rehearsal - ${event.event_name || 'Event'}`;
+            if (event.band) {
+              title += ` (${event.band})`;
+            }
+
+            allCalendarEvents.push({
+              type: 'rehearsal',
+              title: title,
+              start: rehearsalTimes.start,
+              end: rehearsalTimes.end,
+              description: description,
+              location: location,
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
+              mainEvent: event.event_name || ''
+            });
+          }
+        }
+      });
+    }
   });
 
   return allCalendarEvents;
