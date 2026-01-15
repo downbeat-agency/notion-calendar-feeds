@@ -127,6 +127,7 @@ app.use(express.static('public'));
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
+const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
 
 // Cache TTL in seconds (8 minutes for 5-minute background refresh cycle)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
@@ -1744,8 +1745,58 @@ function startBackgroundJob() {
         }
       }
       
+      // Also refresh travel calendar
+      if (TRAVEL_CALENDAR_PAGE_ID && redis && cacheEnabled) {
+        try {
+          console.log('🔄 Refreshing travel calendar...');
+          const travelEvents = await getTravelCalendarData();
+          
+          if (travelEvents && travelEvents.length > 0) {
+            const allCalendarEvents = processTravelEvents(travelEvents);
+            
+            // Generate and cache ICS
+            const calendar = ical({ 
+              name: 'Travel Calendar',
+              description: 'All travel events',
+              ttl: 300
+            });
+            
+            allCalendarEvents.forEach(event => {
+              const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+              const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+              
+              calendar.createEvent({
+                start: startDate,
+                end: endDate,
+                summary: event.title,
+                description: event.description,
+                location: event.location,
+                url: event.url || '',
+                floating: true,
+                alarms: getAlarmsForEvent(event.type, event.title)
+              });
+            });
+            
+            const icsData = calendar.toString();
+            await redis.setEx('calendar:travel:ics', CACHE_TTL, icsData);
+            
+            // Also cache JSON
+            const jsonData = JSON.stringify({
+              calendar_name: 'Travel Calendar',
+              total_events: allCalendarEvents.length,
+              events: allCalendarEvents
+            }, null, 2);
+            await redis.setEx('calendar:travel:json', CACHE_TTL, jsonData);
+            
+            console.log(`✅ Travel calendar cached (${allCalendarEvents.length} events)`);
+          }
+        } catch (travelError) {
+          console.error('⚠️  Travel calendar refresh failed:', travelError.message);
+        }
+      }
+      
       const jobTime = Math.round((Date.now() - jobStart) / 1000);
-      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar)`);
+      console.log(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar + travel calendar)`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
@@ -1861,6 +1912,103 @@ function processAdminEvents(eventsArray) {
         )) {
           title = `🎸 ${title}`;
         }
+
+        // Build location from venue and venue_address
+        let location = '';
+        if (event.venue && event.venue_address) {
+          location = `${event.venue}, ${event.venue_address}`;
+        } else if (event.venue_address) {
+          location = event.venue_address;
+        } else if (event.venue) {
+          location = event.venue;
+        }
+
+        allCalendarEvents.push({
+          start: eventTimes.start,
+          end: eventTimes.end,
+          title: title,
+          description: description.trim(),
+          location: location,
+          url: event.notion_url || '',
+          type: 'main_event'
+        });
+      }
+    }
+  });
+
+  return allCalendarEvents;
+}
+
+// ============================================
+// TRAVEL CALENDAR FUNCTIONS
+// ============================================
+
+// Helper function to get travel calendar data by page ID
+async function getTravelCalendarData() {
+  if (!TRAVEL_CALENDAR_PAGE_ID) {
+    throw new Error('TRAVEL_CALENDAR_PAGE_ID not configured');
+  }
+
+  // Format the page ID properly (add dashes if needed)
+  let pageId = TRAVEL_CALENDAR_PAGE_ID;
+  if (pageId.length === 32 && !pageId.includes('-')) {
+    pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
+
+  // Fetch the page directly by ID
+  const page = await retryNotionCall(() => 
+    notion.pages.retrieve({ page_id: pageId })
+  );
+
+  // Extract Travel Admin property
+  const travelEventsString = page.properties['Travel Admin']?.formula?.string || 
+                            page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
+                            '[]';
+
+  try {
+    const travelEvents = JSON.parse(travelEventsString);
+    return Array.isArray(travelEvents) ? travelEvents : [];
+  } catch (e) {
+    console.error('Error parsing Travel Admin JSON:', travelEventsString?.substring(0, 100));
+    throw new Error(`Travel Admin JSON parse error: ${e.message}`);
+  }
+}
+
+// Helper function to process travel events into calendar format
+function processTravelEvents(eventsArray) {
+  const allCalendarEvents = [];
+
+  eventsArray.forEach(event => {
+    if (event.event_name && event.event_date) {
+      let eventTimes = parseUnifiedDateTime(event.event_date);
+      
+      if (eventTimes) {
+        // Build description
+        let description = '';
+        
+        // Personnel (handle both string and array formats)
+        if (event.event_personnel) {
+          if (typeof event.event_personnel === 'string') {
+            description += `👥 Personnel:\n${event.event_personnel}\n`;
+          } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
+            description += `\n👥 Personnel:\n`;
+            event.event_personnel.forEach(person => {
+              description += `  • ${person}\n`;
+            });
+          }
+        }
+        
+        // General Info / Notes
+        if (event.general_info) {
+          description += `\n📋 General Info:\n${event.general_info}\n`;
+        }
+        
+        // Notion URL at the bottom
+        if (event.notion_url) {
+          description += `\n🔗 ${event.notion_url}`;
+        }
+
+        let title = event.event_name;
 
         // Build location from venue and venue_address
         let location = '';
@@ -2935,6 +3083,465 @@ app.get('/subscribe/admin', async (req, res) => {
   }
 });
 
+app.get('/subscribe/travel', async (req, res) => {
+  // Redirect if URL has extra characters (malformed URL like /subscribe/travel%20%20...)
+  const originalPath = decodeURIComponent(req.originalUrl.split('?')[0]);
+  if (originalPath !== '/subscribe/travel' && originalPath.startsWith('/subscribe/travel')) {
+    return res.redirect(301, '/subscribe/travel');
+  }
+  try {
+    const subscriptionUrl = `https://${req.get('host')}/calendar/travel`;
+    
+    // Check if this is a calendar app request
+    const userAgent = req.headers['user-agent'] || '';
+    const isCalendarApp = userAgent.toLowerCase().includes('calendar') || 
+                         userAgent.toLowerCase().includes('caldav') ||
+                         req.headers.accept?.includes('text/calendar');
+    
+    if (isCalendarApp) {
+      // Redirect calendar apps directly to the calendar feed
+      return res.redirect(302, '/calendar/travel.ics');
+    }
+    
+    // For web browsers, show a subscription page with same styling as personal calendars
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Use the same template as personal calendars but with travel-specific content
+    const travelSubscriptionPage = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Subscribe to Travel Calendar</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            padding: 40px 20px; 
+            background: #000000; 
+            color: #e0e0e0; 
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        .container { 
+            max-width: 560px; 
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        
+        h1 { 
+            color: #fff; 
+            margin: 0 0 12px 0; 
+            font-size: 2.2rem; 
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1rem;
+            font-weight: 400;
+            margin: 0;
+        }
+        
+        .separator {
+            width: 100px;
+            height: 1px;
+            background: #2a2a2a;
+            margin: 16px auto;
+        }
+        
+        .description {
+            color: #999;
+            font-size: 0.95rem;
+            font-weight: 400;
+            text-align: center;
+            margin: 24px auto 40px auto;
+            max-width: 480px;
+            line-height: 1.5;
+        }
+        
+        .description strong {
+            color: #bbb;
+            font-weight: 600;
+        }
+        
+        .calendar-card {
+            background: #141414;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .calendar-card.primary {
+            border: 2px solid #2c2c2c;
+        }
+        
+        .calendar-card.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+        }
+        
+        .calendar-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 20px 32px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            width: 100%;
+            position: relative;
+        }
+        
+        .calendar-button:hover {
+            background: #222;
+            border-color: #444;
+            transform: translateY(-1px);
+        }
+        
+        .calendar-button:active {
+            transform: translateY(0);
+        }
+        
+        .calendar-button.primary {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            border-color: #4a4a4a;
+        }
+        
+        .calendar-button img {
+            width: 36px;
+            height: 36px;
+            object-fit: contain;
+        }
+        
+        .calendar-button.primary img {
+            filter: brightness(0) invert(1);
+        }
+        
+        .badge {
+            position: absolute;
+            top: -8px;
+            right: 16px;
+            background: #2ecc71;
+            color: #000;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .steps {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #2a2a2a;
+        }
+        
+        .step {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            align-items: start;
+        }
+        
+        .step:last-child {
+            margin-bottom: 0;
+        }
+        
+        .step-number {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            background: #2a2a2a;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .step-text {
+            color: #b0b0b0;
+            font-size: 0.95rem;
+            padding-top: 4px;
+        }
+        
+        .step-text strong {
+            color: #e0e0e0;
+        }
+        
+        .url-box { 
+            background: #0a0a0a; 
+            padding: 16px; 
+            border-radius: 6px; 
+            border: 1px solid #2a2a2a; 
+            margin: 16px 0; 
+            word-break: break-all; 
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #888;
+            font-size: 13px;
+            line-height: 1.5;
+            cursor: pointer;
+        }
+        
+        .copy-btn { 
+            background: #1a1a1a; 
+            color: #fff; 
+            border: 1px solid #333; 
+            padding: 12px 24px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        
+        .copy-btn:hover { 
+            background: #222; 
+            border-color: #444;
+        }
+        
+        .copy-btn.copied {
+            background: #2ecc71;
+            color: #000;
+            border-color: #2ecc71;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #2ecc71;
+            color: #000;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 20px rgba(46, 204, 113, 0.4);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        
+        .collapsible {
+            margin-top: 20px;
+        }
+        
+        .collapsible-header {
+            background: transparent;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 16px 20px;
+            color: #888;
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .collapsible-header:hover {
+            background: #141414;
+            color: #b0b0b0;
+            border-color: #333;
+        }
+        
+        .collapsible-header::after {
+            content: '▼';
+            font-size: 0.7rem;
+            transition: transform 0.3s ease;
+        }
+        
+        .collapsible-header.active::after {
+            transform: rotate(180deg);
+        }
+        
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .collapsible-content.active {
+            max-height: 500px;
+        }
+        
+        .collapsible-inner {
+            background: #141414;
+            border: 1px solid #2a2a2a;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 24px;
+            margin-top: -8px;
+        }
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 20px 16px;
+            }
+            
+            .calendar-card {
+                padding: 24px 20px;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .calendar-button {
+                padding: 18px 24px;
+                font-size: 1rem;
+            }
+            
+            .badge {
+                font-size: 0.65rem;
+                padding: 3px 8px;
+                right: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Subscribe to Travel Calendar</h1>
+            <div class="separator"></div>
+            <div class="description">View all travel events across all personnel in your calendar app. Includes flight details, hotel information, travel dates, and more. Subscribe once and stay organized across all your devices.</div>
+        </div>
+        
+        <!-- Apple Calendar - Primary -->
+        <div class="calendar-card primary">
+            <a href="webcal://${req.get('host')}/calendar/travel" class="calendar-button primary">
+                <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
+                <span>Subscribe with Apple Calendar</span>
+                <span class="badge">One Click</span>
+            </a>
+        </div>
+        
+        <!-- Google Calendar - Secondary -->
+        <div class="calendar-card">
+            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+                <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
+                <span>Subscribe with Google Calendar</span>
+            </button>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-text">Click the button above to <strong>copy the URL</strong> and open Google Calendar</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-text">Select <strong>"From URL"</strong> in the left menu</div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-text">Paste the URL and click <strong>"Add calendar"</strong></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Other Apps - Collapsible -->
+        <div class="calendar-card">
+            <div class="collapsible">
+                <div class="collapsible-header" onclick="toggleCollapsible()">
+                    Other Calendar Apps (Outlook, etc.)
+                </div>
+                <div class="collapsible-content" id="collapsibleContent">
+                    <div class="collapsible-inner">
+                        <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
+                        <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
+                        <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                        <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
+                            <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
+                            <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast" id="toast">✓ URL copied to clipboard!</div>
+    
+    <script>
+        function copyAndOpenGoogle() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+                setTimeout(() => {
+                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
+                }, 300);
+            });
+        }
+        
+        function copyUrl() {
+            const url = '${subscriptionUrl}';
+            navigator.clipboard.writeText(url).then(() => {
+                showToast();
+            });
+        }
+        
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+        
+        function toggleCollapsible() {
+            const header = event.currentTarget;
+            const content = document.getElementById('collapsibleContent');
+            header.classList.toggle('active');
+            content.classList.toggle('active');
+        }
+    </script>
+</body>
+</html>
+    `;
+    
+    res.send(travelSubscriptionPage);
+  } catch (error) {
+    console.error('Error loading travel subscription page:', error);
+    res.status(500).json({ error: 'Error loading subscription page' });
+  }
+});
+
 app.get('/subscribe/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
@@ -3650,6 +4257,261 @@ app.get('/admin/calendar/regen', async (req, res) => {
   }
 });
 
+// ============================================
+// TRAVEL CALENDAR ENDPOINTS
+// ============================================
+
+app.get('/travel/calendar', async (req, res) => {
+  try {
+    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const forceFresh = req.query.fresh === 'true';
+    const cacheKey = `calendar:travel:${format}`;
+    
+    // Check cache first (unless fresh requested)
+    if (redis && cacheEnabled && !forceFresh) {
+      try {
+        const cachedData = await redis.get(cacheKey);
+        if (cachedData) {
+          console.log(`✅ Cache HIT for travel calendar (${format.toUpperCase()})`);
+          
+          if (format === 'json') {
+            res.setHeader('Content-Type', 'application/json');
+            return res.send(cachedData);
+          } else {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
+            return res.send(cachedData);
+          }
+        }
+        console.log(`❌ Cache MISS for travel calendar (${format.toUpperCase()})`);
+      } catch (cacheError) {
+        console.error('Redis cache error:', cacheError);
+      }
+    }
+    
+    // Check if travel calendar is configured
+    if (!TRAVEL_CALENDAR_PAGE_ID) {
+      const errorMsg = { 
+        error: 'Travel calendar not configured',
+        message: 'TRAVEL_CALENDAR_PAGE_ID environment variable not set'
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        // Return empty calendar for calendar apps
+        const emptyCalendar = ical({ 
+          name: 'Travel Calendar',
+          description: 'Travel calendar not configured'
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(emptyCalendar.toString());
+      }
+    }
+    
+    // Fetch travel calendar data
+    let travelEvents;
+    try {
+      travelEvents = await getTravelCalendarData();
+      
+      if (!travelEvents || travelEvents.length === 0) {
+        const noEventsMsg = {
+          error: 'No events found',
+          message: 'Travel Admin property is empty or contains no events'
+        };
+        
+        if (format === 'json') {
+          return res.status(404).json(noEventsMsg);
+        } else {
+          const emptyCalendar = ical({ 
+            name: 'Travel Calendar',
+            description: 'No events found'
+          });
+          res.setHeader('Content-Type', 'text/calendar');
+          return res.send(emptyCalendar.toString());
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching travel calendar data:', error);
+      
+      const errorMsg = {
+        error: 'Error fetching travel calendar data',
+        message: error.message
+      };
+      
+      if (format === 'json') {
+        return res.status(500).json(errorMsg);
+      } else {
+        const errorCalendar = ical({ 
+          name: 'Travel Calendar',
+          description: `Error: ${error.message}`
+        });
+        res.setHeader('Content-Type', 'text/calendar');
+        return res.send(errorCalendar.toString());
+      }
+    }
+    
+    // Process events
+    const allCalendarEvents = processTravelEvents(travelEvents);
+    
+    // Return based on format
+    if (format === 'json') {
+      const jsonData = JSON.stringify({
+        calendar_name: 'Travel Calendar',
+        total_events: allCalendarEvents.length,
+        events: allCalendarEvents
+      }, null, 2);
+      
+      // Cache the JSON
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
+          console.log(`💾 Cached travel calendar JSON (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(jsonData);
+    } else {
+      // Generate ICS
+      const calendar = ical({ 
+        name: 'Travel Calendar',
+        description: 'All travel events',
+        ttl: 300
+      });
+      
+      allCalendarEvents.forEach(event => {
+        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+        
+        calendar.createEvent({
+          start: startDate,
+          end: endDate,
+          summary: event.title,
+          description: event.description,
+          location: event.location,
+          url: event.url || '',
+          floating: true,
+          alarms: getAlarmsForEvent(event.type, event.title)
+        });
+      });
+      
+      const icsData = calendar.toString();
+      
+      // Cache the ICS
+      if (redis && cacheEnabled) {
+        try {
+          await redis.setEx(cacheKey, CACHE_TTL, icsData);
+          console.log(`💾 Cached travel calendar ICS (TTL: ${CACHE_TTL}s)`);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+        }
+      }
+      
+      res.setHeader('Content-Type', 'text/calendar');
+      res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
+      return res.send(icsData);
+    }
+    
+  } catch (error) {
+    console.error('Travel calendar error:', error);
+    res.status(500).json({ 
+      error: 'Error generating travel calendar',
+      message: error.message
+    });
+  }
+});
+
+// Travel calendar regeneration endpoint (clears cache and regenerates)
+app.get('/travel/calendar/regen', async (req, res) => {
+  try {
+    if (!TRAVEL_CALENDAR_PAGE_ID) {
+      return res.status(500).json({ 
+        error: 'Travel calendar not configured',
+        message: 'TRAVEL_CALENDAR_PAGE_ID environment variable not set'
+      });
+    }
+
+    console.log('🔄 Regenerating travel calendar (clearing cache)...');
+    
+    // Clear both ICS and JSON caches
+    if (redis && cacheEnabled) {
+      try {
+        await redis.del('calendar:travel:ics');
+        await redis.del('calendar:travel:json');
+        console.log('✅ Travel calendar cache cleared');
+      } catch (cacheError) {
+        console.error('Redis cache clear error:', cacheError);
+      }
+    }
+
+    // Fetch fresh data
+    const travelEvents = await getTravelCalendarData();
+    const allCalendarEvents = processTravelEvents(travelEvents);
+
+    // Generate and cache ICS
+    const calendar = ical({ 
+      name: 'Travel Calendar',
+      description: 'All travel events',
+      ttl: 300
+    });
+    
+    allCalendarEvents.forEach(event => {
+      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+      
+      calendar.createEvent({
+        start: startDate,
+        end: endDate,
+        summary: event.title,
+        description: event.description,
+        location: event.location,
+        url: event.url || '',
+        floating: true,
+        alarms: getAlarmsForEvent(event.type, event.title)
+      });
+    });
+    
+    const icsData = calendar.toString();
+    
+    // Generate JSON
+    const jsonData = JSON.stringify({
+      calendar_name: 'Travel Calendar',
+      total_events: allCalendarEvents.length,
+      events: allCalendarEvents
+    }, null, 2);
+
+    // Cache both formats
+    if (redis && cacheEnabled) {
+      try {
+        await redis.setEx('calendar:travel:ics', CACHE_TTL, icsData);
+        await redis.setEx('calendar:travel:json', CACHE_TTL, jsonData);
+        console.log(`💾 Travel calendar regenerated and cached (${allCalendarEvents.length} events)`);
+      } catch (cacheError) {
+        console.error('Redis cache write error:', cacheError);
+      }
+    }
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Travel calendar regenerated successfully',
+      total_events: allCalendarEvents.length,
+      cache_cleared: true,
+      cached_for_seconds: CACHE_TTL
+    });
+
+  } catch (error) {
+    console.error('Travel calendar regen error:', error);
+    res.status(500).json({ 
+      error: 'Error regenerating travel calendar',
+      message: error.message
+    });
+  }
+});
+
 // Admin calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/admin.ics', async (req, res) => {
   return res.redirect(301, '/admin/calendar?format=ics');
@@ -3657,6 +4519,15 @@ app.get('/calendar/admin.ics', async (req, res) => {
 
 app.get('/calendar/admin', async (req, res) => {
   return res.redirect(301, '/admin/calendar?format=ics');
+});
+
+// Travel calendar compatibility routes (must come before /:personId routes)
+app.get('/calendar/travel.ics', async (req, res) => {
+  return res.redirect(301, '/travel/calendar?format=ics');
+});
+
+app.get('/calendar/travel', async (req, res) => {
+  return res.redirect(301, '/travel/calendar?format=ics');
 });
 
 // ICS calendar endpoint (with .ics extension) - serve calendar directly
