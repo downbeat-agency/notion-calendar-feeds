@@ -2450,45 +2450,54 @@ async function getBlockoutCalendarData() {
 }
 
 // Helper function to process blockout events into calendar format
-// Note: This will need to be adjusted based on the actual data structure
 function processBlockoutEvents(eventsArray) {
   const allCalendarEvents = [];
 
-  // For now, assuming similar structure to travel calendar
-  // This will need to be updated once we see the actual data structure
   eventsArray.forEach(event => {
-    // If it's a simple event with event_name and event_date (like admin calendar)
-    if (event.event_name && event.event_date) {
-      let eventTimes = parseUnifiedDateTime(event.event_date);
-      
-      if (eventTimes) {
-        let description = '';
+    // Blockout events have: personnel_name, date_start, date_end, reason, notion_url
+    if (event.personnel_name && event.date_start && event.date_end) {
+      try {
+        // Parse dates (format: YYYY-MM-DD)
+        const startDate = new Date(event.date_start + 'T00:00:00');
+        const endDate = new Date(event.date_end + 'T23:59:59');
         
-        // Add event details if available
-        if (event.description) {
-          description += `${event.description}\n`;
+        // If end date is same as start date, make it a single day event
+        if (event.date_start === event.date_end) {
+          endDate.setHours(23, 59, 59);
         }
         
-        if (event.notion_url) {
-          description += `\n🔗 ${event.notion_url}`;
-        }
+        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          let description = '';
+          
+          // Personnel name
+          description += `👤 ${event.personnel_name}\n`;
+          
+          // Reason if available
+          if (event.reason && event.reason.trim()) {
+            description += `\n📋 Reason: ${event.reason}\n`;
+          }
+          
+          // Notion URL
+          if (event.notion_url) {
+            description += `\n🔗 ${event.notion_url}`;
+          }
 
-        allCalendarEvents.push({
-          start: eventTimes.start,
-          end: eventTimes.end,
-          title: event.event_name,
-          description: description.trim(),
-          location: event.location || event.venue || '',
-          url: event.notion_url || '',
-          type: 'blockout_event'
-        });
+          // Title: "Blockout: [Personnel Name]"
+          const title = `Blockout: ${event.personnel_name}`;
+
+          allCalendarEvents.push({
+            start: startDate,
+            end: endDate,
+            title: title,
+            description: description.trim(),
+            location: '',
+            url: event.notion_url || '',
+            type: 'blockout_event'
+          });
+        }
+      } catch (dateError) {
+        console.error('Error parsing blockout event dates:', dateError, event);
       }
-    }
-    // If it's a travel-like structure with flights, hotels, etc.
-    else if (event.flights || event.hotels || event.ground_transportation) {
-      // Use the same processing as travel calendar
-      const travelEvents = processTravelEvents([event]);
-      allCalendarEvents.push(...travelEvents);
     }
   });
 
