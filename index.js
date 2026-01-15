@@ -2495,6 +2495,70 @@ function processBlockoutEvents(eventsArray) {
   return allCalendarEvents;
 }
 
+// Debug endpoint for blockout calendar
+app.get('/debug/blockout', async (req, res) => {
+  try {
+    if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+      return res.status(500).json({ 
+        error: 'Blockout calendar not configured',
+        message: 'BLOCKOUT_CALENDAR_PAGE_ID environment variable not set'
+      });
+    }
+
+    // Format the page ID properly
+    let pageId = BLOCKOUT_CALENDAR_PAGE_ID;
+    if (pageId.length === 32 && !pageId.includes('-')) {
+      pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Fetch the page
+    const page = await retryNotionCall(() => 
+      notion.pages.retrieve({ page_id: pageId })
+    );
+
+    // Get all properties to see what's available
+    const availableProperties = Object.keys(page.properties || {});
+    
+    // Try to get Blockout Admin property
+    const blockoutAdminProperty = page.properties['Blockout Admin'];
+    
+    // Get the raw value
+    let blockoutEventsString = '';
+    let propertyType = 'unknown';
+    
+    if (blockoutAdminProperty) {
+      propertyType = blockoutAdminProperty.type;
+      if (blockoutAdminProperty.formula?.type === 'string') {
+        blockoutEventsString = blockoutAdminProperty.formula.string || '';
+      } else if (blockoutAdminProperty.rich_text?.length > 0) {
+        blockoutEventsString = blockoutAdminProperty.rich_text[0].text?.content || '';
+      } else if (blockoutAdminProperty.formula) {
+        blockoutEventsString = JSON.stringify(blockoutAdminProperty.formula);
+      }
+    }
+
+    res.json({
+      pageId: pageId,
+      pageTitle: page.properties?.Name?.title?.[0]?.text?.content || 
+                page.properties?.Title?.title?.[0]?.text?.content ||
+                'Unknown',
+      availableProperties: availableProperties,
+      blockoutAdminFound: !!blockoutAdminProperty,
+      blockoutAdminType: propertyType,
+      blockoutAdminValueLength: blockoutEventsString?.length || 0,
+      blockoutAdminPreview: blockoutEventsString?.substring(0, 500) || 'Empty or not found',
+      fullBlockoutAdminValue: blockoutEventsString || null
+    });
+  } catch (error) {
+    console.error('Error debugging blockout calendar:', error);
+    res.status(500).json({ 
+      error: 'Error debugging blockout calendar',
+      message: error.message,
+      details: error.stack
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
