@@ -2066,6 +2066,17 @@ function processTravelEvents(travelGroupsArray) {
               description += `Route: ${route}\n`;
             }
             
+            // Personnel
+            if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              flight.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
+            }
+            
             if (flight.confirmation || flight.flight_status) {
               description += `\n📋 Booking Details:\n`;
               if (flight.confirmation) {
@@ -2118,6 +2129,17 @@ function processTravelEvents(travelGroupsArray) {
             
             if (route) {
               description += `Route: ${route}\n`;
+            }
+            
+            // Personnel
+            if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              flight.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
             }
             
             if (flight.return_confirmation || flight.confirmation || flight.flight_status) {
@@ -2197,6 +2219,17 @@ function processTravelEvents(travelGroupsArray) {
               description += `📍 ${locationName}\n`;
             }
             
+            // Personnel
+            if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              hotel.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
+            }
+            
             // Booking details section
             const hasBookingDetails = hotel.confirmation || hotel.name_under_reservation || hotel.hotel_phone;
             if (hasBookingDetails) {
@@ -2272,6 +2305,17 @@ function processTravelEvents(travelGroupsArray) {
               description += `🏨 ${hotel.hotel_name} - Check-out\n`;
             }
             
+            // Personnel
+            if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              hotel.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
+            }
+            
             if (hotel.confirmation) {
               description += `\n📋 Confirmation: ${hotel.confirmation}\n`;
             }
@@ -2320,6 +2364,17 @@ function processTravelEvents(travelGroupsArray) {
               description += `Pickup: ${transport.pickup_name}\n`;
             }
             
+            // Personnel
+            if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              transport.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
+            }
+            
             if (transport.confirmation) {
               description += `\n📋 Confirmation: ${transport.confirmation}\n`;
             }
@@ -2363,6 +2418,17 @@ function processTravelEvents(travelGroupsArray) {
             
             if (transport.drop_off_name) {
               description += `Drop-off: ${transport.drop_off_name}\n`;
+            }
+            
+            // Personnel
+            if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
+              description += `\nPersonnel:\n`;
+              transport.personnel.forEach(person => {
+                // Filter out "personnel_ids" if it somehow got into the array
+                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+                  description += `${person}\n`;
+                }
+              });
             }
             
             if (transport.confirmation) {
