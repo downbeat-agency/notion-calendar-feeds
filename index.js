@@ -1820,33 +1820,16 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch only the Admin Events property (faster than retrieving entire page)
-  // This avoids computing all formula properties on the page
-  let adminEventsString = '[]';
-  try {
-    const property = await retryNotionCall(() => 
-      notion.pages.properties.retrieve({ 
-        page_id: pageId,
-        property_id: 'Admin Events'
-      })
-    );
-    
-    // Extract the value based on property type
-    if (property.type === 'formula' && property.formula?.type === 'string') {
-      adminEventsString = property.formula.string || '[]';
-    } else if (property.type === 'rich_text' && property.rich_text?.length > 0) {
-      adminEventsString = property.rich_text[0].plain_text || '[]';
-    }
-  } catch (propertyError) {
-    // Fallback: if property-specific call fails, try full page retrieve
-    console.warn('Property-specific retrieve failed, falling back to full page retrieve:', propertyError.message);
-    const page = await retryNotionCall(() => 
-      notion.pages.retrieve({ page_id: pageId })
-    );
-    adminEventsString = page.properties['Admin Events']?.formula?.string || 
-                       page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
-                       '[]';
-  }
+  // Fetch the page and extract Admin Events property
+  // Note: Using full page retrieve for now - property-specific retrieve may need property ID (UUID)
+  const page = await retryNotionCall(() => 
+    notion.pages.retrieve({ page_id: pageId })
+  );
+
+  // Extract Admin Events property
+  const adminEventsString = page.properties['Admin Events']?.formula?.string || 
+                            page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
+                            '[]';
 
   try {
     const adminEvents = JSON.parse(adminEventsString);
@@ -1973,33 +1956,16 @@ async function getTravelCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch only the Travel Admin property (faster than retrieving entire page)
-  // This avoids computing all formula properties on the page
-  let travelEventsString = '[]';
-  try {
-    const property = await retryNotionCall(() => 
-      notion.pages.properties.retrieve({ 
-        page_id: pageId,
-        property_id: 'Travel Admin'
-      })
-    );
-    
-    // Extract the value based on property type
-    if (property.type === 'formula' && property.formula?.type === 'string') {
-      travelEventsString = property.formula.string || '[]';
-    } else if (property.type === 'rich_text' && property.rich_text?.length > 0) {
-      travelEventsString = property.rich_text[0].plain_text || '[]';
-    }
-  } catch (propertyError) {
-    // Fallback: if property-specific call fails, try full page retrieve
-    console.warn('Property-specific retrieve failed, falling back to full page retrieve:', propertyError.message);
-    const page = await retryNotionCall(() => 
-      notion.pages.retrieve({ page_id: pageId })
-    );
-    travelEventsString = page.properties['Travel Admin']?.formula?.string || 
-                        page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
-                        '[]';
-  }
+  // Fetch the page and extract Travel Admin property
+  // Note: Using full page retrieve for now - property-specific retrieve may need property ID (UUID)
+  const page = await retryNotionCall(() => 
+    notion.pages.retrieve({ page_id: pageId })
+  );
+
+  // Extract Travel Admin property
+  let travelEventsString = page.properties['Travel Admin']?.formula?.string || 
+                          page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
+                          '[]';
 
   // Clean the string - remove any leading/trailing whitespace
   travelEventsString = travelEventsString.trim();
