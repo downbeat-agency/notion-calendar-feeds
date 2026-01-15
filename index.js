@@ -2111,6 +2111,10 @@ function processTravelEvents(travelGroupsArray) {
     // Process hotels
     if (travelGroup.hotels && Array.isArray(travelGroup.hotels)) {
       travelGroup.hotels.forEach(hotel => {
+        // Use travel group notion_url if hotel doesn't have one
+        if (!hotel.notion_url && travelGroup.notion_url) {
+          hotel.notion_url = travelGroup.notion_url;
+        }
         // Extract location from title (e.g., "Hotel - North Beach ()" -> "North Beach")
         let locationName = '';
         if (hotel.title) {
@@ -2178,18 +2182,28 @@ function processTravelEvents(travelGroupsArray) {
             if (hotel.hotel_apple_maps || hotel.hotel_google_maps) {
               description += `\n🗺️ Maps:\n`;
               if (hotel.hotel_apple_maps) {
-                description += `   ${hotel.hotel_apple_maps}\n`;
+                description += `   Apple Maps: ${hotel.hotel_apple_maps}\n`;
               }
               if (hotel.hotel_google_maps) {
-                description += `   ${hotel.hotel_google_maps}\n`;
+                description += `   Google Maps: ${hotel.hotel_google_maps}\n`;
               }
             }
 
             // Use actual check-in and check-out times
             const checkOutDate = hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000);
             
-            // Location field: use address if available, otherwise hotel name
-            const location = hotel.hotel_address || hotel.hotel_name || '';
+            // Location field: combine hotel name and address
+            let location = '';
+            if (hotel.hotel_name && hotel.hotel_address) {
+              location = `${hotel.hotel_name} ${hotel.hotel_address}`;
+            } else if (hotel.hotel_address) {
+              location = hotel.hotel_address;
+            } else if (hotel.hotel_name) {
+              location = hotel.hotel_name;
+            }
+
+            // URL: prefer notion_url, fallback to Google Maps, then Apple Maps
+            const url = hotel.notion_url || hotel.hotel_google_maps || hotel.hotel_apple_maps || '';
 
             allCalendarEvents.push({
               start: checkIn,
@@ -2197,7 +2211,7 @@ function processTravelEvents(travelGroupsArray) {
               title: title,
               description: description.trim(),
               location: location,
-              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              url: url,
               type: 'hotel_checkin'
             });
           }
@@ -2217,13 +2231,26 @@ function processTravelEvents(travelGroupsArray) {
               description += `\n📋 Confirmation: ${hotel.confirmation}\n`;
             }
 
+            // Location field: combine hotel name and address
+            let location = '';
+            if (hotel.hotel_name && hotel.hotel_address) {
+              location = `${hotel.hotel_name} ${hotel.hotel_address}`;
+            } else if (hotel.hotel_address) {
+              location = hotel.hotel_address;
+            } else if (hotel.hotel_name) {
+              location = hotel.hotel_name;
+            }
+
+            // URL: prefer notion_url, fallback to Google Maps, then Apple Maps
+            const url = hotel.notion_url || hotel.hotel_google_maps || hotel.hotel_apple_maps || '';
+
             allCalendarEvents.push({
               start: checkOut,
               end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
               title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
               description: description.trim(),
-              location: hotel.hotel_address || hotel.hotel_name || '',
-              url: hotel.hotel_google_maps || hotel.hotel_apple_maps || '',
+              location: location,
+              url: url,
               type: 'hotel_checkout'
             });
           }
