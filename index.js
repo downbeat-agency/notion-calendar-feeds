@@ -2020,6 +2020,10 @@ async function getTravelCalendarData() {
 
   // Fix double commas (common JSON formatting issue)
   travelEventsString = travelEventsString.replace(/,,+/g, ',');
+  
+  // Fix malformed arrays where "personnel_ids" appears as a key inside the personnel array
+  // Pattern: ["Name1","Name2","personnel_ids":[...] should become ["Name1","Name2"]
+  travelEventsString = travelEventsString.replace(/("personnel":\[[^\]]*)"personnel_ids":/g, '$1');
 
   try {
     const travelEvents = JSON.parse(travelEventsString);
@@ -2028,6 +2032,13 @@ async function getTravelCalendarData() {
     console.error('Error parsing Travel Admin JSON. First 200 chars:', travelEventsString?.substring(0, 200));
     console.error('Full length:', travelEventsString?.length);
     console.error('Parse error:', e.message);
+    // Try to find the problematic area
+    const errorPos = parseInt(e.message.match(/position (\d+)/)?.[1]) || 0;
+    if (errorPos > 0) {
+      const start = Math.max(0, errorPos - 100);
+      const end = Math.min(travelEventsString.length, errorPos + 100);
+      console.error('Problem area:', travelEventsString.substring(start, end));
+    }
     throw new Error(`Travel Admin JSON parse error: ${e.message}. First 200 chars: ${travelEventsString?.substring(0, 200)}`);
   }
 }
