@@ -2467,19 +2467,11 @@ function processBlockoutEvents(eventsArray) {
         }
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          // Description: Only include reason if available
+          // (Personnel name is in title, Notion URL is in URL field)
           let description = '';
-          
-          // Personnel name
-          description += `👤 ${event.personnel_name}\n`;
-          
-          // Reason if available
           if (event.reason && event.reason.trim()) {
-            description += `\n📋 Reason: ${event.reason}\n`;
-          }
-          
-          // Notion URL
-          if (event.notion_url) {
-            description += `\n🔗 ${event.notion_url}`;
+            description = event.reason.trim();
           }
 
           // Title: "Blockout: [Personnel Name]"
@@ -2489,7 +2481,7 @@ function processBlockoutEvents(eventsArray) {
             start: startDate,
             end: endDate,
             title: title,
-            description: description.trim(),
+            description: description,
             location: '',
             url: event.notion_url || '',
             type: 'blockout_event'
