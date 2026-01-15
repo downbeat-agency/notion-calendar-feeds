@@ -1961,16 +1961,30 @@ async function getTravelCalendarData() {
   );
 
   // Extract Travel Admin property
-  const travelEventsString = page.properties['Travel Admin']?.formula?.string || 
-                            page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
-                            '[]';
+  let travelEventsString = page.properties['Travel Admin']?.formula?.string || 
+                          page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
+                          '[]';
+
+  // Clean the string - remove any leading/trailing whitespace
+  travelEventsString = travelEventsString.trim();
+
+  // Try to extract JSON if there's extra text (look for first [ and last ])
+  if (travelEventsString.includes('[') && travelEventsString.includes(']')) {
+    const firstBracket = travelEventsString.indexOf('[');
+    const lastBracket = travelEventsString.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      travelEventsString = travelEventsString.substring(firstBracket, lastBracket + 1);
+    }
+  }
 
   try {
     const travelEvents = JSON.parse(travelEventsString);
     return Array.isArray(travelEvents) ? travelEvents : [];
   } catch (e) {
-    console.error('Error parsing Travel Admin JSON:', travelEventsString?.substring(0, 100));
-    throw new Error(`Travel Admin JSON parse error: ${e.message}`);
+    console.error('Error parsing Travel Admin JSON. First 200 chars:', travelEventsString?.substring(0, 200));
+    console.error('Full length:', travelEventsString?.length);
+    console.error('Parse error:', e.message);
+    throw new Error(`Travel Admin JSON parse error: ${e.message}. First 200 chars: ${travelEventsString?.substring(0, 200)}`);
   }
 }
 
