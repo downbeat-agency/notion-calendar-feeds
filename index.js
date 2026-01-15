@@ -2083,11 +2083,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
+            if (flight.personnel && flight.personnel.personnel_name && Array.isArray(flight.personnel.personnel_name) && flight.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              flight.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              flight.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
@@ -2148,11 +2147,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (flight.personnel && Array.isArray(flight.personnel) && flight.personnel.length > 0) {
+            if (flight.personnel && flight.personnel.personnel_name && Array.isArray(flight.personnel.personnel_name) && flight.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              flight.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              flight.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
@@ -2236,11 +2234,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
+            if (hotel.personnel && hotel.personnel.personnel_name && Array.isArray(hotel.personnel.personnel_name) && hotel.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              hotel.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              hotel.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
@@ -2322,11 +2319,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (hotel.personnel && Array.isArray(hotel.personnel) && hotel.personnel.length > 0) {
+            if (hotel.personnel && hotel.personnel.personnel_name && Array.isArray(hotel.personnel.personnel_name) && hotel.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              hotel.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              hotel.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
@@ -2381,11 +2377,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
+            if (transport.personnel && transport.personnel.personnel_name && Array.isArray(transport.personnel.personnel_name) && transport.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              transport.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              transport.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
@@ -2437,11 +2432,10 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Personnel
-            if (transport.personnel && Array.isArray(transport.personnel) && transport.personnel.length > 0) {
+            if (transport.personnel && transport.personnel.personnel_name && Array.isArray(transport.personnel.personnel_name) && transport.personnel.personnel_name.length > 0) {
               description += `\n👥 Personnel:\n`;
-              transport.personnel.forEach(person => {
-                // Filter out "personnel_ids" if it somehow got into the array
-                if (person && typeof person === 'string' && person !== 'personnel_ids') {
+              transport.personnel.personnel_name.forEach(person => {
+                if (person && typeof person === 'string') {
                   description += `${person}\n`;
                 }
               });
