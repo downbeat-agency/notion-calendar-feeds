@@ -1028,7 +1028,7 @@ async function regenerateCalendarForPerson(personId) {
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
               mainEvent: event.event_name
             });
           }
@@ -1355,7 +1355,7 @@ async function regenerateCalendarForPerson(personId) {
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
               mainEvent: ''
             });
           }
@@ -2017,7 +2017,7 @@ function processAdminEvents(eventsArray) {
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_pco || '',
               mainEvent: event.event_name || ''
             });
           }
@@ -6403,7 +6403,7 @@ END:VCALENDAR`);
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
               mainEvent: event.event_name
             });
   }
@@ -6730,7 +6730,7 @@ END:VCALENDAR`);
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
               mainEvent: '' // Top-level rehearsals aren't tied to a specific event
             });
           }
