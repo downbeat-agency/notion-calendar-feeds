@@ -1014,6 +1014,9 @@ async function regenerateCalendarForPerson(personId) {
             }
 
             let description = rehearsal.description || `Rehearsal`;
+            if (rehearsal.rehearsal_pay) {
+              description += `\n\nRehearsal Pay - ${rehearsal.rehearsal_pay}`;
+            }
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
@@ -1338,6 +1341,9 @@ async function regenerateCalendarForPerson(personId) {
           if (rehearsalTimes) {
             let location = rehearsal.rehearsal_address ? rehearsal.rehearsal_address.trim().replace(/\u2060/g, '') : 'TBD';
             let description = rehearsal.description || `Rehearsal`;
+            if (rehearsal.rehearsal_pay) {
+              description += `\n\nRehearsal Pay - ${rehearsal.rehearsal_pay}`;
+            }
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
@@ -6383,6 +6389,9 @@ END:VCALENDAR`);
 
             // Build description with rehearsal info at the top
             let description = rehearsal.description || `Rehearsal`;
+            if (rehearsal.rehearsal_pay) {
+              description += `\n\nRehearsal Pay - ${rehearsal.rehearsal_pay}`;
+            }
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
@@ -6707,6 +6716,9 @@ END:VCALENDAR`);
             let location = rehearsal.rehearsal_address ? rehearsal.rehearsal_address.trim().replace(/\u2060/g, '') : 'TBD';
 
             let description = `Rehearsal`;
+            if (rehearsal.rehearsal_pay) {
+              description += `\n\nRehearsal Pay - ${rehearsal.rehearsal_pay}`;
+            }
             if (rehearsal.rehearsal_band) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
