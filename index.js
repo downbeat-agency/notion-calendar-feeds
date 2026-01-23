@@ -552,9 +552,21 @@ function parseUnifiedDateTime(dateTimeStr) {
         endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+          // Final validation: ensure start is before end after conversion
+          // This catches cases where multi-day events might have incorrect ordering
+          let finalStart = startDate;
+          let finalEnd = endDate;
+          
+          if (startDate.getTime() > endDate.getTime()) {
+            console.warn(`[parseUnifiedDateTime @ format] Start > End after conversion. Swapping dates. Original: ${cleanStr}`);
+            // Swap them - this handles edge cases with multi-day events
+            finalStart = endDate;
+            finalEnd = startDate;
+          }
+          
           return {
-            start: startDate,
-            end: endDate
+            start: finalStart,
+            end: finalEnd
           };
         }
       } catch (e) {
@@ -657,6 +669,16 @@ function parseUnifiedDateTime(dateTimeStr) {
           const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
           actualEndDate.setHours(actualEndDate.getHours() - offsetHours);
+        }
+        
+        // Final validation: ensure start is before end after conversion
+        // This catches any edge cases where conversion might cause incorrect ordering
+        if (actualStartDate.getTime() > actualEndDate.getTime()) {
+          console.warn(`[parseUnifiedDateTime] Start > End after conversion. Swapping dates. Original: ${cleanStr}`);
+          // Swap them - this should rarely happen but handles edge cases
+          const temp = actualStartDate;
+          actualStartDate = actualEndDate;
+          actualEndDate = temp;
         }
         
         return {
@@ -778,9 +800,20 @@ async function regenerateCalendarForPerson(personId) {
     eventsArray.forEach(event => {
       // Add main event
       if (event.event_name && event.event_date) {
+        // Debug logging for events crossing midnight
+        if (event.event_name.includes('Gold Standard') || event.event_name.includes('Wedding')) {
+          console.log(`[DEBUG] Event: ${event.event_name}`);
+          console.log(`[DEBUG] event_date: ${event.event_date}`);
+        }
         let eventTimes = parseUnifiedDateTime(event.event_date);
         
         if (eventTimes) {
+          // Debug logging for parsed times
+          if (event.event_name && (event.event_name.includes('Gold Standard') || event.event_name.includes('Wedding'))) {
+            console.log(`[DEBUG] Parsed start: ${eventTimes.start}`);
+            console.log(`[DEBUG] Parsed end: ${eventTimes.end}`);
+            console.log(`[DEBUG] Start > End? ${eventTimes.start.getTime() > eventTimes.end.getTime()}`);
+          }
           let payrollInfo = '';
           if (event.position || event.pay_total || event.assignments) {
             if (event.position) payrollInfo += `Position: ${event.position}\n`;
