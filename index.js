@@ -657,12 +657,11 @@ function parseUnifiedDateTime(dateTimeStr) {
           const minutes = actualStartDate.getUTCMinutes();
           const seconds = actualStartDate.getUTCSeconds();
           
-          // Handle hour underflow (if subtracting offset makes hours negative)
+          // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Create a new date one day earlier
-            const prevDay = new Date(Date.UTC(year, month, day - 1));
-            actualStartDate = new Date(prevDay.getUTCFullYear(), prevDay.getUTCMonth(), prevDay.getUTCDate(), hours, minutes, seconds);
+            // Use Date constructor which handles month/day boundaries correctly
+            actualStartDate = new Date(year, month, day - 1, hours, minutes, seconds);
           } else {
             actualStartDate = new Date(year, month, day, hours, minutes, seconds);
           }
@@ -679,15 +678,20 @@ function parseUnifiedDateTime(dateTimeStr) {
           const minutes = actualEndDate.getUTCMinutes();
           const seconds = actualEndDate.getUTCSeconds();
           
-          // Handle hour underflow (if subtracting offset makes hours negative)
+          // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Create a new date one day earlier
-            const prevDay = new Date(Date.UTC(year, month, day - 1));
-            actualEndDate = new Date(prevDay.getUTCFullYear(), prevDay.getUTCMonth(), prevDay.getUTCDate(), hours, minutes, seconds);
+            // Use Date constructor which handles month/day boundaries correctly
+            actualEndDate = new Date(year, month, day - 1, hours, minutes, seconds);
           } else {
             actualEndDate = new Date(year, month, day, hours, minutes, seconds);
           }
+        }
+        
+        // Validate that dates are valid
+        if (isNaN(actualStartDate.getTime()) || isNaN(actualEndDate.getTime())) {
+          console.warn(`[parseUnifiedDateTime] Invalid date after conversion. Original: ${cleanStr}`);
+          return null;
         }
         
         // Final validation: ensure start is before end after conversion
