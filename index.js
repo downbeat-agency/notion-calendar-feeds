@@ -605,28 +605,15 @@ function parseUnifiedDateTime(dateTimeStr) {
       const firstStr = parts[0].trim();
       const secondStr = parts[1].trim();
       
-      // Parse both dates to determine which is actually earlier (start) and which is later (end)
-      // This handles cases where the date range might be provided in reverse order
-      const firstDate = new Date(firstStr);
-      const secondDate = new Date(secondStr);
+      // Parse both dates - trust the order in the string (first = start, second = end)
+      // Don't swap based on UTC comparison, as the database may have times that cross midnight
+      // in a way that makes UTC comparison misleading
+      const actualStartDate = new Date(firstStr);
+      const actualEndDate = new Date(secondStr);
+      const actualStartStr = firstStr;
+      const actualEndStr = secondStr;
       
-      if (!isNaN(firstDate.getTime()) && !isNaN(secondDate.getTime())) {
-        // Determine which date is actually the start (earlier) and which is the end (later)
-        // by comparing the original UTC timestamps
-        let actualStartDate, actualEndDate, actualStartStr, actualEndStr;
-        if (firstDate.getTime() <= secondDate.getTime()) {
-          // First is earlier, so it's the start
-          actualStartDate = firstDate;
-          actualEndDate = secondDate;
-          actualStartStr = firstStr;
-          actualEndStr = secondStr;
-        } else {
-          // Second is earlier, so it's the start (dates were in reverse order)
-          actualStartDate = secondDate;
-          actualEndDate = firstDate;
-          actualStartStr = secondStr;
-          actualEndStr = firstStr;
-        }
+      if (!isNaN(actualStartDate.getTime()) && !isNaN(actualEndDate.getTime())) {
         
         // Check if these are UTC timestamps and convert to Pacific floating time
         const isUTCStart = actualStartStr.includes('T') && (actualStartStr.includes('Z') || actualStartStr.includes('+00:00'));
