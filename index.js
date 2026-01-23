@@ -662,13 +662,45 @@ function parseUnifiedDateTime(dateTimeStr) {
         if (isUTCStart) {
           const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
-          actualStartDate.setHours(actualStartDate.getHours() - offsetHours);
+          // Extract UTC components and convert to Pacific time
+          const year = actualStartDate.getUTCFullYear();
+          const month = actualStartDate.getUTCMonth();
+          const day = actualStartDate.getUTCDate();
+          let hours = actualStartDate.getUTCHours() - offsetHours;
+          const minutes = actualStartDate.getUTCMinutes();
+          const seconds = actualStartDate.getUTCSeconds();
+          
+          // Handle hour underflow (if subtracting offset makes hours negative)
+          if (hours < 0) {
+            hours += 24;
+            // Create a new date one day earlier
+            const prevDay = new Date(Date.UTC(year, month, day - 1));
+            actualStartDate = new Date(prevDay.getUTCFullYear(), prevDay.getUTCMonth(), prevDay.getUTCDate(), hours, minutes, seconds);
+          } else {
+            actualStartDate = new Date(year, month, day, hours, minutes, seconds);
+          }
         }
         
         if (isUTCEnd) {
           const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
-          actualEndDate.setHours(actualEndDate.getHours() - offsetHours);
+          // Extract UTC components and convert to Pacific time
+          const year = actualEndDate.getUTCFullYear();
+          const month = actualEndDate.getUTCMonth();
+          const day = actualEndDate.getUTCDate();
+          let hours = actualEndDate.getUTCHours() - offsetHours;
+          const minutes = actualEndDate.getUTCMinutes();
+          const seconds = actualEndDate.getUTCSeconds();
+          
+          // Handle hour underflow (if subtracting offset makes hours negative)
+          if (hours < 0) {
+            hours += 24;
+            // Create a new date one day earlier
+            const prevDay = new Date(Date.UTC(year, month, day - 1));
+            actualEndDate = new Date(prevDay.getUTCFullYear(), prevDay.getUTCMonth(), prevDay.getUTCDate(), hours, minutes, seconds);
+          } else {
+            actualEndDate = new Date(year, month, day, hours, minutes, seconds);
+          }
         }
         
         // Final validation: ensure start is before end after conversion
