@@ -608,8 +608,8 @@ function parseUnifiedDateTime(dateTimeStr) {
       // Parse both dates - trust the order in the string (first = start, second = end)
       // Don't swap based on UTC comparison, as the database may have times that cross midnight
       // in a way that makes UTC comparison misleading
-      const actualStartDate = new Date(firstStr);
-      const actualEndDate = new Date(secondStr);
+      let actualStartDate = new Date(firstStr);
+      let actualEndDate = new Date(secondStr);
       const actualStartStr = firstStr;
       const actualEndStr = secondStr;
       
