@@ -589,30 +589,52 @@ function parseUnifiedDateTime(dateTimeStr) {
   // Special handling for date range format: "2025-08-26T15:30:00+00:00/2025-09-14T06:00:00+00:00"
   if (cleanStr.includes('/')) {
     try {
-      const [startStr, endStr] = cleanStr.split('/');
-      const startDate = new Date(startStr.trim());
-      const endDate = new Date(endStr.trim());
+      const parts = cleanStr.split('/');
+      const firstStr = parts[0].trim();
+      const secondStr = parts[1].trim();
       
-      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+      // Parse both dates to determine which is actually earlier (start) and which is later (end)
+      // This handles cases where the date range might be provided in reverse order
+      const firstDate = new Date(firstStr);
+      const secondDate = new Date(secondStr);
+      
+      if (!isNaN(firstDate.getTime()) && !isNaN(secondDate.getTime())) {
+        // Determine which date is actually the start (earlier) and which is the end (later)
+        // by comparing the original UTC timestamps
+        let actualStartDate, actualEndDate, actualStartStr, actualEndStr;
+        if (firstDate.getTime() <= secondDate.getTime()) {
+          // First is earlier, so it's the start
+          actualStartDate = firstDate;
+          actualEndDate = secondDate;
+          actualStartStr = firstStr;
+          actualEndStr = secondStr;
+        } else {
+          // Second is earlier, so it's the start (dates were in reverse order)
+          actualStartDate = secondDate;
+          actualEndDate = firstDate;
+          actualStartStr = secondStr;
+          actualEndStr = firstStr;
+        }
+        
         // Check if these are UTC timestamps and convert to Pacific floating time
-        const isUTCStart = startStr.includes('T') && (startStr.includes('Z') || startStr.includes('+00:00'));
-        const isUTCEnd = endStr.includes('T') && (endStr.includes('Z') || endStr.includes('+00:00'));
+        const isUTCStart = actualStartStr.includes('T') && (actualStartStr.includes('Z') || actualStartStr.includes('+00:00'));
+        const isUTCEnd = actualEndStr.includes('T') && (actualEndStr.includes('Z') || actualEndStr.includes('+00:00'));
         
         // Check if this appears to be an all-day event (midnight UTC times)
         // All-day events typically have times at 00:00:00 UTC
-        const isAllDayStart = isUTCStart && startStr.match(/T00:00:00/);
-        const isAllDayEnd = isUTCEnd && endStr.match(/T00:00:00/);
+        const isAllDayStart = isUTCStart && actualStartStr.match(/T00:00:00/);
+        const isAllDayEnd = isUTCEnd && actualEndStr.match(/T00:00:00/);
         
         if (isAllDayStart && isAllDayEnd) {
           // For all-day events, extract date components and create dates at midnight Pacific
           // This prevents date shifting when converting from UTC
-          const startYear = startDate.getUTCFullYear();
-          const startMonth = startDate.getUTCMonth();
-          const startDay = startDate.getUTCDate();
+          const startYear = actualStartDate.getUTCFullYear();
+          const startMonth = actualStartDate.getUTCMonth();
+          const startDay = actualStartDate.getUTCDate();
           
-          const endYear = endDate.getUTCFullYear();
-          const endMonth = endDate.getUTCMonth();
-          const endDay = endDate.getUTCDate();
+          const endYear = actualEndDate.getUTCFullYear();
+          const endMonth = actualEndDate.getUTCMonth();
+          const endDay = actualEndDate.getUTCDate();
           
           // Create new dates at midnight Pacific time (floating, no timezone)
           const pacificStart = new Date(startYear, startMonth, startDay, 0, 0, 0);
@@ -626,20 +648,20 @@ function parseUnifiedDateTime(dateTimeStr) {
         
         // For timed events, convert UTC to Pacific floating time
         if (isUTCStart) {
-          const isDST = isDSTDate(startDate);
+          const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
-          startDate.setHours(startDate.getHours() - offsetHours);
+          actualStartDate.setHours(actualStartDate.getHours() - offsetHours);
         }
         
         if (isUTCEnd) {
-          const isDST = isDSTDate(endDate);
+          const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
-          endDate.setHours(endDate.getHours() - offsetHours);
+          actualEndDate.setHours(actualEndDate.getHours() - offsetHours);
         }
         
         return {
-          start: startDate,
-          end: endDate
+          start: actualStartDate,
+          end: actualEndDate
         };
       }
     } catch (e) {
