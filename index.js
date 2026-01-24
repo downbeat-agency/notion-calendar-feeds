@@ -2166,9 +2166,19 @@ async function getTravelCalendarData() {
   }
 }
 
+// Debug collector for travel calendar
+let travelDebugLogs = [];
+function travelDebugLog(message) {
+  console.log(message);
+  travelDebugLogs.push(message);
+}
+function clearTravelDebugLogs() { travelDebugLogs = []; }
+function getTravelDebugLogs() { return travelDebugLogs; }
+
 // Helper function to process travel events into calendar format
 function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
+  clearTravelDebugLogs();
 
   // Each element is a travel group with flights, hotels, and ground_transportation
   travelGroupsArray.forEach(travelGroup => {
@@ -2185,13 +2195,13 @@ function processTravelEvents(travelGroupsArray) {
           
           // DEBUG: Log flight time conversion
           if (flight.departure_name && flight.departure_name.includes('RSW')) {
-            console.log(`[DEBUG-TRAVEL] Flight: ${flight.departure_name}`);
-            console.log(`[DEBUG-TRAVEL] Raw departure_time: ${flight.departure_time}`);
-            console.log(`[DEBUG-TRAVEL] Raw departure_arrival_time: ${flight.departure_arrival_time}`);
-            console.log(`[DEBUG-TRAVEL] depTimes from parseUnifiedDateTime: ${depTimes ? JSON.stringify({start: depTimes.start.toString(), end: depTimes.end.toString()}) : 'null'}`);
-            console.log(`[DEBUG-TRAVEL] depEndTimes from parseUnifiedDateTime: ${depEndTimes ? JSON.stringify({start: depEndTimes.start.toString()}) : 'null'}`);
-            console.log(`[DEBUG-TRAVEL] Final depStart: ${depStart.toString()}`);
-            console.log(`[DEBUG-TRAVEL] Final depEnd: ${depEnd.toString()}`);
+            travelDebugLog(`[DEBUG-TRAVEL] Flight: ${flight.departure_name}`);
+            travelDebugLog(`[DEBUG-TRAVEL] Raw departure_time: ${flight.departure_time}`);
+            travelDebugLog(`[DEBUG-TRAVEL] Raw departure_arrival_time: ${flight.departure_arrival_time}`);
+            travelDebugLog(`[DEBUG-TRAVEL] depTimes from parseUnifiedDateTime: ${depTimes ? JSON.stringify({start: depTimes.start.toString(), end: depTimes.end.toString()}) : 'null'}`);
+            travelDebugLog(`[DEBUG-TRAVEL] depEndTimes from parseUnifiedDateTime: ${depEndTimes ? JSON.stringify({start: depEndTimes.start.toString()}) : 'null'}`);
+            travelDebugLog(`[DEBUG-TRAVEL] Final depStart: ${depStart.toString()}`);
+            travelDebugLog(`[DEBUG-TRAVEL] Final depEnd: ${depEnd.toString()}`);
           }
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
@@ -5617,7 +5627,8 @@ app.get('/travel/calendar/regen', async (req, res) => {
       message: 'Travel calendar regenerated successfully',
       total_events: allCalendarEvents.length,
       cache_cleared: true,
-      cached_for_seconds: CACHE_TTL
+      cached_for_seconds: CACHE_TTL,
+      debugLogs: getTravelDebugLogs()
     });
 
   } catch (error) {
