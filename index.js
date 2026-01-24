@@ -768,8 +768,13 @@ function parseUnifiedDateTime(dateTimeStr) {
     const date = new Date(cleanStr);
     
     if (!isNaN(date.getTime())) {
-      // For UTC times (ISO timestamps with Z or +00:00), add Pacific offset to convert to Pacific floating time
-      const isUTCTime = cleanStr.includes('T') && (cleanStr.includes('Z') || cleanStr.includes('+00:00'));
+      // For ISO timestamps (with T), convert from UTC to Pacific floating time
+      // This handles: "2026-02-12T14:00:00" (no TZ), "...+00:00", "...Z"
+      // Timestamps without explicit timezone are treated as UTC by JS Date
+      // Skip conversion only for explicitly Pacific timestamps (-07:00 or -08:00)
+      const isISOTimestamp = cleanStr.includes('T');
+      const isPacificTimezone = cleanStr.includes('-07:00') || cleanStr.includes('-08:00');
+      const isUTCTime = isISOTimestamp && !isPacificTimezone;
       
       if (isUTCTime) {
         // Check if this appears to be an all-day event (midnight UTC time)
