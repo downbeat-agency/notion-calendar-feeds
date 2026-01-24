@@ -12,6 +12,17 @@ import axios from 'axios';
 // Force deployment - testing event_personnel integration
 // DEBUG VERSION - Testing deployment process
 
+// #region agent log - Debug collector for API responses
+let debugLogs = [];
+function debugLog(tag, message) {
+  const entry = `[${tag}] ${message}`;
+  console.log(entry);
+  debugLogs.push(entry);
+}
+function clearDebugLogs() { debugLogs = []; }
+function getDebugLogs() { return debugLogs; }
+// #endregion
+
 const app = express();
 const port = process.env.PORT || 3000;
 const notion = new Client({ 
@@ -605,6 +616,12 @@ function parseUnifiedDateTime(dateTimeStr) {
       const firstStr = parts[0].trim();
       const secondStr = parts[1].trim();
       
+      // #region agent log
+      if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+        debugLog('DEBUG-D', `INPUT: cleanStr=${cleanStr}, firstStr=${firstStr}, secondStr=${secondStr}`);
+      }
+      // #endregion
+      
       // Parse both dates - trust the order in the string (first = start, second = end)
       // Don't swap based on UTC comparison, as the database may have times that cross midnight
       // in a way that makes UTC comparison misleading
@@ -623,6 +640,12 @@ function parseUnifiedDateTime(dateTimeStr) {
         // All-day events typically have times at 00:00:00 UTC
         const isAllDayStart = isUTCStart && actualStartStr.match(/T00:00:00/);
         const isAllDayEnd = isUTCEnd && actualEndStr.match(/T00:00:00/);
+        
+        // #region agent log
+        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+          debugLog('DEBUG-NEW', `ALL-DAY check: isUTCStart=${isUTCStart}, isUTCEnd=${isUTCEnd}, isAllDayStart=${!!isAllDayStart}, isAllDayEnd=${!!isAllDayEnd}, willTreatAsAllDay=${!!(isAllDayStart&&isAllDayEnd)}`);
+        }
+        // #endregion
         
         if (isAllDayStart && isAllDayEnd) {
           // For all-day events, extract date components and create dates at midnight Pacific
@@ -653,9 +676,16 @@ function parseUnifiedDateTime(dateTimeStr) {
           const year = actualStartDate.getUTCFullYear();
           const month = actualStartDate.getUTCMonth();
           const day = actualStartDate.getUTCDate();
-          let hours = actualStartDate.getUTCHours() - offsetHours;
+          const originalUTCHours = actualStartDate.getUTCHours();
+          let hours = originalUTCHours - offsetHours;
           const minutes = actualStartDate.getUTCMinutes();
           const seconds = actualStartDate.getUTCSeconds();
+          
+          // #region agent log
+          if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+            debugLog('DEBUG-ABE', `START: isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
+          }
+          // #endregion
           
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
@@ -674,9 +704,16 @@ function parseUnifiedDateTime(dateTimeStr) {
           const year = actualEndDate.getUTCFullYear();
           const month = actualEndDate.getUTCMonth();
           const day = actualEndDate.getUTCDate();
-          let hours = actualEndDate.getUTCHours() - offsetHours;
+          const originalUTCHours = actualEndDate.getUTCHours();
+          let hours = originalUTCHours - offsetHours;
           const minutes = actualEndDate.getUTCMinutes();
           const seconds = actualEndDate.getUTCSeconds();
+          
+          // #region agent log
+          if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+            debugLog('DEBUG-ABE', `END: isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
+          }
+          // #endregion
           
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
@@ -694,6 +731,13 @@ function parseUnifiedDateTime(dateTimeStr) {
           return null;
         }
         
+        // #region agent log
+        const willSwap = actualStartDate.getTime() > actualEndDate.getTime();
+        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+          debugLog('DEBUG-C', `BEFORE validation: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, willSwap=${willSwap}`);
+        }
+        // #endregion
+        
         // Final validation: ensure start is before end after conversion
         // This catches any edge cases where conversion might cause incorrect ordering
         if (actualStartDate.getTime() > actualEndDate.getTime()) {
@@ -703,6 +747,12 @@ function parseUnifiedDateTime(dateTimeStr) {
           actualStartDate = actualEndDate;
           actualEndDate = temp;
         }
+        
+        // #region agent log
+        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+          debugLog('DEBUG-ALL', `FINAL: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, swapped=${willSwap}`);
+        }
+        // #endregion
         
         return {
           start: actualStartDate,
@@ -3182,12 +3232,20 @@ app.get('/regenerate/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     
+    // #region agent log - Clear debug logs before regeneration
+    clearDebugLogs();
+    // #endregion
+    
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
     const result = await regenerateCalendarForPerson(personId);
+    
+    // #region agent log - Get collected debug logs
+    const collectedDebugLogs = getDebugLogs();
+    // #endregion
     
     if (result.success) {
       res.json({
@@ -3196,14 +3254,16 @@ app.get('/regenerate/:personId', async (req, res) => {
         personId: result.personId,
         personName: result.personName,
         eventCount: result.eventCount,
-        cacheTTL: CACHE_TTL
+        cacheTTL: CACHE_TTL,
+        debugLogs: collectedDebugLogs // Include debug logs in response
       });
     } else {
       res.status(404).json({
         success: false,
         message: 'Failed to regenerate calendar',
         personId: result.personId,
-        reason: result.reason || result.error
+        reason: result.reason || result.error,
+        debugLogs: collectedDebugLogs // Include debug logs in response
       });
     }
   } catch (error) {
@@ -3211,7 +3271,8 @@ app.get('/regenerate/:personId', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error regenerating calendar',
-      details: error.message
+      details: error.message,
+      debugLogs: getDebugLogs() // Include debug logs in response
     });
   }
 });
