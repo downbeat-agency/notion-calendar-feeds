@@ -2156,19 +2156,9 @@ async function getTravelCalendarData() {
   }
 }
 
-// Debug collector for travel calendar
-let travelDebugLogs = [];
-function travelDebugLog(message) {
-  console.log(message);
-  travelDebugLogs.push(message);
-}
-function clearTravelDebugLogs() { travelDebugLogs = []; }
-function getTravelDebugLogs() { return travelDebugLogs; }
-
 // Helper function to process travel events into calendar format
 function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
-  clearTravelDebugLogs();
 
   // Each element is a travel group with flights, hotels, and ground_transportation
   travelGroupsArray.forEach(travelGroup => {
@@ -2182,17 +2172,6 @@ function processTravelEvents(travelGroupsArray) {
           const depEndTimes = parseUnifiedDateTime(flight.departure_arrival_time);
           const depStart = depTimes ? depTimes.start : new Date(flight.departure_time);
           const depEnd = depEndTimes ? depEndTimes.start : new Date(flight.departure_arrival_time);
-          
-          // DEBUG: Log flight time conversion
-          if (flight.departure_name && flight.departure_name.includes('RSW')) {
-            travelDebugLog(`[DEBUG-TRAVEL] Flight: ${flight.departure_name}`);
-            travelDebugLog(`[DEBUG-TRAVEL] Raw departure_time: ${flight.departure_time}`);
-            travelDebugLog(`[DEBUG-TRAVEL] Raw departure_arrival_time: ${flight.departure_arrival_time}`);
-            travelDebugLog(`[DEBUG-TRAVEL] depTimes from parseUnifiedDateTime: ${depTimes ? JSON.stringify({start: depTimes.start.toString(), end: depTimes.end.toString()}) : 'null'}`);
-            travelDebugLog(`[DEBUG-TRAVEL] depEndTimes from parseUnifiedDateTime: ${depEndTimes ? JSON.stringify({start: depEndTimes.start.toString()}) : 'null'}`);
-            travelDebugLog(`[DEBUG-TRAVEL] Final depStart: ${depStart.toString()}`);
-            travelDebugLog(`[DEBUG-TRAVEL] Final depEnd: ${depEnd.toString()}`);
-          }
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
             // Build route string
@@ -2359,16 +2338,6 @@ function processTravelEvents(travelGroupsArray) {
           // Use parseUnifiedDateTime for proper UTC to Pacific conversion
           const checkInTimes = parseUnifiedDateTime(hotel.check_in);
           const checkIn = checkInTimes ? checkInTimes.start : new Date(hotel.check_in);
-          
-          // DEBUG: Log hotel check-in conversion
-          if (hotel.hotel_name && hotel.hotel_name.includes('Home2')) {
-            travelDebugLog(`[DEBUG-HOTEL] Hotel: ${hotel.hotel_name}`);
-            travelDebugLog(`[DEBUG-HOTEL] Raw check_in: ${hotel.check_in}`);
-            travelDebugLog(`[DEBUG-HOTEL] Raw check_out: ${hotel.check_out}`);
-            travelDebugLog(`[DEBUG-HOTEL] checkInTimes from parseUnifiedDateTime: ${checkInTimes ? JSON.stringify({start: checkInTimes.start.toString()}) : 'null'}`);
-            travelDebugLog(`[DEBUG-HOTEL] Final checkIn: ${checkIn.toString()}`);
-          }
-          
           if (!isNaN(checkIn.getTime())) {
             let description = '';
             
@@ -5627,8 +5596,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
       message: 'Travel calendar regenerated successfully',
       total_events: allCalendarEvents.length,
       cache_cleared: true,
-      cached_for_seconds: CACHE_TTL,
-      debugLogs: getTravelDebugLogs()
+      cached_for_seconds: CACHE_TTL
     });
 
   } catch (error) {
