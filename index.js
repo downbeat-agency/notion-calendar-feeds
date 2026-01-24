@@ -2374,6 +2374,16 @@ function processTravelEvents(travelGroupsArray) {
           // Use parseUnifiedDateTime for proper UTC to Pacific conversion
           const checkInTimes = parseUnifiedDateTime(hotel.check_in);
           const checkIn = checkInTimes ? checkInTimes.start : new Date(hotel.check_in);
+          
+          // DEBUG: Log hotel check-in conversion
+          if (hotel.hotel_name && hotel.hotel_name.includes('Home2')) {
+            travelDebugLog(`[DEBUG-HOTEL] Hotel: ${hotel.hotel_name}`);
+            travelDebugLog(`[DEBUG-HOTEL] Raw check_in: ${hotel.check_in}`);
+            travelDebugLog(`[DEBUG-HOTEL] Raw check_out: ${hotel.check_out}`);
+            travelDebugLog(`[DEBUG-HOTEL] checkInTimes from parseUnifiedDateTime: ${checkInTimes ? JSON.stringify({start: checkInTimes.start.toString()}) : 'null'}`);
+            travelDebugLog(`[DEBUG-HOTEL] Final checkIn: ${checkIn.toString()}`);
+          }
+          
           if (!isNaN(checkIn.getTime())) {
             let description = '';
             
