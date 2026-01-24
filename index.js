@@ -668,24 +668,51 @@ function parseUnifiedDateTime(dateTimeStr) {
           };
         }
         
+        // CROSS-MIDNIGHT DETECTION: Check if this is a cross-midnight event where Notion
+        // stored the START time as Pacific time (incorrectly tagged as UTC)
+        // Detection: Both timestamps on same UTC day, but first hour > second hour
+        const sameUTCDay = actualStartDate.getUTCFullYear() === actualEndDate.getUTCFullYear() &&
+                          actualStartDate.getUTCMonth() === actualEndDate.getUTCMonth() &&
+                          actualStartDate.getUTCDate() === actualEndDate.getUTCDate();
+        const startHourGreater = actualStartDate.getUTCHours() > actualEndDate.getUTCHours();
+        const isCrossMidnightEvent = sameUTCDay && startHourGreater;
+        
+        // #region agent log
+        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+          debugLog('DEBUG-CROSS', `Cross-midnight detection: sameUTCDay=${sameUTCDay}, startHour=${actualStartDate.getUTCHours()}, endHour=${actualEndDate.getUTCHours()}, isCrossMidnight=${isCrossMidnightEvent}`);
+        }
+        // #endregion
+        
         // For timed events, convert UTC to Pacific floating time
         if (isUTCStart) {
           const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
-          // Extract UTC components and convert to Pacific time
+          // Extract UTC components
           const year = actualStartDate.getUTCFullYear();
           const month = actualStartDate.getUTCMonth();
           const day = actualStartDate.getUTCDate();
           const originalUTCHours = actualStartDate.getUTCHours();
-          let hours = originalUTCHours - offsetHours;
           const minutes = actualStartDate.getUTCMinutes();
           const seconds = actualStartDate.getUTCSeconds();
           
-          // #region agent log
-          if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-            debugLog('DEBUG-ABE', `START: isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
+          // For cross-midnight events, the START time is already in Pacific (incorrectly tagged as UTC)
+          // So we should NOT subtract the offset - just use the hour value directly
+          let hours;
+          if (isCrossMidnightEvent) {
+            hours = originalUTCHours; // Use directly as Pacific time
+            // #region agent log
+            if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+              debugLog('DEBUG-ABE', `START (cross-midnight, NO conversion): hours=${hours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}`);
+            }
+            // #endregion
+          } else {
+            hours = originalUTCHours - offsetHours;
+            // #region agent log
+            if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
+              debugLog('DEBUG-ABE', `START (normal conversion): isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
+            }
+            // #endregion
           }
-          // #endregion
           
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
@@ -711,7 +738,7 @@ function parseUnifiedDateTime(dateTimeStr) {
           
           // #region agent log
           if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-            debugLog('DEBUG-ABE', `END: isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
+            debugLog('DEBUG-ABE', `END (always convert): isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
           }
           // #endregion
           
