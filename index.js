@@ -10,18 +10,6 @@ import axios from 'axios';
 // Updated with event_personnel field support - October 8, 2025
 // Retry deployment after network issues resolved
 // Force deployment - testing event_personnel integration
-// DEBUG VERSION - Testing deployment process
-
-// #region agent log - Debug collector for API responses
-let debugLogs = [];
-function debugLog(tag, message) {
-  const entry = `[${tag}] ${message}`;
-  console.log(entry);
-  debugLogs.push(entry);
-}
-function clearDebugLogs() { debugLogs = []; }
-function getDebugLogs() { return debugLogs; }
-// #endregion
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -268,6 +256,37 @@ function isDSTDate(date) {
   
   const checkDate = new Date(year, month, day);
   return checkDate >= dstStart && checkDate < dstEnd;
+}
+
+// Helper function to format ISO timestamp to readable time (e.g., "1:30 PM")
+// The calltime is stored as Pacific time but tagged as UTC, so we use the hour value directly
+function formatCallTime(isoTimestamp) {
+  if (!isoTimestamp || typeof isoTimestamp !== 'string') {
+    return isoTimestamp;
+  }
+  
+  // Try to parse as ISO timestamp
+  const match = isoTimestamp.match(/T(\d{2}):(\d{2})/);
+  if (!match) {
+    return isoTimestamp; // Return as-is if not ISO format
+  }
+  
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  
+  // Convert to 12-hour format
+  const period = hours >= 12 ? 'PM' : 'AM';
+  if (hours === 0) {
+    hours = 12;
+  } else if (hours > 12) {
+    hours -= 12;
+  }
+  
+  // Format with or without minutes
+  if (minutes === '00') {
+    return `${hours} ${period}`;
+  }
+  return `${hours}:${minutes} ${period}`;
 }
 
 // Helper function to retry Notion API calls with exponential backoff
@@ -616,12 +635,6 @@ function parseUnifiedDateTime(dateTimeStr) {
       const firstStr = parts[0].trim();
       const secondStr = parts[1].trim();
       
-      // #region agent log
-      if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-        debugLog('DEBUG-D', `INPUT: cleanStr=${cleanStr}, firstStr=${firstStr}, secondStr=${secondStr}`);
-      }
-      // #endregion
-      
       // Parse both dates - trust the order in the string (first = start, second = end)
       // Don't swap based on UTC comparison, as the database may have times that cross midnight
       // in a way that makes UTC comparison misleading
@@ -640,12 +653,6 @@ function parseUnifiedDateTime(dateTimeStr) {
         // All-day events typically have times at 00:00:00 UTC
         const isAllDayStart = isUTCStart && actualStartStr.match(/T00:00:00/);
         const isAllDayEnd = isUTCEnd && actualEndStr.match(/T00:00:00/);
-        
-        // #region agent log
-        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-NEW', `ALL-DAY check: isUTCStart=${isUTCStart}, isUTCEnd=${isUTCEnd}, isAllDayStart=${!!isAllDayStart}, isAllDayEnd=${!!isAllDayEnd}, willTreatAsAllDay=${!!(isAllDayStart&&isAllDayEnd)}`);
-        }
-        // #endregion
         
         if (isAllDayStart && isAllDayEnd) {
           // For all-day events, extract date components and create dates at midnight Pacific
@@ -677,12 +684,6 @@ function parseUnifiedDateTime(dateTimeStr) {
         const startHourGreater = actualStartDate.getUTCHours() > actualEndDate.getUTCHours();
         const isCrossMidnightEvent = sameUTCDay && startHourGreater;
         
-        // #region agent log
-        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-CROSS', `Cross-midnight detection: sameUTCDay=${sameUTCDay}, startHour=${actualStartDate.getUTCHours()}, endHour=${actualEndDate.getUTCHours()}, isCrossMidnight=${isCrossMidnightEvent}`);
-        }
-        // #endregion
-        
         // For timed events, convert UTC to Pacific floating time
         if (isUTCStart) {
           const isDST = isDSTDate(actualStartDate);
@@ -697,21 +698,13 @@ function parseUnifiedDateTime(dateTimeStr) {
           
           // For cross-midnight events, the START time is already in Pacific (incorrectly tagged as UTC)
           // So we should NOT subtract the offset - just use the hour value directly
+          // For cross-midnight events, the START time is already in Pacific (incorrectly tagged as UTC)
+          // So we should NOT subtract the offset - just use the hour value directly
           let hours;
           if (isCrossMidnightEvent) {
             hours = originalUTCHours; // Use directly as Pacific time
-            // #region agent log
-            if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-              debugLog('DEBUG-ABE', `START (cross-midnight, NO conversion): hours=${hours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}`);
-            }
-            // #endregion
           } else {
             hours = originalUTCHours - offsetHours;
-            // #region agent log
-            if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-              debugLog('DEBUG-ABE', `START (normal conversion): isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
-            }
-            // #endregion
           }
           
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
@@ -736,12 +729,6 @@ function parseUnifiedDateTime(dateTimeStr) {
           const minutes = actualEndDate.getUTCMinutes();
           const seconds = actualEndDate.getUTCSeconds();
           
-          // #region agent log
-          if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-            debugLog('DEBUG-ABE', `END (always convert): isDST=${isDST}, offset=${offsetHours}, UTC=${year}-${month+1}-${day} ${originalUTCHours}:${minutes}, hoursAfterOffset=${hours}, willRollback=${hours<0}`);
-          }
-          // #endregion
-          
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
@@ -758,27 +745,13 @@ function parseUnifiedDateTime(dateTimeStr) {
           return null;
         }
         
-        // #region agent log
-        const startGreaterThanEnd = actualStartDate.getTime() > actualEndDate.getTime();
-        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-C', `BEFORE validation: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, startGreaterThanEnd=${startGreaterThanEnd}`);
-        }
-        // #endregion
-        
         // Handle cross-midnight events: if start > end after Pacific conversion,
         // this means the event spans midnight and the start should be on the PREVIOUS day
         // (NOT a swap - move start back 24 hours instead)
         if (actualStartDate.getTime() > actualEndDate.getTime()) {
-          console.log(`[parseUnifiedDateTime] Cross-midnight event detected. Moving start back 24 hours. Original: ${cleanStr}`);
           // Move start back by 24 hours (one day earlier) - this is a cross-midnight event
           actualStartDate = new Date(actualStartDate.getTime() - 24 * 60 * 60 * 1000);
         }
-        
-        // #region agent log
-        if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-ALL', `FINAL: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, wasCrossMidnight=${startGreaterThanEnd}`);
-        }
-        // #endregion
         
         return {
           start: actualStartDate,
@@ -923,7 +896,7 @@ async function regenerateCalendarForPerson(personId) {
 
           let calltimeInfo = '';
           if (event.calltime) {
-            calltimeInfo = `➡️ Call Time: ${event.calltime}\n\n`;
+            calltimeInfo = `➡️ Call Time: ${formatCallTime(event.calltime)}\n\n`;
           }
 
           let gearChecklistInfo = '';
@@ -3258,20 +3231,12 @@ app.get('/regenerate/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     
-    // #region agent log - Clear debug logs before regeneration
-    clearDebugLogs();
-    // #endregion
-    
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
     const result = await regenerateCalendarForPerson(personId);
-    
-    // #region agent log - Get collected debug logs
-    const collectedDebugLogs = getDebugLogs();
-    // #endregion
     
     if (result.success) {
       res.json({
@@ -3280,16 +3245,14 @@ app.get('/regenerate/:personId', async (req, res) => {
         personId: result.personId,
         personName: result.personName,
         eventCount: result.eventCount,
-        cacheTTL: CACHE_TTL,
-        debugLogs: collectedDebugLogs // Include debug logs in response
+        cacheTTL: CACHE_TTL
       });
     } else {
       res.status(404).json({
         success: false,
         message: 'Failed to regenerate calendar',
         personId: result.personId,
-        reason: result.reason || result.error,
-        debugLogs: collectedDebugLogs // Include debug logs in response
+        reason: result.reason || result.error
       });
     }
   } catch (error) {
@@ -3297,8 +3260,7 @@ app.get('/regenerate/:personId', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error regenerating calendar',
-      details: error.message,
-      debugLogs: getDebugLogs() // Include debug logs in response
+      details: error.message
     });
   }
 });
@@ -6197,7 +6159,7 @@ END:VCALENDAR`);
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime) {
-            calltimeInfo = `➡️ Call Time: ${event.calltime}\n\n`;
+            calltimeInfo = `➡️ Call Time: ${formatCallTime(event.calltime)}\n\n`;
           }
 
           // Build gear checklist info (after calltime, before personnel)
