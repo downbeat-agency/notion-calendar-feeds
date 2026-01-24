@@ -732,25 +732,24 @@ function parseUnifiedDateTime(dateTimeStr) {
         }
         
         // #region agent log
-        const willSwap = actualStartDate.getTime() > actualEndDate.getTime();
+        const startGreaterThanEnd = actualStartDate.getTime() > actualEndDate.getTime();
         if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-C', `BEFORE validation: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, willSwap=${willSwap}`);
+          debugLog('DEBUG-C', `BEFORE validation: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, startGreaterThanEnd=${startGreaterThanEnd}`);
         }
         // #endregion
         
-        // Final validation: ensure start is before end after conversion
-        // This catches any edge cases where conversion might cause incorrect ordering
+        // Handle cross-midnight events: if start > end after Pacific conversion,
+        // this means the event spans midnight and the start should be on the PREVIOUS day
+        // (NOT a swap - move start back 24 hours instead)
         if (actualStartDate.getTime() > actualEndDate.getTime()) {
-          console.warn(`[parseUnifiedDateTime] Start > End after conversion. Swapping dates. Original: ${cleanStr}`);
-          // Swap them - this should rarely happen but handles edge cases
-          const temp = actualStartDate;
-          actualStartDate = actualEndDate;
-          actualEndDate = temp;
+          console.log(`[parseUnifiedDateTime] Cross-midnight event detected. Moving start back 24 hours. Original: ${cleanStr}`);
+          // Move start back by 24 hours (one day earlier) - this is a cross-midnight event
+          actualStartDate = new Date(actualStartDate.getTime() - 24 * 60 * 60 * 1000);
         }
         
         // #region agent log
         if (cleanStr.includes('2026-03-08') || cleanStr.includes('2026-03-07') || cleanStr.includes('2026-03-22') || cleanStr.includes('2026-03-23')) {
-          debugLog('DEBUG-ALL', `FINAL: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, swapped=${willSwap}`);
+          debugLog('DEBUG-ALL', `FINAL: start=${actualStartDate.toString()}, end=${actualEndDate.toString()}, wasCrossMidnight=${startGreaterThanEnd}`);
         }
         // #endregion
         
