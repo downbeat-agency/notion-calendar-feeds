@@ -2177,8 +2177,11 @@ function processTravelEvents(travelGroupsArray) {
       travelGroup.flights.forEach(flight => {
         // Departure flight
         if (flight.departure_time && flight.departure_arrival_time) {
-          const depStart = new Date(flight.departure_time);
-          const depEnd = new Date(flight.departure_arrival_time);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const depTimes = parseUnifiedDateTime(flight.departure_time);
+          const depEndTimes = parseUnifiedDateTime(flight.departure_arrival_time);
+          const depStart = depTimes ? depTimes.start : new Date(flight.departure_time);
+          const depEnd = depEndTimes ? depEndTimes.start : new Date(flight.departure_arrival_time);
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
             // Build route string
@@ -2241,8 +2244,11 @@ function processTravelEvents(travelGroupsArray) {
 
         // Return flight
         if (flight.return_time && flight.return_arrival_time) {
-          const retStart = new Date(flight.return_time);
-          const retEnd = new Date(flight.return_arrival_time);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const retTimes = parseUnifiedDateTime(flight.return_time);
+          const retEndTimes = parseUnifiedDateTime(flight.return_arrival_time);
+          const retStart = retTimes ? retTimes.start : new Date(flight.return_time);
+          const retEnd = retEndTimes ? retEndTimes.start : new Date(flight.return_arrival_time);
           
           if (!isNaN(retStart.getTime()) && !isNaN(retEnd.getTime())) {
             // Build route string
@@ -2339,7 +2345,9 @@ function processTravelEvents(travelGroupsArray) {
         
         // Hotel check-in
         if (hotel.check_in) {
-          const checkIn = new Date(hotel.check_in);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const checkInTimes = parseUnifiedDateTime(hotel.check_in);
+          const checkIn = checkInTimes ? checkInTimes.start : new Date(hotel.check_in);
           if (!isNaN(checkIn.getTime())) {
             let description = '';
             
@@ -2378,11 +2386,12 @@ function processTravelEvents(travelGroupsArray) {
             
             // Dates section
             if (hotel.check_out) {
-              const checkOut = new Date(hotel.check_out);
-              if (!isNaN(checkOut.getTime())) {
-                const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+              const checkOutForDesc = parseUnifiedDateTime(hotel.check_out);
+              const checkOutDesc = checkOutForDesc ? checkOutForDesc.start : new Date(hotel.check_out);
+              if (!isNaN(checkOutDesc.getTime())) {
+                const nights = Math.ceil((checkOutDesc - checkIn) / (1000 * 60 * 60 * 24));
                 description += `\n📅 Dates:\n`;
-                description += `   Check-out: ${checkOut.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
+                description += `   Check-out: ${checkOutDesc.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
                 description += `   Duration: ${nights} night${nights !== 1 ? 's' : ''}\n`;
               }
             }
@@ -2399,7 +2408,8 @@ function processTravelEvents(travelGroupsArray) {
             }
 
             // Use actual check-in and check-out times
-            const checkOutDate = hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000);
+            const checkOutParsed = hotel.check_out ? parseUnifiedDateTime(hotel.check_out) : null;
+            const checkOutDate = checkOutParsed ? checkOutParsed.start : (hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000));
             
             // Location field: combine hotel name and address
             let location = '';
@@ -2428,7 +2438,9 @@ function processTravelEvents(travelGroupsArray) {
 
         // Hotel check-out
         if (hotel.check_out) {
-          const checkOut = new Date(hotel.check_out);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const checkOutTimes = parseUnifiedDateTime(hotel.check_out);
+          const checkOut = checkOutTimes ? checkOutTimes.start : new Date(hotel.check_out);
           if (!isNaN(checkOut.getTime())) {
             let description = '';
             
@@ -2482,7 +2494,9 @@ function processTravelEvents(travelGroupsArray) {
       travelGroup.ground_transportation.forEach(transport => {
         // Pickup event
         if (transport.pickup_time) {
-          const pickupTime = new Date(transport.pickup_time);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const pickupTimes = parseUnifiedDateTime(transport.pickup_time);
+          const pickupTime = pickupTimes ? pickupTimes.start : new Date(transport.pickup_time);
           if (!isNaN(pickupTime.getTime())) {
             let description = '';
             
@@ -2537,7 +2551,9 @@ function processTravelEvents(travelGroupsArray) {
 
         // Drop-off event
         if (transport.drop_off_time) {
-          const dropOffTime = new Date(transport.drop_off_time);
+          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
+          const dropOffTimes = parseUnifiedDateTime(transport.drop_off_time);
+          const dropOffTime = dropOffTimes ? dropOffTimes.start : new Date(transport.drop_off_time);
           if (!isNaN(dropOffTime.getTime())) {
             let description = '';
             
