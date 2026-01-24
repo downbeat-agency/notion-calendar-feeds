@@ -777,26 +777,11 @@ function parseUnifiedDateTime(dateTimeStr) {
       const isUTCTime = isISOTimestamp && !isPacificTimezone;
       
       if (isUTCTime) {
-        // Check if this appears to be an all-day event (midnight UTC time)
-        const isAllDay = cleanStr.match(/T00:00:00/);
+        // NOTE: We no longer treat T00:00:00 as all-day events here.
+        // Midnight UTC (T00:00:00) should convert to 4/5 PM Pacific the previous day.
+        // All-day detection is only done in the date-range parsing section above.
         
-        if (isAllDay) {
-          // For all-day events, extract date components and create date at midnight Pacific
-          // This prevents date shifting when converting from UTC
-          const year = date.getUTCFullYear();
-          const month = date.getUTCMonth();
-          const day = date.getUTCDate();
-          
-          // Create new date at midnight Pacific time (floating, no timezone)
-          const pacificDate = new Date(year, month, day, 0, 0, 0);
-          
-          return {
-            start: pacificDate,
-            end: pacificDate
-          };
-        }
-        
-        // For timed events, subtract Pacific offset to convert UTC to Pacific floating time
+        // For timed events (including midnight), subtract Pacific offset to convert UTC to Pacific floating time
         // UTC is ahead of Pacific, so we subtract hours
         const isDST = isDSTDate(date);
         const offsetHours = isDST ? 7 : 8;
