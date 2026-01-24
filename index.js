@@ -2183,6 +2183,17 @@ function processTravelEvents(travelGroupsArray) {
           const depStart = depTimes ? depTimes.start : new Date(flight.departure_time);
           const depEnd = depEndTimes ? depEndTimes.start : new Date(flight.departure_arrival_time);
           
+          // DEBUG: Log flight time conversion
+          if (flight.departure_name && flight.departure_name.includes('RSW')) {
+            console.log(`[DEBUG-TRAVEL] Flight: ${flight.departure_name}`);
+            console.log(`[DEBUG-TRAVEL] Raw departure_time: ${flight.departure_time}`);
+            console.log(`[DEBUG-TRAVEL] Raw departure_arrival_time: ${flight.departure_arrival_time}`);
+            console.log(`[DEBUG-TRAVEL] depTimes from parseUnifiedDateTime: ${depTimes ? JSON.stringify({start: depTimes.start.toString(), end: depTimes.end.toString()}) : 'null'}`);
+            console.log(`[DEBUG-TRAVEL] depEndTimes from parseUnifiedDateTime: ${depEndTimes ? JSON.stringify({start: depEndTimes.start.toString()}) : 'null'}`);
+            console.log(`[DEBUG-TRAVEL] Final depStart: ${depStart.toString()}`);
+            console.log(`[DEBUG-TRAVEL] Final depEnd: ${depEnd.toString()}`);
+          }
+          
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
             // Build route string
             const routeFrom = flight.departure_from_city || flight.departure_from || '';
