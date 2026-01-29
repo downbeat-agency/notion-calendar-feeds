@@ -1788,7 +1788,7 @@ function startBackgroundJob() {
                 location: event.location,
                 url: event.url || '',
                 floating: true,
-                alarms: getAlarmsForEvent(event.type, event.title)
+                alarms: []  // No alarms for admin calendar
               });
             });
             
@@ -1838,7 +1838,7 @@ function startBackgroundJob() {
                 location: event.location,
                 url: event.url || '',
                 floating: true,
-                alarms: getAlarmsForEvent(event.type, event.title)
+                alarms: []  // No alarms for travel calendar
               });
             });
             
@@ -5211,7 +5211,7 @@ app.get('/admin/calendar', async (req, res) => {
           location: event.location,
           url: event.url || '',
           floating: true,
-          alarms: getAlarmsForEvent(event.type, event.title)
+          alarms: []  // No alarms for admin calendar
         });
       });
       
@@ -5287,7 +5287,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
         location: event.location,
         url: event.url || '',
         floating: true,
-        alarms: getAlarmsForEvent(event.type, event.title)
+        alarms: []  // No alarms for admin calendar
       });
     });
     
@@ -5490,7 +5490,7 @@ app.get('/travel/calendar', async (req, res) => {
           location: event.location,
           url: event.url || '',
           floating: true,
-          alarms: getAlarmsForEvent(event.type, event.title)
+          alarms: []  // No alarms for travel calendar
         });
       });
       
@@ -5566,7 +5566,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
         location: event.location,
         url: event.url || '',
         floating: true,
-        alarms: getAlarmsForEvent(event.type, event.title)
+        alarms: []  // No alarms for travel calendar
       });
     });
     
