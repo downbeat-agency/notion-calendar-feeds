@@ -2425,57 +2425,6 @@ function processTravelEvents(travelGroupsArray) {
             });
           }
         }
-
-        // Hotel check-out
-        if (hotel.check_out) {
-          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
-          const checkOutTimes = parseUnifiedDateTime(hotel.check_out);
-          const checkOut = checkOutTimes ? checkOutTimes.start : new Date(hotel.check_out);
-          if (!isNaN(checkOut.getTime())) {
-            let description = '';
-            
-            if (hotel.hotel_name) {
-              description += `🏨 ${hotel.hotel_name} - Check-out\n`;
-            }
-            
-            // Personnel
-            if (hotel.personnel && hotel.personnel.personnel_name && Array.isArray(hotel.personnel.personnel_name) && hotel.personnel.personnel_name.length > 0) {
-              description += `\n👥 Personnel:\n`;
-              hotel.personnel.personnel_name.forEach(person => {
-                if (person && typeof person === 'string') {
-                  description += `${person}\n`;
-                }
-              });
-            }
-            
-            if (hotel.confirmation) {
-              description += `\n📋 Confirmation: ${hotel.confirmation}\n`;
-            }
-
-            // Location field: combine hotel name and address
-            let location = '';
-            if (hotel.hotel_name && hotel.hotel_address) {
-              location = `${hotel.hotel_name} ${hotel.hotel_address}`;
-            } else if (hotel.hotel_address) {
-              location = hotel.hotel_address;
-            } else if (hotel.hotel_name) {
-              location = hotel.hotel_name;
-            }
-
-            // URL: always use notion_url if available (maps links are in description, not URL field)
-            const url = hotel.notion_url || '';
-
-            allCalendarEvents.push({
-              start: checkOut,
-              end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
-              title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
-              description: description.trim(),
-              location: location,
-              url: url,
-              type: 'hotel_checkout'
-            });
-          }
-        }
       });
     }
 
