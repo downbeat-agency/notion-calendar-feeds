@@ -3175,65 +3175,6 @@ app.get('/debug/raw/:personId', async (req, res) => {
   }
 });
 
-// Query Team Calendar database directly
-const TEAM_CALENDAR_DB = 'a45922124eb54a90acf8a433dda98732';
-
-app.get('/debug/team-calendar/:personId', async (req, res) => {
-  try {
-    let { personId } = req.params;
-
-    if (personId.length === 32 && !personId.includes('-')) {
-      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
-    }
-
-    // Query Team Calendar database - try filtering by Personnel relation
-    const response = await notion.databases.query({
-      database_id: TEAM_CALENDAR_DB,
-      filter: {
-        property: 'Personnel',
-        relation: {
-          contains: personId
-        }
-      }
-    });
-
-    res.json({
-      personId,
-      totalRecords: response.results.length,
-      records: response.results.map(r => ({
-        id: r.id,
-        properties: r.properties
-      }))
-    });
-  } catch (error) {
-    // If Personnel filter fails, try without filter
-    if (error.message?.includes('Personnel')) {
-      try {
-        const response = await notion.databases.query({
-          database_id: TEAM_CALENDAR_DB,
-          page_size: 100
-        });
-        
-        res.json({
-          personId: req.params.personId,
-          note: 'Personnel filter failed - showing all records',
-          totalRecords: response.results.length,
-          propertyNames: response.results[0] ? Object.keys(response.results[0].properties) : [],
-          records: response.results.slice(0, 20).map(r => ({
-            id: r.id,
-            properties: r.properties
-          }))
-        });
-      } catch (innerError) {
-        res.status(500).json({ error: 'Error querying Team Calendar', details: innerError.message });
-      }
-    } else {
-      console.error('Team Calendar debug error:', error);
-      res.status(500).json({ error: 'Error querying Team Calendar', details: error.message });
-    }
-  }
-});
-
 // Debug endpoint to explore Calendar Data database
 app.get('/debug/calendar-data/:personId', async (req, res) => {
   try {
@@ -3327,6 +3268,65 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
   } catch (error) {
     console.error('Calendar Data debug error:', error);
     res.status(500).json({ error: 'Error querying Calendar Data', details: error.message });
+  }
+});
+
+// Debug endpoint to query any Notion database directly
+app.get('/debug/database/:databaseId', async (req, res) => {
+  try {
+    let { databaseId } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+
+    // Convert databaseId to proper UUID format if needed
+    if (databaseId.length === 32 && !databaseId.includes('-')) {
+      databaseId = databaseId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Query the database
+    const response = await notion.databases.query({
+      database_id: databaseId,
+      page_size: limit
+    });
+
+    // Return structured data
+    const records = response.results.map(page => {
+      const props = page.properties;
+      return {
+        id: page.id,
+        properties: Object.fromEntries(
+          Object.entries(props).map(([key, value]) => {
+            // Extract the actual value based on type
+            let extractedValue = value;
+            if (value.type === 'title') {
+              extractedValue = value.title?.[0]?.text?.content || '';
+            } else if (value.type === 'rich_text') {
+              extractedValue = value.rich_text?.[0]?.text?.content || '';
+            } else if (value.type === 'formula') {
+              extractedValue = value.formula?.string || value.formula?.number || value.formula?.boolean || value.formula?.date;
+            } else if (value.type === 'date') {
+              extractedValue = value.date;
+            } else if (value.type === 'relation') {
+              extractedValue = value.relation;
+            } else if (value.type === 'select') {
+              extractedValue = value.select?.name;
+            } else if (value.type === 'multi_select') {
+              extractedValue = value.multi_select?.map(s => s.name);
+            }
+            return [key, { type: value.type, value: extractedValue }];
+          })
+        )
+      };
+    });
+
+    res.json({
+      databaseId,
+      totalRecords: response.results.length,
+      hasMore: response.has_more,
+      records
+    });
+  } catch (error) {
+    console.error('Database debug error:', error);
+    res.status(500).json({ error: 'Error querying database', details: error.message });
   }
 });
 
