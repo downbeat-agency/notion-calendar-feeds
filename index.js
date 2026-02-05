@@ -3136,6 +3136,61 @@ app.get('/cache/clear-all', async (req, res) => {
   }
 });
 
+// Raw JSON debug endpoint - shows exact Notion API response
+app.get('/debug/raw/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    if (!CALENDAR_DATA_DB) {
+      return res.status(500).json({ error: 'CALENDAR_DATA_DATABASE_ID not configured' });
+    }
+
+    const response = await notion.databases.query({
+      database_id: CALENDAR_DATA_DB,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    });
+
+    if (response.results.length === 0) {
+      return res.json({ error: 'No Calendar Data record found for this person' });
+    }
+
+    const props = response.results[0].properties;
+    
+    res.json({
+      personId,
+      recordId: response.results[0].id,
+      hotels: {
+        raw: props.Hotels,
+        formulaString: props.Hotels?.formula?.string,
+        type: props.Hotels?.type
+      },
+      teamCalendar: {
+        raw: props['Team Calendar'],
+        formulaString: props['Team Calendar']?.formula?.string,
+        type: props['Team Calendar']?.type
+      },
+      eventNotesReminders: {
+        raw: props['Event Notes Reminders'],
+        formulaString: props['Event Notes Reminders']?.formula?.string,
+        type: props['Event Notes Reminders']?.type
+      },
+      allPropertyNames: Object.keys(props)
+    });
+  } catch (error) {
+    console.error('Raw debug error:', error);
+    res.status(500).json({ error: 'Error querying Notion', details: error.message });
+  }
+});
+
 // Debug endpoint to explore Calendar Data database
 app.get('/debug/calendar-data/:personId', async (req, res) => {
   try {
