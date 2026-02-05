@@ -3175,6 +3175,65 @@ app.get('/debug/raw/:personId', async (req, res) => {
   }
 });
 
+// Query Team Calendar database directly
+const TEAM_CALENDAR_DB = 'a45922124eb54a90acf8a433dda98732';
+
+app.get('/debug/team-calendar/:personId', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    // Query Team Calendar database - try filtering by Personnel relation
+    const response = await notion.databases.query({
+      database_id: TEAM_CALENDAR_DB,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    });
+
+    res.json({
+      personId,
+      totalRecords: response.results.length,
+      records: response.results.map(r => ({
+        id: r.id,
+        properties: r.properties
+      }))
+    });
+  } catch (error) {
+    // If Personnel filter fails, try without filter
+    if (error.message?.includes('Personnel')) {
+      try {
+        const response = await notion.databases.query({
+          database_id: TEAM_CALENDAR_DB,
+          page_size: 100
+        });
+        
+        res.json({
+          personId: req.params.personId,
+          note: 'Personnel filter failed - showing all records',
+          totalRecords: response.results.length,
+          propertyNames: response.results[0] ? Object.keys(response.results[0].properties) : [],
+          records: response.results.slice(0, 20).map(r => ({
+            id: r.id,
+            properties: r.properties
+          }))
+        });
+      } catch (innerError) {
+        res.status(500).json({ error: 'Error querying Team Calendar', details: innerError.message });
+      }
+    } else {
+      console.error('Team Calendar debug error:', error);
+      res.status(500).json({ error: 'Error querying Team Calendar', details: error.message });
+    }
+  }
+});
+
 // Debug endpoint to explore Calendar Data database
 app.get('/debug/calendar-data/:personId', async (req, res) => {
   try {
