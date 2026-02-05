@@ -199,7 +199,12 @@ function getAlarmsForEvent(eventType, eventTitle = '') {
     'ground_transport': [],                 // NO ALARM
     
     // TEAM CALENDAR: None
-    'team_calendar': []                     // NO ALARM
+    'team_calendar': [],                    // NO ALARM
+    
+    // EVENT NOTES REMINDERS: 15 mins before
+    'event_notes_reminder': [
+      { type: 'display', trigger: 900 }     // 15 minutes
+    ]
   };
   
   return alarmConfigs[eventType] || [];
@@ -353,7 +358,7 @@ function processCalendarDataResponse(response) {
 
   
   // Parse all the JSON strings with better error handling
-  let events, flights, transportation, hotels, rehearsals, teamCalendar;
+  let events, flights, transportation, hotels, rehearsals, teamCalendar, eventNotesReminders;
   
   // DEBUG: Log raw formula string before parsing
   const rawFormulaString = calendarData.Events?.formula?.string || '';
@@ -418,6 +423,14 @@ function processCalendarDataResponse(response) {
   } catch (e) {
     console.error('Error parsing Team Calendar JSON:', calendarData['Team Calendar']?.formula?.string?.substring(0, 100));
     throw new Error(`Team Calendar JSON parse error: ${e.message}`);
+  }
+  
+  try {
+    eventNotesReminders = JSON.parse(calendarData['Event Notes Reminders']?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Event Notes Reminders JSON:', calendarData['Event Notes Reminders']?.formula?.string?.substring(0, 100));
+    // Don't throw - just use empty array if parsing fails
+    eventNotesReminders = [];
   }
 
   // Normalize Team Calendar keys (handle variations like DCOS vs dcos, Title vs title, etc.)
@@ -504,7 +517,8 @@ function processCalendarDataResponse(response) {
     rehearsals: rehearsals,
     hotels: hotels,
     ground_transport: transportation,
-    team_calendar: teamCalendar
+    team_calendar: teamCalendar,
+    event_notes_reminders: eventNotesReminders
   };
 }
 
@@ -858,6 +872,7 @@ async function regenerateCalendarForPerson(personId) {
     const topLevelHotels = events.hotels || [];
     const topLevelTransport = events.ground_transport || [];
     const topLevelTeamCalendar = events.team_calendar || [];
+    const topLevelEventNotesReminders = events.event_notes_reminders || [];
     
     eventsArray.forEach(event => {
       // Add main event
@@ -1539,6 +1554,42 @@ async function regenerateCalendarForPerson(personId) {
               description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
+              mainEvent: ''
+            });
+          }
+        }
+      });
+    }
+
+    // Process Event Notes Reminders
+    if (topLevelEventNotesReminders.length > 0) {
+      topLevelEventNotesReminders.forEach(reminder => {
+        if (reminder.remind_date) {
+          let eventTimes = parseUnifiedDateTime(reminder.remind_date);
+          if (eventTimes) {
+            // Build description with event personnel
+            let description = '';
+            if (reminder.title) {
+              description += `📝 ${reminder.title}\n\n`;
+            }
+            if (reminder.event_personnel) {
+              description += `👥 Event Personnel:\n${reminder.event_personnel}\n\n`;
+            }
+            if (reminder.notion_link) {
+              description += `Notion Link: ${reminder.notion_link}`;
+            }
+            
+            // Use a 30-minute duration for reminder events
+            const endTime = new Date(eventTimes.start.getTime() + 30 * 60 * 1000);
+            
+            allCalendarEvents.push({
+              type: 'event_notes_reminder',
+              title: `🔔 ${reminder.title || 'Reminder'}`,
+              start: eventTimes.start,
+              end: endTime,
+              description: description.trim(),
+              location: '',
+              url: reminder.notion_link || '',
               mainEvent: ''
             });
           }
@@ -6087,6 +6138,7 @@ END:VCALENDAR`);
     const topLevelTransport = events.ground_transport || [];
     
     const topLevelTeamCalendar = events.team_calendar || [];
+    const topLevelEventNotesReminders = events.event_notes_reminders || [];
     
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
@@ -6783,6 +6835,42 @@ END:VCALENDAR`);
               location: teamEvent.address || '',
               url: teamEvent.notion_link || '',
               mainEvent: '' // Top-level team calendar events aren't tied to a specific event
+            });
+          }
+        }
+      });
+    }
+
+    // Process Event Notes Reminders
+    if (topLevelEventNotesReminders.length > 0) {
+      topLevelEventNotesReminders.forEach(reminder => {
+        if (reminder.remind_date) {
+          let eventTimes = parseUnifiedDateTime(reminder.remind_date);
+          if (eventTimes) {
+            // Build description with event personnel
+            let description = '';
+            if (reminder.title) {
+              description += `📝 ${reminder.title}\n\n`;
+            }
+            if (reminder.event_personnel) {
+              description += `👥 Event Personnel:\n${reminder.event_personnel}\n\n`;
+            }
+            if (reminder.notion_link) {
+              description += `Notion Link: ${reminder.notion_link}`;
+            }
+            
+            // Use a 30-minute duration for reminder events
+            const endTime = new Date(eventTimes.start.getTime() + 30 * 60 * 1000);
+            
+            allCalendarEvents.push({
+              type: 'event_notes_reminder',
+              title: `🔔 ${reminder.title || 'Reminder'}`,
+              start: eventTimes.start,
+              end: endTime,
+              description: description.trim(),
+              location: '',
+              url: reminder.notion_link || '',
+              mainEvent: ''
             });
           }
         }
