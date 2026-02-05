@@ -3276,17 +3276,36 @@ app.get('/debug/database/:databaseId', async (req, res) => {
   try {
     let { databaseId } = req.params;
     const limit = parseInt(req.query.limit) || 10;
+    let { personId, filterProperty } = req.query;
 
     // Convert databaseId to proper UUID format if needed
     if (databaseId.length === 32 && !databaseId.includes('-')) {
       databaseId = databaseId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
+    
+    // Convert personId to proper UUID format if needed
+    if (personId && personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
 
-    // Query the database
-    const response = await notion.databases.query({
+    // Build query options
+    const queryOptions = {
       database_id: databaseId,
       page_size: limit
-    });
+    };
+    
+    // Add filter if personId is provided
+    if (personId) {
+      queryOptions.filter = {
+        property: filterProperty || 'Personnel',
+        relation: {
+          contains: personId
+        }
+      };
+    }
+
+    // Query the database
+    const response = await notion.databases.query(queryOptions);
 
     // Return structured data
     const records = response.results.map(page => {
