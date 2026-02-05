@@ -3163,27 +3163,11 @@ app.get('/debug/raw/:personId', async (req, res) => {
       return res.json({ error: 'No Calendar Data record found for this person' });
     }
 
-    const props = response.results[0].properties;
-    
+    // Return the FULL raw Notion API response
     res.json({
       personId,
       recordId: response.results[0].id,
-      hotels: {
-        raw: props.Hotels,
-        formulaString: props.Hotels?.formula?.string,
-        type: props.Hotels?.type
-      },
-      teamCalendar: {
-        raw: props['Team Calendar'],
-        formulaString: props['Team Calendar']?.formula?.string,
-        type: props['Team Calendar']?.type
-      },
-      eventNotesReminders: {
-        raw: props['Event Notes Reminders'],
-        formulaString: props['Event Notes Reminders']?.formula?.string,
-        type: props['Event Notes Reminders']?.type
-      },
-      allPropertyNames: Object.keys(props)
+      rawNotionResponse: response.results[0]
     });
   } catch (error) {
     console.error('Raw debug error:', error);
