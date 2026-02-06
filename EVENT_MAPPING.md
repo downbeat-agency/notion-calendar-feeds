@@ -3,7 +3,7 @@
 ## Overview
 The server processes calendar data from Notion's "Calendar Data" database with separate formula fields for each event type.
 
-Each data source can generate multiple calendar events (main events + flights + layovers + rehearsals + hotels + transportation + team calendar).
+Each data source can generate multiple calendar events (main events + flights + layovers + rehearsals + hotels + transportation + team calendar + event notes reminders).
 
 ## Data Source
 
@@ -17,7 +17,8 @@ Each data source can generate multiple calendar events (main events + flights + 
   - `Hotels` - Hotel bookings - **9 fields**
   - `Transportation` - Ground transport - **7 fields**
   - `Team Calendar` - Office days and team events - **5 fields**
-- **Total**: 64 fields across 6 event types
+  - `Event Notes Reminders` - Event notes reminder events - **4 fields**
+- **Total**: 68 fields across 7 event types
 
 ## Event Detection Rules
 
@@ -278,6 +279,29 @@ Each data source can generate multiple calendar events (main events + flights + 
 }
 ```
 
+### 7. **Event Notes Reminders**
+**Triggers:** Top-level `Event Notes Reminders` field
+
+**Available Fields (4 total):**
+- `title` - Reminder title
+- `remind_date` - ISO 8601 date/time (required)
+- `event_personnel` - Formatted list of personnel
+- `notion_link` - Link to Notion page
+
+**Event Notes Reminder Mapping:**
+```javascript
+// Requires: reminder.remind_date
+{
+  type: 'event_notes_reminder',
+  title: "🔔 " + (reminder.title || "Reminder"),  // "🔔 Send contract to venue"
+  start: reminder.remind_date,                   // "2026-02-04T14:00:00+00:00"
+  end: reminder.remind_date + 30min,             // 30-minute duration
+  description: "📝 Send contract to venue\n\n👥 Event Personnel:\nChristian Pereira\nAdrian Alvarado\n\nNotion Link: https://www.notion.so/...",
+  location: "",
+  url: reminder.notion_link || ""                // "https://www.notion.so/28439e4a65a980f2a1d5c9e415e4ac06"
+}
+```
+
 ## Required JSON Structure
 
 ### "Calendar Data" Database Format
@@ -295,7 +319,9 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
   
-  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
+  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]",
+
+  "Event Notes Reminders": "[{\"title\":\"Send contract to venue\",\"remind_date\":\"2026-02-04T14:00:00+00:00\",\"event_personnel\":\"Christian Pereira\\nAdrian Alvarado\",\"notion_link\":\"https://www.notion.so/28439e4a65a980f2a1d5c9e415e4ac06\"}]"
 }
 ```
 
@@ -312,10 +338,11 @@ The database uses separate formula fields for each event type. Each field contai
     "rehearsals": 16,             // Rehearsal events
     "hotels": 7,                  // Hotel bookings
     "groundTransport": 10,        // Ground transportation events (pickup, dropoff, meeting)
-    "teamCalendar": 53            // Office days and team events
+    "teamCalendar": 53,           // Office days and team events
+    "eventNotesReminders": 5      // Event notes reminders
   },
   "events": [
-    // Array of all calendar events (main + flights + layovers + rehearsals + hotels + transport + team)
+    // Array of all calendar events (main + flights + layovers + rehearsals + hotels + transport + team + reminders)
   ]
 }
 ```
@@ -331,13 +358,14 @@ The database uses separate formula fields for each event type. Each field contai
 7. **Hotels**: `type: 'hotel'` - One per hotel booking
 8. **Transportation**: `type: 'ground_transport_pickup'|'ground_transport_dropoff'|'ground_transport_meeting'|'ground_transport'` - One per transport event
 9. **Team Calendar**: `type: 'team_calendar'` - One per office day or team event
+10. **Event Notes Reminders**: `type: 'event_notes_reminder'` - One per event note with a remind date
 
 ## Calendar Integration
 
 - **Endpoint**: `GET /calendar/:personId` - Uses "Calendar Data" database
 - **ICS Format**: `GET /calendar/:personId?format=ics` - All events in calendar format
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
-- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚙 for transport, 📅 for team calendar) for easy identification
+- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚙 for transport, 📅 for team calendar, 🔔 for reminders) for easy identification
 - **Descriptions**: Include confirmation numbers, flight details, call times, Notion links, etc.
 - **Links**: Events link back to Notion via URL fields (notion_url, flight_url, hotel_url, transportation_url, notion_link)
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")

@@ -7063,7 +7063,8 @@ END:VCALENDAR`);
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
         rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
         hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length,
+        eventNotesReminders: allCalendarEvents.filter(e => e.type === 'event_notes_reminder').length
       },
       events: allCalendarEvents
     };
