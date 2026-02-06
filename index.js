@@ -354,7 +354,11 @@ function processCalendarDataResponse(response) {
     return null;
   }
 
-  const calendarData = response.results[0].properties;
+  const calendarPage = response.results[0];
+  const calendarData = calendarPage.properties;
+  const nameFromCalendarData = calendarData?.Name?.title?.[0]?.text?.content ||
+    calendarData?.Name?.rich_text?.[0]?.text?.content ||
+    calendarData?.Name?.formula?.string;
 
   
   // Parse all the JSON strings with better error handling
@@ -491,7 +495,7 @@ function processCalendarDataResponse(response) {
   // Transform into the same format as the old system
   // Return events with shared flights, hotels, rehearsals, and transportation
   return {
-    personName: 'Unknown', // Will be updated by the calling function
+    personName: nameFromCalendarData || 'Unknown',
     events: events.map(event => ({
       event_name: event.event_name,
       event_date: event.event_date,
@@ -860,7 +864,10 @@ async function regenerateCalendarForPerson(personId) {
     );
     const nameFromTitle = person.properties?.Name?.title?.[0]?.text?.content ||
       person.properties?.Name?.rich_text?.[0]?.text?.content;
-    const personName = nameFromTitle || person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const personName = nameFromTitle ||
+      person.properties?.['Full Name']?.formula?.string ||
+      calendarData?.personName ||
+      'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Processing calendar for ${personName} (${calendarData.events.length} events)`);
@@ -6241,7 +6248,10 @@ END:VCALENDAR`);
     const person = await notion.pages.retrieve({ page_id: personId });
     const nameFromTitle = person.properties?.Name?.title?.[0]?.text?.content ||
       person.properties?.Name?.rich_text?.[0]?.text?.content;
-    const personName = nameFromTitle || person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const personName = nameFromTitle ||
+      person.properties?.['Full Name']?.formula?.string ||
+      calendarData?.personName ||
+      'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Using Calendar Data database for ${personName} (${calendarData.events.length} events)`);
