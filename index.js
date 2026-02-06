@@ -858,7 +858,9 @@ async function regenerateCalendarForPerson(personId) {
     const person = await retryNotionCall(() => 
       notion.pages.retrieve({ page_id: personId })
     );
-    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const nameFromTitle = person.properties?.Name?.title?.[0]?.text?.content ||
+      person.properties?.Name?.rich_text?.[0]?.text?.content;
+    const personName = nameFromTitle || person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Processing calendar for ${personName} (${calendarData.events.length} events)`);
@@ -6237,7 +6239,9 @@ END:VCALENDAR`);
     
     // Get person name from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
-    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
+    const nameFromTitle = person.properties?.Name?.title?.[0]?.text?.content ||
+      person.properties?.Name?.rich_text?.[0]?.text?.content;
+    const personName = nameFromTitle || person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
     console.log(`Using Calendar Data database for ${personName} (${calendarData.events.length} events)`);
