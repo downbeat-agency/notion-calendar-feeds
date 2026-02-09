@@ -679,48 +679,17 @@ function parseUnifiedDateTime(dateTimeStr) {
           };
         }
 
-        // For offset/UTC timestamps, preserve the wall time by creating floating dates
-        let skipUTCStartConversion = false;
-        let skipUTCEndConversion = false;
-        if (isOffsetStart || isUTCStart) {
-          const match = actualStartStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:Z|([+-]\d{2}:\d{2}))$/);
-          if (match) {
-            const year = Number(match[1]);
-            const month = Number(match[2]) - 1;
-            const day = Number(match[3]);
-            const hour = Number(match[4]);
-            const minute = Number(match[5]);
-            const second = Number(match[6] || 0);
-            actualStartDate = new Date(year, month, day, hour, minute, second);
-            skipUTCStartConversion = true;
-          }
-        }
-
-        if (isOffsetEnd || isUTCEnd) {
-          const match = actualEndStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:Z|([+-]\d{2}:\d{2}))$/);
-          if (match) {
-            const year = Number(match[1]);
-            const month = Number(match[2]) - 1;
-            const day = Number(match[3]);
-            const hour = Number(match[4]);
-            const minute = Number(match[5]);
-            const second = Number(match[6] || 0);
-            actualEndDate = new Date(year, month, day, hour, minute, second);
-            skipUTCEndConversion = true;
-          }
-        }
-        
-        // CROSS-MIDNIGHT DETECTION: Check if this is a cross-midnight event where Notion
-        // stored the START time as Pacific time (incorrectly tagged as UTC)
-        // Detection: Both timestamps on same UTC day, but first hour > second hour
+        // For timed events, convert both start and end from their instant to Pacific floating time.
+        // This ensures flights with departure in one TZ (e.g. Pacific) and arrival in another (e.g. Eastern)
+        // display correctly: e.g. 2pm Pacific–9pm Eastern becomes 2pm–6pm Pacific.
         const sameUTCDay = actualStartDate.getUTCFullYear() === actualEndDate.getUTCFullYear() &&
                           actualStartDate.getUTCMonth() === actualEndDate.getUTCMonth() &&
                           actualStartDate.getUTCDate() === actualEndDate.getUTCDate();
         const startHourGreater = actualStartDate.getUTCHours() > actualEndDate.getUTCHours();
         const isCrossMidnightEvent = sameUTCDay && startHourGreater;
-        
-        // For timed events, convert UTC to Pacific floating time
-        if (isUTCStart && !skipUTCStartConversion) {
+
+        // Convert start instant to Pacific floating time
+        if (isUTCStart || isOffsetStart) {
           const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
           // Extract UTC components
@@ -731,12 +700,10 @@ function parseUnifiedDateTime(dateTimeStr) {
           const minutes = actualStartDate.getUTCMinutes();
           const seconds = actualStartDate.getUTCSeconds();
           
-          // For cross-midnight events, the START time is already in Pacific (incorrectly tagged as UTC)
-          // So we should NOT subtract the offset - just use the hour value directly
-          // For cross-midnight events, the START time is already in Pacific (incorrectly tagged as UTC)
-          // So we should NOT subtract the offset - just use the hour value directly
+          // For cross-midnight events with UTC-only timestamps, start may be stored as Pacific (incorrectly tagged UTC).
+          // When either time has an explicit offset (e.g. flight arrival in Eastern), always convert from instant.
           let hours;
-          if (isCrossMidnightEvent) {
+          if (isCrossMidnightEvent && isUTCStart && !isOffsetStart) {
             hours = originalUTCHours; // Use directly as Pacific time
           } else {
             hours = originalUTCHours - offsetHours;
@@ -752,7 +719,8 @@ function parseUnifiedDateTime(dateTimeStr) {
           }
         }
         
-        if (isUTCEnd && !skipUTCEndConversion) {
+        // Convert end instant to Pacific floating time
+        if (isUTCEnd || isOffsetEnd) {
           const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
           // Extract UTC components and convert to Pacific time
@@ -832,6 +800,24 @@ function parseUnifiedDateTime(dateTimeStr) {
     console.warn('Failed to parse as ISO date:', cleanStr, e);
   }
   
+  return null;
+}
+
+// Same logic as travel calendar: parse departure and arrival separately when both exist.
+// Use this for personal-calendar flight events so times match the travel calendar.
+function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
+  if (departureTimeStr && arrivalTimeStr) {
+    const startParsed = parseUnifiedDateTime(departureTimeStr);
+    const endParsed = parseUnifiedDateTime(arrivalTimeStr);
+    if (startParsed && endParsed && !isNaN(startParsed.start.getTime()) && !isNaN(endParsed.start.getTime())) {
+      return { start: startParsed.start, end: endParsed.start };
+    }
+  }
+  const parsed = parseUnifiedDateTime(departureTimeStr);
+  if (parsed) return parsed;
+  if (departureTimeStr) {
+    return { start: departureTimeStr, end: arrivalTimeStr || departureTimeStr };
+  }
   return null;
 }
 
@@ -940,11 +926,11 @@ async function regenerateCalendarForPerson(personId) {
         }
       }
       
-      // Add flight events (same logic)
+      // Add flight events (same logic as travel calendar: parse start/arrival separately when both exist)
       if (event.flights && Array.isArray(event.flights)) {
         event.flights.forEach(flight => {
           if (flight.departure_time && flight.departure_name) {
-            let departureTimes = parseUnifiedDateTime(flight.departure_time);
+            let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
             if (!departureTimes) {
               departureTimes = {
                 start: flight.departure_time,
@@ -986,7 +972,7 @@ async function regenerateCalendarForPerson(personId) {
           }
 
           if (flight.return_time && flight.return_name) {
-            let returnTimes = parseUnifiedDateTime(flight.return_time);
+            let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
             if (!returnTimes) {
               returnTimes = {
                 start: flight.return_time,
@@ -1284,7 +1270,7 @@ async function regenerateCalendarForPerson(personId) {
     if (topLevelFlights.length > 0) {
       topLevelFlights.forEach(flight => {
         if (flight.departure_time && flight.departure_name) {
-          let departureTimes = parseUnifiedDateTime(flight.departure_time);
+          let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
           if (departureTimes) {
             let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
             
@@ -1323,7 +1309,7 @@ async function regenerateCalendarForPerson(personId) {
         }
 
         if (flight.return_time && flight.return_name) {
-          let returnTimes = parseUnifiedDateTime(flight.return_time);
+          let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
           if (returnTimes) {
             let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
             
@@ -6215,7 +6201,7 @@ END:VCALENDAR`);
         event.flights.forEach(flight => {
           // Departure flight
           if (flight.departure_time && flight.departure_name) {
-            let departureTimes = parseUnifiedDateTime(flight.departure_time);
+            let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
             if (!departureTimes) {
               // Fallback to old format
               departureTimes = {
@@ -6259,7 +6245,7 @@ END:VCALENDAR`);
 
           // Return flight
           if (flight.return_time && flight.return_name) {
-            let returnTimes = parseUnifiedDateTime(flight.return_time);
+            let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
             if (!returnTimes) {
               // Fallback to old format
               returnTimes = {
@@ -6606,7 +6592,7 @@ END:VCALENDAR`);
       topLevelFlights.forEach(flight => {
         // Departure flight
         if (flight.departure_time && flight.departure_name) {
-          let departureTimes = parseUnifiedDateTime(flight.departure_time);
+          let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
           if (departureTimes) {
             // Build description
             let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
@@ -6647,7 +6633,7 @@ END:VCALENDAR`);
 
         // Return flight
         if (flight.return_time && flight.return_name) {
-          let returnTimes = parseUnifiedDateTime(flight.return_time);
+          let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
           if (returnTimes) {
             // Build description
             let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
