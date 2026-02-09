@@ -679,9 +679,11 @@ function parseUnifiedDateTime(dateTimeStr) {
           };
         }
 
-        // For offset timestamps, preserve the local wall time by creating floating dates
-        if (isOffsetStart) {
-          const match = actualStartStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?([+-]\d{2}:\d{2})$/);
+        // For offset/UTC timestamps, preserve the wall time by creating floating dates
+        let skipUTCStartConversion = false;
+        let skipUTCEndConversion = false;
+        if (isOffsetStart || isUTCStart) {
+          const match = actualStartStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:Z|([+-]\d{2}:\d{2}))$/);
           if (match) {
             const year = Number(match[1]);
             const month = Number(match[2]) - 1;
@@ -690,11 +692,12 @@ function parseUnifiedDateTime(dateTimeStr) {
             const minute = Number(match[5]);
             const second = Number(match[6] || 0);
             actualStartDate = new Date(year, month, day, hour, minute, second);
+            skipUTCStartConversion = true;
           }
         }
 
-        if (isOffsetEnd) {
-          const match = actualEndStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?([+-]\d{2}:\d{2})$/);
+        if (isOffsetEnd || isUTCEnd) {
+          const match = actualEndStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:Z|([+-]\d{2}:\d{2}))$/);
           if (match) {
             const year = Number(match[1]);
             const month = Number(match[2]) - 1;
@@ -703,6 +706,7 @@ function parseUnifiedDateTime(dateTimeStr) {
             const minute = Number(match[5]);
             const second = Number(match[6] || 0);
             actualEndDate = new Date(year, month, day, hour, minute, second);
+            skipUTCEndConversion = true;
           }
         }
         
@@ -716,7 +720,7 @@ function parseUnifiedDateTime(dateTimeStr) {
         const isCrossMidnightEvent = sameUTCDay && startHourGreater;
         
         // For timed events, convert UTC to Pacific floating time
-        if (isUTCStart) {
+        if (isUTCStart && !skipUTCStartConversion) {
           const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
           // Extract UTC components
@@ -748,7 +752,7 @@ function parseUnifiedDateTime(dateTimeStr) {
           }
         }
         
-        if (isUTCEnd) {
+        if (isUTCEnd && !skipUTCEndConversion) {
           const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
           // Extract UTC components and convert to Pacific time
