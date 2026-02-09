@@ -805,29 +805,16 @@ async function regenerateCalendarForPerson(personId) {
   try {
     console.log(`🔄 Regenerating calendar for ${personId}...`);
     
-    // CLEAR CACHE FIRST to ensure fresh data from Notion
+    // CLEAR CACHE FIRST to ensure fresh data from Notion (intentional for regeneration)
     if (redis && cacheEnabled) {
       const icsKey = `calendar:${personId}:ics`;
       const jsonKey = `calendar:${personId}:json`;
-      
-      // Verify cache exists before deletion (for logging)
-      const icsExists = await redis.exists(icsKey);
-      const jsonExists = await redis.exists(jsonKey);
-      
-      // Delete both cache entries
-      const icsDeleted = await redis.del(icsKey);
-      const jsonDeleted = await redis.del(jsonKey);
-      
-      // Verify cache is actually gone
+      await redis.del(icsKey);
+      await redis.del(jsonKey);
       const icsStillExists = await redis.exists(icsKey);
       const jsonStillExists = await redis.exists(jsonKey);
-      
-      console.log(`🗑️  Cache clearing for ${personId}:`);
-      console.log(`   ICS cache - Before: ${icsExists ? 'EXISTS' : 'MISS'}, Deleted: ${icsDeleted}, After: ${icsStillExists ? 'STILL EXISTS ❌' : 'CLEARED ✅'}`);
-      console.log(`   JSON cache - Before: ${jsonExists ? 'EXISTS' : 'MISS'}, Deleted: ${jsonDeleted}, After: ${jsonStillExists ? 'STILL EXISTS ❌' : 'CLEARED ✅'}`);
-      
       if (icsStillExists || jsonStillExists) {
-        console.error(`⚠️  WARNING: Cache was not fully cleared for ${personId}!`);
+        console.error(`⚠️  Cache was not fully cleared for ${personId}`);
       }
     }
     
@@ -5957,25 +5944,14 @@ app.get('/calendar/:personId', async (req, res) => {
     let calendarData = null; // Store fetched data to avoid duplicate fetches
     
     if (forceFresh && redis && cacheEnabled) {
-      // Clear cache if forcing fresh data (clear BOTH ICS and JSON to be safe)
       const icsKey = `calendar:${personId}:ics`;
       const jsonKey = `calendar:${personId}:json`;
-      
-      const icsExists = await redis.exists(icsKey);
-      const jsonExists = await redis.exists(jsonKey);
-      
-      const icsDeleted = await redis.del(icsKey);
-      const jsonDeleted = await redis.del(jsonKey);
-      
+      await redis.del(icsKey);
+      await redis.del(jsonKey);
       const icsStillExists = await redis.exists(icsKey);
       const jsonStillExists = await redis.exists(jsonKey);
-      
-      console.log(`🗑️  Force fresh cache clearing for ${personId}:`);
-      console.log(`   ICS cache - Before: ${icsExists ? 'EXISTS' : 'MISS'}, Deleted: ${icsDeleted}, After: ${icsStillExists ? 'STILL EXISTS ❌' : 'CLEARED ✅'}`);
-      console.log(`   JSON cache - Before: ${jsonExists ? 'EXISTS' : 'MISS'}, Deleted: ${jsonDeleted}, After: ${jsonStillExists ? 'STILL EXISTS ❌' : 'CLEARED ✅'}`);
-      
       if (icsStillExists || jsonStillExists) {
-        console.error(`⚠️  WARNING: Cache was not fully cleared for ${personId} with ?fresh=true!`);
+        console.error(`⚠️  Cache was not fully cleared for ${personId} (?fresh=true)`);
       }
     }
     
