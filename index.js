@@ -648,6 +648,10 @@ function parseUnifiedDateTime(dateTimeStr) {
         // Check if these are UTC timestamps and convert to Pacific floating time
         const isUTCStart = actualStartStr.includes('T') && (actualStartStr.includes('Z') || actualStartStr.includes('+00:00'));
         const isUTCEnd = actualEndStr.includes('T') && (actualEndStr.includes('Z') || actualEndStr.includes('+00:00'));
+
+        // Check for timezone offsets like -08:00 or -07:00 (already in local Pacific time)
+        const isOffsetStart = actualStartStr.includes('T') && /[+-]\d{2}:\d{2}$/.test(actualStartStr) && !actualStartStr.includes('+00:00');
+        const isOffsetEnd = actualEndStr.includes('T') && /[+-]\d{2}:\d{2}$/.test(actualEndStr) && !actualEndStr.includes('+00:00');
         
         // Check if this appears to be an all-day event (midnight UTC times)
         // All-day events typically have times at 00:00:00 UTC
@@ -673,6 +677,33 @@ function parseUnifiedDateTime(dateTimeStr) {
             start: pacificStart,
             end: pacificEnd
           };
+        }
+
+        // For offset timestamps, preserve the local wall time by creating floating dates
+        if (isOffsetStart) {
+          const match = actualStartStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?([+-]\d{2}:\d{2})$/);
+          if (match) {
+            const year = Number(match[1]);
+            const month = Number(match[2]) - 1;
+            const day = Number(match[3]);
+            const hour = Number(match[4]);
+            const minute = Number(match[5]);
+            const second = Number(match[6] || 0);
+            actualStartDate = new Date(year, month, day, hour, minute, second);
+          }
+        }
+
+        if (isOffsetEnd) {
+          const match = actualEndStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?([+-]\d{2}:\d{2})$/);
+          if (match) {
+            const year = Number(match[1]);
+            const month = Number(match[2]) - 1;
+            const day = Number(match[3]);
+            const hour = Number(match[4]);
+            const minute = Number(match[5]);
+            const second = Number(match[6] || 0);
+            actualEndDate = new Date(year, month, day, hour, minute, second);
+          }
         }
         
         // CROSS-MIDNIGHT DETECTION: Check if this is a cross-midnight event where Notion
