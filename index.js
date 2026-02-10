@@ -885,10 +885,21 @@ async function regenerateCalendarForPerson(personId) {
             console.log(`[DEBUG] Start > End? ${eventTimes.start.getTime() > eventTimes.end.getTime()}`);
           }
           let payrollInfo = '';
-          if (event.position || event.pay_total || event.assignments) {
-            if (event.position) payrollInfo += `Position: ${event.position}\n`;
-            if (event.assignments) payrollInfo += `Assignments: ${event.assignments}\n`;
-            if (event.pay_total) payrollInfo += `Pay: $${event.pay_total}\n`;
+          const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
+          const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
+          const payTotalRaw = event.pay_total;
+          const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
+          const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
+          const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
+          const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
+
+          if (hasPosition || hasAssignments || hasPayTotal) {
+            if (hasPosition) payrollInfo += `Position: ${positionValue}\n`;
+            if (hasAssignments) payrollInfo += `Assignments: ${assignmentsValue}\n`;
+            if (hasPayTotal) {
+              const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
+              payrollInfo += `Pay: ${payDisplay}\n`;
+            }
             payrollInfo += '\n';
           }
 
@@ -1967,15 +1978,24 @@ function processAdminEvents(eventsArray) {
         // Build payroll info for description (put at TOP)
         let payrollInfo = '';
         
-        if (event.position || event.pay_total || event.assignments) {
-          if (event.position) {
-            payrollInfo += `Position: ${event.position}\n`;
+        const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
+        const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
+        const payTotalRaw = event.pay_total;
+        const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
+        const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
+        const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
+        const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
+
+        if (hasPosition || hasAssignments || hasPayTotal) {
+          if (hasPosition) {
+            payrollInfo += `Position: ${positionValue}\n`;
           }
-          if (event.pay_total) {
-            payrollInfo += `Pay: ${event.pay_total}\n`;
+          if (hasAssignments) {
+            payrollInfo += `Assignments: ${assignmentsValue}\n`;
           }
-          if (event.assignments) {
-            payrollInfo += `Assignments: ${event.assignments}\n`;
+          if (hasPayTotal) {
+            const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
+            payrollInfo += `Pay: ${payDisplay}\n`;
           }
           payrollInfo += '\n---\n\n';
         }
@@ -6146,15 +6166,24 @@ END:VCALENDAR`);
           let payrollInfo = '';
           
           // Use direct fields from Calendar Data database
-          if (event.position || event.pay_total || event.assignments) {
-            if (event.position) {
-              payrollInfo += `Position: ${event.position}\n`;
+          const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
+          const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
+          const payTotalRaw = event.pay_total;
+          const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
+          const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
+          const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
+          const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
+
+          if (hasPosition || hasAssignments || hasPayTotal) {
+            if (hasPosition) {
+              payrollInfo += `Position: ${positionValue}\n`;
             }
-            if (event.assignments) {
-              payrollInfo += `Assignments: ${event.assignments}\n`;
+            if (hasAssignments) {
+              payrollInfo += `Assignments: ${assignmentsValue}\n`;
             }
-            if (event.pay_total) {
-              payrollInfo += `Pay: $${event.pay_total}\n`;
+            if (hasPayTotal) {
+              const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
+              payrollInfo += `Pay: ${payDisplay}\n`;
             }
             payrollInfo += '\n'; // Add spacing after position info
           }
