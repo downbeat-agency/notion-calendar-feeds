@@ -236,8 +236,13 @@ Each data source can generate multiple calendar events (main events + flights + 
 - `start` - Start time as ISO 8601 (required)
 - `end` - End time as ISO 8601
 - `location` - Pickup/dropoff location
-- `description` - Driver info, passengers, notes
+- `description` - Driver info, passengers, notes (see formats below)
 - `type` - Transport type (ground_transport_pickup, ground_transport_dropoff, ground_transport_meeting, ground_transport)
+
+**Description formats (both supported):**
+
+1. **Structured format** (recommended): `Driver: [driver_name:Name driver_phone:Phone,...]` and `Passengers: [passenger_name:Name passenger_phone:Phone,...]` — name and phone per person.
+2. **Legacy format**: `Driver: Name1, Name2` with `Driver Info: FirstName - (phone)` in Meet Up Info; `Passenger: Name1, Name2`.
 
 **Transportation Mapping:**
 ```javascript
@@ -293,7 +298,7 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Hotels": "[{\"title\":\"Hotel -  (Band)\",\"hotel_url\":\"https://www.notion.so/22a39e4a65a980418fc2dc12edd96217\",\"hotel_name\":\"Hilton Garden Inn Sonoma County Airport\",\"hotel_phone\":\"(707) 545-0444\",\"hotel_address\":\"417 Aviation Blvd, Santa Rosa, CA 95403\",\"confirmation\":\"3291242890\",\"names_on_reservation\":\"Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\",\"booked_under\":\"Diego\",\"dates_booked\":\"2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00\"}]",
   
-  "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: Diego De la Rosa\\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\\nDriver Info:\\nDiego - (626) 991-4302,\\nMeetup Notes: Make sure you bring a coffee for Diego\",\"type\":\"ground_transport_meeting\"}]",
+  "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: [driver_name:Diego De la Rosadriver_phone:(626) 991-4302]\\nPassengers: [passenger_name:Eric Englandpassenger_phone:(555) 123-4567]\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107\",\"type\":\"ground_transport_meeting\"}]",
   
   "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
 }
