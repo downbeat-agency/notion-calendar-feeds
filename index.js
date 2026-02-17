@@ -812,6 +812,37 @@ function parseUnifiedDateTime(dateTimeStr) {
   return null;
 }
 
+// Parse "Driver Info: Name - (phone)" or "Name - (phone)" from description. Returns map of firstName -> phone.
+function parseDriverInfoFromDescription(description) {
+  const map = {};
+  if (!description) return map;
+  const driverInfoMatch = description.match(/Driver Info:\s*([\s\S]*?)(?=Group Text:|Confirmation:|Pick Up Info:|Drop Off Info:|Meet Up Info:|$)/i);
+  const block = driverInfoMatch ? driverInfoMatch[1] : description;
+  // Match "FirstName - (phone)" or "FirstName - phone" (phone can be various formats)
+  const regex = /([A-Za-z]+)\s*-\s*(\([\d\s\-]+\)[\d\s\-]*|\+\d[\d\s\-]+|[\d\-]{10,})/g;
+  let m;
+  while ((m = regex.exec(block)) !== null) {
+    map[m[1].toLowerCase()] = m[2].trim();
+  }
+  return map;
+}
+
+// Parse "Passenger Info:" or "Name - (phone)" for passengers. Returns map of name -> phone (or partial name match).
+function parsePassengerInfoFromDescription(description) {
+  const map = {};
+  if (!description) return map;
+  const passengerInfoMatch = description.match(/Passenger Info:\s*([\s\S]*?)(?=Driver Info:|Group Text:|Confirmation:|Pick Up Info:|Drop Off Info:|Meet Up Info:|$)/i);
+  const block = passengerInfoMatch ? passengerInfoMatch[1] : '';
+  const regex = /([A-Za-z][A-Za-z\s]+?)\s*-\s*(\([\d\s\-]+\)[\d\s\-]*|\+\d[\d\s\-]+|[\d\-]{10,})/g;
+  let m;
+  while ((m = regex.exec(block)) !== null) {
+    const name = m[1].trim();
+    const key = name.split(/\s+/)[0].toLowerCase();
+    map[key] = { name, phone: m[2].trim() };
+  }
+  return map;
+}
+
 // Split comma-separated transport info (e.g. "Key: value, Key: value") into separate lines.
 // Splits on comma when followed by a new key (Title Case + colon), preserving commas in addresses.
 function formatTransportInfoLines(infoStr) {
@@ -1213,41 +1244,37 @@ async function regenerateCalendarForPerson(personId) {
             if (transport.description) {
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
               const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              const driverPhones = parseDriverInfoFromDescription(transport.description);
+              const passengerPhones = parsePassengerInfoFromDescription(transport.description);
               
               if (driverMatch) {
                 const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
                 if (drivers.length > 0) {
                   description += 'Drivers:\n';
                   drivers.forEach(driver => {
-                    description += `• ${driver}\n`;
+                    const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = driverPhones[firstName];
+                    description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               
-              if (passengerMatch && transport.type === 'ground_transport_meeting') {
-                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p);
+              if (passengerMatch) {
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
                 if (passengers.length > 0) {
                   description += 'Passengers:\n';
                   passengers.forEach(passenger => {
-                    description += `• ${passenger}\n`;
+                    const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = passengerPhones[firstName]?.phone;
+                    description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               
               if (transport.type === 'ground_transport_meeting') {
-                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (meetupInfoMatch) {
-                  const meetupInfo = meetupInfoMatch[1].trim();
-                  if (meetupInfo) {
-                    description += 'Meet Up Info:\n';
-                    formatTransportInfoLines(meetupInfo).forEach(line => {
-                      description += `• ${line}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
+                // Skip Meet Up Info for meetup - driver phone is under Drivers, avoid redundant Driver Info/Group Text
               } else if (transport.type === 'ground_transport_pickup') {
                 const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
                 if (pickupInfoMatch) {
@@ -1511,26 +1538,36 @@ async function regenerateCalendarForPerson(personId) {
             let description = '';
             if (transport.description) {
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+              const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              const driverPhones = parseDriverInfoFromDescription(transport.description);
+              const passengerPhones = parsePassengerInfoFromDescription(transport.description);
+              
               if (driverMatch) {
                 const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
                 if (drivers.length > 0) {
                   description += 'Drivers:\n';
                   drivers.forEach(driver => {
-                    description += `• ${driver}\n`;
+                    const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = driverPhones[firstName];
+                    description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              if (passengerMatch) {
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
+                if (passengers.length > 0) {
+                  description += 'Passengers:\n';
+                  passengers.forEach(passenger => {
+                    const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = passengerPhones[firstName]?.phone;
+                    description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               if (transport.type === 'ground_transport_meeting') {
-                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (meetupInfoMatch) {
-                  const meetupInfo = meetupInfoMatch[1].trim();
-                  if (meetupInfo) {
-                    description += 'Meet Up Info:\n';
-                    formatTransportInfoLines(meetupInfo).forEach(line => { description += `• ${line}\n`; });
-                    description += '\n';
-                  }
-                }
+                // Skip Meet Up Info - driver phone is under Drivers
               } else if (transport.type === 'ground_transport_pickup') {
                 const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
                 if (pickupInfoMatch) {
@@ -6558,50 +6595,39 @@ END:VCALENDAR`);
             let description = '';
             
             if (transport.description) {
-              // Extract driver and passenger info from description
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
               const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              const driverPhones = parseDriverInfoFromDescription(transport.description);
+              const passengerPhones = parsePassengerInfoFromDescription(transport.description);
               
-              // Add driver info for all event types (formatted like rehearsals)
               if (driverMatch) {
-                // Split drivers by comma and format each on a new line like rehearsals
                 const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
                 if (drivers.length > 0) {
                   description += 'Drivers:\n';
                   drivers.forEach(driver => {
-                    description += `• ${driver}\n`;
+                    const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = driverPhones[firstName];
+                    description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               
-              // Only add passenger list for meeting events (ground_transport_meeting)
-              if (passengerMatch && transport.type === 'ground_transport_meeting') {
-                // Split passengers by comma and format each on a new line
-                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p);
+              if (passengerMatch) {
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
                 if (passengers.length > 0) {
                   description += 'Passengers:\n';
                   passengers.forEach(passenger => {
-                    description += `• ${passenger}\n`;
+                    const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = passengerPhones[firstName]?.phone;
+                    description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               
-              // Extract event-specific info sections based on event type
               if (transport.type === 'ground_transport_meeting') {
-                // For meeting events, look for "Meet Up Info" section
-                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (meetupInfoMatch) {
-                  const meetupInfo = meetupInfoMatch[1].trim();
-                  if (meetupInfo) {
-                    description += 'Meet Up Info:\n';
-                    formatTransportInfoLines(meetupInfo).forEach(line => {
-                      description += `• ${line}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
+                // Skip Meet Up Info - driver phone is under Drivers
               } else if (transport.type === 'ground_transport_pickup') {
                 // For pickup events, look for "Pick Up Info" section
                 const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
@@ -6831,27 +6857,36 @@ END:VCALENDAR`);
             let description = '';
             if (transport.description) {
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
+              const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
+              const driverPhones = parseDriverInfoFromDescription(transport.description);
+              const passengerPhones = parsePassengerInfoFromDescription(transport.description);
               
               if (driverMatch) {
                 const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
                 if (drivers.length > 0) {
                   description += 'Drivers:\n';
                   drivers.forEach(driver => {
-                    description += `• ${driver}\n`;
+                    const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = driverPhones[firstName];
+                    description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
+                  });
+                  description += '\n';
+                }
+              }
+              if (passengerMatch) {
+                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
+                if (passengers.length > 0) {
+                  description += 'Passengers:\n';
+                  passengers.forEach(passenger => {
+                    const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
+                    const phone = passengerPhones[firstName]?.phone;
+                    description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
                   });
                   description += '\n';
                 }
               }
               if (transport.type === 'ground_transport_meeting') {
-                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (meetupInfoMatch) {
-                  const meetupInfo = meetupInfoMatch[1].trim();
-                  if (meetupInfo) {
-                    description += 'Meet Up Info:\n';
-                    formatTransportInfoLines(meetupInfo).forEach(line => { description += `• ${line}\n`; });
-                    description += '\n';
-                  }
-                }
+                // Skip Meet Up Info - driver phone is under Drivers
               } else if (transport.type === 'ground_transport_pickup') {
                 const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
                 if (pickupInfoMatch) {
