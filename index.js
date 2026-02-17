@@ -6172,13 +6172,14 @@ app.get('/calendar/:personId', async (req, res) => {
         }
         console.log(`❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`);
         
-        // Try a quick synchronous fetch with 30-second timeout
+        // Try a quick synchronous fetch with 55-second timeout (under Railway's 60s limit)
         // If Notion responds quickly, serve immediately. If slow, trigger background regeneration.
-        console.log(`⏱️  Attempting quick fetch for ${personId} (30s timeout)...`);
+        const QUICK_FETCH_TIMEOUT_MS = 55000;
+        console.log(`⏱️  Attempting quick fetch for ${personId} (${QUICK_FETCH_TIMEOUT_MS / 1000}s timeout)...`);
         
         try {
           const quickTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Quick fetch timeout')), 30000);
+            setTimeout(() => reject(new Error('Quick fetch timeout')), QUICK_FETCH_TIMEOUT_MS);
           });
           
           // Check if Calendar Data database is configured
@@ -6219,8 +6220,8 @@ END:VCALENDAR`);
           } else {
             return res.status(503).json({
               error: 'Calendar cache is empty',
-              message: 'Your calendar is being regenerated in the background. Please try again in a few moments.',
-              retryAfter: 30
+              message: 'Your calendar is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
+              retryAfter: 120
             });
           }
           return;
@@ -6246,9 +6247,10 @@ END:VCALENDAR`);
     // If we already have calendarData from quick fetch, skip this
     if (!calendarData) {
       try {
-        // Set a timeout promise that rejects after 50 seconds (before Railway's 60s timeout and Notion's 60s limit)
+        // Set a timeout promise that rejects after 55 seconds (before Railway's 60s limit)
+        const DIRECT_FETCH_TIMEOUT_MS = 55000;
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Notion API query timeout')), 50000);
+          setTimeout(() => reject(new Error('Notion API query timeout')), DIRECT_FETCH_TIMEOUT_MS);
         });
         
         calendarData = await Promise.race([
@@ -6277,8 +6279,8 @@ END:VCALENDAR`);
         } else {
           return res.status(503).json({
             error: 'Calendar generation timeout',
-            message: 'Calendar generation is taking longer than expected. It is being regenerated in the background. Please try again in a few moments.',
-            retryAfter: 30
+            message: 'Calendar generation is taking longer than expected. It is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
+            retryAfter: 120
           });
         }
       }
