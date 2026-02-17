@@ -678,9 +678,10 @@ function parseUnifiedDateTime(dateTimeStr) {
           const endMonth = actualEndDate.getUTCMonth();
           const endDay = actualEndDate.getUTCDate();
           
-          // Create new dates at midnight Pacific time (floating, no timezone)
-          const pacificStart = new Date(startYear, startMonth, startDay, 0, 0, 0);
-          const pacificEnd = new Date(endYear, endMonth, endDay, 0, 0, 0);
+          // Create new dates at midnight Pacific time (floating, no timezone).
+          // Use Date.UTC so ical-generator's getUTCHours() outputs correct time regardless of server TZ.
+          const pacificStart = new Date(Date.UTC(startYear, startMonth, startDay, 0, 0, 0));
+          const pacificEnd = new Date(Date.UTC(endYear, endMonth, endDay, 0, 0, 0));
           
           return {
             start: pacificStart,
@@ -721,10 +722,10 @@ function parseUnifiedDateTime(dateTimeStr) {
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Use Date constructor which handles month/day boundaries correctly
-            actualStartDate = new Date(year, month, day - 1, hours, minutes, seconds);
+            // Use Date.UTC so ical-generator's floating output uses correct Pacific time (server may be UTC)
+            actualStartDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
           } else {
-            actualStartDate = new Date(year, month, day, hours, minutes, seconds);
+            actualStartDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
           }
         }
         
@@ -744,10 +745,10 @@ function parseUnifiedDateTime(dateTimeStr) {
           // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Use Date constructor which handles month/day boundaries correctly
-            actualEndDate = new Date(year, month, day - 1, hours, minutes, seconds);
+            // Use Date.UTC so ical-generator's floating output uses correct Pacific time (server may be UTC)
+            actualEndDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
           } else {
-            actualEndDate = new Date(year, month, day, hours, minutes, seconds);
+            actualEndDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
           }
         }
         
@@ -910,10 +911,17 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 }
 
 // Helper function to regenerate calendar for a single person
-async function regenerateCalendarForPerson(personId) {
+async function regenerateCalendarForPerson(personId, options = {}) {
+  const { setStatus = true } = options;
+  const statusKey = `regenerate:status:${personId}`;
+  const STATUS_TTL = 300; // 5 minutes
+
   try {
     console.log(`🔄 Regenerating calendar for ${personId}...`);
-    
+    if (setStatus && redis && cacheEnabled) {
+      await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
+    }
+
     // CLEAR CACHE FIRST to ensure fresh data from Notion (intentional for regeneration)
     if (redis && cacheEnabled) {
       const icsKey = `calendar:${personId}:ics`;
@@ -931,6 +939,7 @@ async function regenerateCalendarForPerson(personId) {
     const calendarData = await getCalendarDataFromDatabase(personId);
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       console.log(`⚠️  No events found for ${personId}, skipping...`);
+      if (setStatus && redis && cacheEnabled) await redis.setEx(statusKey, STATUS_TTL, 'no_events');
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -1755,12 +1764,14 @@ async function regenerateCalendarForPerson(personId) {
       const cacheKey = `calendar:${personId}:ics`;
       await redis.setEx(cacheKey, CACHE_TTL, icsData);
       console.log(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, TTL: ${CACHE_TTL}s)`);
+      if (setStatus) await redis.setEx(statusKey, STATUS_TTL, 'completed');
     }
 
     return { success: true, personId, personName, eventCount: allCalendarEvents.length };
     
   } catch (error) {
     console.error(`❌ Error regenerating calendar for ${personId}:`, error.message);
+    if (setStatus && redis && cacheEnabled) await redis.setEx(statusKey, STATUS_TTL, 'failed');
     return { success: false, personId, error: error.message };
   }
 }
@@ -1939,11 +1950,12 @@ function startBackgroundJob() {
         totalFailed += batchFailed;
       }
       
-      // Also refresh admin calendar
+      // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         try {
           console.log('🔄 Refreshing admin calendar...');
-          const adminEvents = await getAdminCalendarData();
+          const adminTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Admin calendar fetch timeout')), ms));
+          const adminEvents = await Promise.race([getAdminCalendarData(), adminTimeout(25000)]);
           
           if (adminEvents && adminEvents.length > 0) {
             const allCalendarEvents = processAdminEvents(adminEvents);
@@ -1989,11 +2001,12 @@ function startBackgroundJob() {
         }
       }
       
-      // Also refresh travel calendar
+      // Also refresh travel calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (TRAVEL_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         try {
           console.log('🔄 Refreshing travel calendar...');
-          const travelEvents = await getTravelCalendarData();
+          const travelTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Travel calendar fetch timeout')), ms));
+          const travelEvents = await Promise.race([getTravelCalendarData(), travelTimeout(25000)]);
           
           if (travelEvents && travelEvents.length > 0) {
             const allCalendarEvents = processTravelEvents(travelEvents);
@@ -2039,11 +2052,12 @@ function startBackgroundJob() {
         }
       }
       
-      // Also refresh blockout calendar
+      // Also refresh blockout calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (BLOCKOUT_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         try {
           console.log('🔄 Refreshing blockout calendar...');
-          const blockoutEvents = await getBlockoutCalendarData();
+          const blockoutTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Blockout calendar fetch timeout')), ms));
+          const blockoutEvents = await Promise.race([getBlockoutCalendarData(), blockoutTimeout(25000)]);
           if (blockoutEvents && blockoutEvents.length > 0) {
             const allCalendarEvents = processBlockoutEvents(blockoutEvents);
             const calendar = ical({ 
@@ -3430,25 +3444,24 @@ app.get('/regenerate/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    const result = await regenerateCalendarForPerson(personId);
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        message: `Calendar regenerated successfully for ${result.personName}`,
-        personId: result.personId,
-        personName: result.personName,
-        eventCount: result.eventCount,
-        cacheTTL: CACHE_TTL
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: 'Failed to regenerate calendar',
-        personId: result.personId,
-        reason: result.reason || result.error
-      });
-    }
+    // Run regeneration in background - return immediately to avoid Railway 60s timeout
+    regenerateCalendarForPerson(personId, { setStatus: true }).then(result => {
+      if (result.success) {
+        console.log(`✅ Background regeneration complete for ${result.personName} (${result.eventCount} events)`);
+      } else {
+        console.log(`⚠️  Background regeneration finished for ${personId}: ${result.reason || result.error}`);
+      }
+    }).catch(err => {
+      console.error(`❌ Background regeneration failed for ${personId}:`, err);
+    });
+
+    res.status(202).json({
+      success: true,
+      message: 'Calendar regeneration started',
+      personId,
+      note: 'Regeneration typically takes 1–2 minutes. Poll /regenerate/:personId/status for progress.',
+      statusUrl: `/regenerate/${personId}/status`
+    });
   } catch (error) {
     console.error('Regeneration endpoint error:', error);
     res.status(500).json({ 
