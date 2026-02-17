@@ -1355,12 +1355,6 @@ async function regenerateCalendarForPerson(personId) {
                 }
               }
               
-              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
-              if (confirmationMatch) {
-                const confVal = confirmationMatch[1].trim();
-                if (confVal) description += `Confirmation: ${confVal}\n`;
-              }
-              
             } else {
               description = 'Ground transportation details';
             }
@@ -1665,11 +1659,6 @@ async function regenerateCalendarForPerson(personId) {
                     description += '\n';
                   }
                 }
-              }
-              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
-              if (confirmationMatch) {
-                const confVal = confirmationMatch[1].trim();
-                if (confVal) description += `Confirmation: ${confVal}\n`;
               }
             }
             
@@ -6729,13 +6718,6 @@ END:VCALENDAR`);
                 }
               }
               
-              // Add confirmation info if present
-              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
-              if (confirmationMatch) {
-                const confVal = confirmationMatch[1].trim();
-                if (confVal) description += `Confirmation: ${confVal}\n`;
-              }
-              
               // Add transportation URL if present
     } else {
               description = 'Ground transportation details';
@@ -7003,11 +6985,6 @@ END:VCALENDAR`);
                     description += '\n';
                   }
                 }
-              }
-              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
-              if (confirmationMatch) {
-                const confVal = confirmationMatch[1].trim();
-                if (confVal) description += `Confirmation: ${confVal}\n`;
               }
             }
             
