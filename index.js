@@ -812,6 +812,26 @@ function parseUnifiedDateTime(dateTimeStr) {
   return null;
 }
 
+// Split comma-separated transport info (e.g. "Key: value, Key: value") into separate lines.
+// Splits on comma when followed by a new key (Title Case + colon), preserving commas in addresses.
+function formatTransportInfoLines(infoStr) {
+  if (!infoStr || !infoStr.trim()) return [];
+  const trimmed = infoStr.trim();
+  // Split by newlines first
+  const lines = trimmed.split(/\n/).filter(l => l.trim());
+  const result = [];
+  for (const line of lines) {
+    // If line has comma-separated key-value pairs (Key: value, Key: value), split them
+    // Split on comma when followed by a new key pattern: "Key: " (capital letter, then chars, then colon)
+    const parts = line.split(/,\s*(?=[A-Z][A-Za-z\s#]+:)/);
+    parts.forEach(part => {
+      const p = part.trim();
+      if (p) result.push(p);
+    });
+  }
+  return result;
+}
+
 // Same logic as travel calendar: parse departure and arrival separately when both exist.
 // Use this for personal-calendar flight events so times match the travel calendar.
 function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
@@ -1222,10 +1242,8 @@ async function regenerateCalendarForPerson(personId) {
                   const meetupInfo = meetupInfoMatch[1].trim();
                   if (meetupInfo) {
                     description += 'Meet Up Info:\n';
-                    const meetupInfoLines = meetupInfo.split('\n').filter(line => line.trim());
-                    meetupInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) description += `• ${trimmedLine}\n`;
+                    formatTransportInfoLines(meetupInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -1236,10 +1254,8 @@ async function regenerateCalendarForPerson(personId) {
                   const pickupInfo = pickupInfoMatch[1].trim();
                   if (pickupInfo) {
                     description += 'Pick Up Info:\n';
-                    const pickupInfoLines = pickupInfo.split('\n').filter(line => line.trim());
-                    pickupInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) description += `• ${trimmedLine}\n`;
+                    formatTransportInfoLines(pickupInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -1250,10 +1266,8 @@ async function regenerateCalendarForPerson(personId) {
                   const dropoffInfo = dropoffInfoMatch[1].trim();
                   if (dropoffInfo) {
                     description += 'Drop Off Info:\n';
-                    const dropoffInfoLines = dropoffInfo.split('\n').filter(line => line.trim());
-                    dropoffInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) description += `• ${trimmedLine}\n`;
+                    formatTransportInfoLines(dropoffInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -1262,11 +1276,12 @@ async function regenerateCalendarForPerson(personId) {
               
               const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
               if (confirmationMatch) {
-                description += `Confirmation: ${confirmationMatch[1]}\n`;
+                const confVal = confirmationMatch[1].trim();
+                if (confVal) description += `Confirmation: ${confVal}\n`;
               }
               
               if (transport.transportation_url) {
-                description += `\nNotion Link: ${transport.transportation_url}`;
+                description += `\nNotion Link:\n${transport.transportation_url}`;
               }
             } else {
               description = 'Ground transportation details';
@@ -1506,11 +1521,46 @@ async function regenerateCalendarForPerson(personId) {
                   description += '\n';
                 }
               }
-              description += transport.description.replace(/Driver:\s*[^\n]+\n?/, '');
+              if (transport.type === 'ground_transport_meeting') {
+                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (meetupInfoMatch) {
+                  const meetupInfo = meetupInfoMatch[1].trim();
+                  if (meetupInfo) {
+                    description += 'Meet Up Info:\n';
+                    formatTransportInfoLines(meetupInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_pickup') {
+                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (pickupInfoMatch) {
+                  const pickupInfo = pickupInfoMatch[1].trim();
+                  if (pickupInfo) {
+                    description += 'Pick Up Info:\n';
+                    formatTransportInfoLines(pickupInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_dropoff') {
+                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (dropoffInfoMatch) {
+                  const dropoffInfo = dropoffInfoMatch[1].trim();
+                  if (dropoffInfo) {
+                    description += 'Drop Off Info:\n';
+                    formatTransportInfoLines(dropoffInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              }
+              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
+              if (confirmationMatch) {
+                const confVal = confirmationMatch[1].trim();
+                if (confVal) description += `Confirmation: ${confVal}\n`;
+              }
             }
             
             if (transport.transportation_url) {
-              description += `\n\nNotion Link: ${transport.transportation_url}`;
+              description += `\nNotion Link:\n${transport.transportation_url}`;
             }
 
             let eventType = 'ground_transport';
@@ -6546,13 +6596,8 @@ END:VCALENDAR`);
                   const meetupInfo = meetupInfoMatch[1].trim();
                   if (meetupInfo) {
                     description += 'Meet Up Info:\n';
-                    // Format meetup info with bullet points for each line
-                    const meetupInfoLines = meetupInfo.split('\n').filter(line => line.trim());
-                    meetupInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) {
-                        description += `• ${trimmedLine}\n`;
-                      }
+                    formatTransportInfoLines(meetupInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -6564,13 +6609,8 @@ END:VCALENDAR`);
                   const pickupInfo = pickupInfoMatch[1].trim();
                   if (pickupInfo) {
                     description += 'Pick Up Info:\n';
-                    // Format pickup info with bullet points for each line
-                    const pickupInfoLines = pickupInfo.split('\n').filter(line => line.trim());
-                    pickupInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) {
-                        description += `• ${trimmedLine}\n`;
-                      }
+                    formatTransportInfoLines(pickupInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -6582,13 +6622,8 @@ END:VCALENDAR`);
                   const dropoffInfo = dropoffInfoMatch[1].trim();
                   if (dropoffInfo) {
                     description += 'Drop Off Info:\n';
-                    // Format dropoff info with bullet points for each line
-                    const dropoffInfoLines = dropoffInfo.split('\n').filter(line => line.trim());
-                    dropoffInfoLines.forEach(line => {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine) {
-                        description += `• ${trimmedLine}\n`;
-                      }
+                    formatTransportInfoLines(dropoffInfo).forEach(line => {
+                      description += `• ${line}\n`;
                     });
                     description += '\n';
                   }
@@ -6598,12 +6633,13 @@ END:VCALENDAR`);
               // Add confirmation info if present
               const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
               if (confirmationMatch) {
-                description += `Confirmation: ${confirmationMatch[1]}\n`;
+                const confVal = confirmationMatch[1].trim();
+                if (confVal) description += `Confirmation: ${confVal}\n`;
               }
               
               // Add transportation URL if present
               if (transport.transportation_url) {
-                description += `\nNotion Link: ${transport.transportation_url}`;
+                description += `\nNotion Link:\n${transport.transportation_url}`;
               }
     } else {
               description = 'Ground transportation details';
@@ -6806,13 +6842,47 @@ END:VCALENDAR`);
                   description += '\n';
                 }
               }
-              
-              description += transport.description.replace(/Driver:\s*[^\n]+\n?/, '');
+              if (transport.type === 'ground_transport_meeting') {
+                const meetupInfoMatch = transport.description.match(/Meet Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (meetupInfoMatch) {
+                  const meetupInfo = meetupInfoMatch[1].trim();
+                  if (meetupInfo) {
+                    description += 'Meet Up Info:\n';
+                    formatTransportInfoLines(meetupInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_pickup') {
+                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (pickupInfoMatch) {
+                  const pickupInfo = pickupInfoMatch[1].trim();
+                  if (pickupInfo) {
+                    description += 'Pick Up Info:\n';
+                    formatTransportInfoLines(pickupInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              } else if (transport.type === 'ground_transport_dropoff') {
+                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
+                if (dropoffInfoMatch) {
+                  const dropoffInfo = dropoffInfoMatch[1].trim();
+                  if (dropoffInfo) {
+                    description += 'Drop Off Info:\n';
+                    formatTransportInfoLines(dropoffInfo).forEach(line => { description += `• ${line}\n`; });
+                    description += '\n';
+                  }
+                }
+              }
+              const confirmationMatch = transport.description.match(/Confirmation:\s*([^\n]+)/);
+              if (confirmationMatch) {
+                const confVal = confirmationMatch[1].trim();
+                if (confVal) description += `Confirmation: ${confVal}\n`;
+              }
             }
             
             // Add transportation URL if present
             if (transport.transportation_url) {
-              description += `\n\nNotion Link: ${transport.transportation_url}`;
+              description += `\nNotion Link:\n${transport.transportation_url}`;
             }
 
             let eventType = 'ground_transport';
