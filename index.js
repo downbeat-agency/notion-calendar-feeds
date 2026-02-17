@@ -259,30 +259,39 @@ function isDSTDate(date) {
 }
 
 // Helper function to format ISO timestamp to readable time (e.g., "1:30 PM")
-// The calltime is stored as Pacific time but tagged as UTC, so we use the hour value directly
+// Uses parseUnifiedDateTime so UTC timestamps display correctly in Pacific floating time.
 function formatCallTime(isoTimestamp) {
   if (!isoTimestamp || typeof isoTimestamp !== 'string') {
     return isoTimestamp;
   }
-  
-  // Try to parse as ISO timestamp
-  const match = isoTimestamp.match(/T(\d{2}):(\d{2})/);
-  if (!match) {
-    return isoTimestamp; // Return as-is if not ISO format
+
+  const parsed = parseUnifiedDateTime(isoTimestamp);
+  const date = parsed?.start instanceof Date ? parsed.start : null;
+
+  if (!date || isNaN(date.getTime())) {
+    // Fallback: Try to parse as ISO timestamp directly
+    const match = isoTimestamp.match(/T(\d{2}):(\d{2})/);
+    if (!match) {
+      return isoTimestamp; // Return as-is if not ISO format
+    }
+    const hours = parseInt(match[1], 10);
+    const minutes = match[2];
+    return formatTimeParts(hours, minutes);
   }
-  
-  let hours = parseInt(match[1], 10);
-  const minutes = match[2];
-  
-  // Convert to 12-hour format
+
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return formatTimeParts(hours, minutes);
+}
+
+function formatTimeParts(hours24, minutes) {
+  let hours = hours24;
   const period = hours >= 12 ? 'PM' : 'AM';
   if (hours === 0) {
     hours = 12;
   } else if (hours > 12) {
     hours -= 12;
   }
-  
-  // Format with or without minutes
   if (minutes === '00') {
     return `${hours} ${period}`;
   }
@@ -1270,6 +1279,7 @@ async function regenerateCalendarForPerson(personId) {
               end: endTime.toISOString(),
               description: description.trim(),
               location: transport.location || '',
+              url: transport.transportation_url || '',
               mainEvent: event.event_name
             });
           }
@@ -1519,6 +1529,7 @@ async function regenerateCalendarForPerson(personId) {
               end: endTime,
               description: description,
               location: transport.location || '',
+              url: transport.transportation_url || '',
               mainEvent: ''
             });
           }
@@ -2005,7 +2016,7 @@ function processAdminEvents(eventsArray) {
         
         // Calltime
         if (event.calltime) {
-          description += `🕐 Calltime: ${event.calltime}\n`;
+          description += `🕐 Calltime: ${formatCallTime(event.calltime)}\n`;
         }
         
         // Gear
@@ -6605,6 +6616,7 @@ END:VCALENDAR`);
               end: endTime.toISOString(),
               description: description.trim(),
               location: transport.location || '',
+              url: transport.transportation_url || '',
               mainEvent: event.event_name
             });
 
@@ -6819,6 +6831,7 @@ END:VCALENDAR`);
               end: endTime,
               description: description,
               location: transport.location || '',
+              url: transport.transportation_url || '',
               mainEvent: '' // Top-level transport isn't tied to a specific event
             });
           }

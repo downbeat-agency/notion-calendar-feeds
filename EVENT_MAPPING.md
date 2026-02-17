@@ -249,7 +249,7 @@ Each data source can generate multiple calendar events (main events + flights + 
   end: transport.end || transport.start,   // "2025-09-20T14:00:00+00:00"
   description: "Driver: Diego De la Rosa\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\nDriver Info:\nDiego - (626) 991-4302,\nMeetup Notes: Make sure you bring a coffee for Diego\n\nNotion Link: https://www.notion.so/22839e4a65a98008b326f8e0a9f17129",
   location: transport.location || "",      // "149 N Halstead St, Pasadena, CA 91107"
-  url: transport.transportation_url        // "https://www.notion.so/22839e4a65a98008b326f8e0a9f17129"
+  url: transport.transportation_url || ""   // "https://www.notion.so/22839e4a65a98008b326f8e0a9f17129" - used for iCal URL property (tappable link in calendar apps)
 }
 ```
 
