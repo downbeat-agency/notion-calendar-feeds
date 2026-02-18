@@ -3448,22 +3448,36 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
 });
 
 // Temporary diagnostic endpoint to verify parseUnifiedDateTime on the server
-app.get('/debug/parse-test', (req, res) => {
-  const input = req.query.input || '2026-02-21T07:00:00-08:00/2026-02-22T00:00:00-08:00';
-  const result = parseUnifiedDateTime(input);
-  const startISO = result?.start?.toISOString?.() || null;
-  const endISO = result?.end?.toISOString?.() || null;
-  const startUTCHours = result?.start?.getUTCHours?.() ?? null;
-  const endUTCHours = result?.end?.getUTCHours?.() ?? null;
-  res.json({
-    input,
-    startISO,
-    endISO,
-    startUTCHours,
-    endUTCHours,
-    serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    version: 'tz-fix-v2-2026-02-18'
-  });
+app.get('/debug/parse-test', async (req, res) => {
+  try {
+    const input = req.query.input || '2026-02-21T07:00:00-08:00/2026-02-22T00:00:00-08:00';
+    const personId = req.query.person;
+    const result = parseUnifiedDateTime(input);
+    const response = {
+      input,
+      startISO: result?.start?.toISOString?.() || null,
+      endISO: result?.end?.toISOString?.() || null,
+      startUTCHours: result?.start?.getUTCHours?.() ?? null,
+      serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      version: 'tz-fix-v3'
+    };
+    if (personId) {
+      const calendarData = await getCalendarDataFromDatabase(personId);
+      if (calendarData?.events) {
+        response.sampleEvents = calendarData.events.slice(0, 5).map(e => ({
+          name: e.event_name,
+          raw_event_date: e.event_date,
+          raw_calltime: e.calltime,
+          parsed_start: parseUnifiedDateTime(e.event_date)?.start?.toISOString?.() || null,
+          parsed_end: parseUnifiedDateTime(e.event_date)?.end?.toISOString?.() || null,
+          parsed_calltime: formatCallTime(e.calltime)
+        }));
+      }
+    }
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Regeneration endpoint - regenerate calendar for a specific person
