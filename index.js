@@ -670,87 +670,28 @@ function parseUnifiedDateTime(dateTimeStr) {
       
       if (!isNaN(actualStartDate.getTime()) && !isNaN(actualEndDate.getTime())) {
         
-        // Check if these are UTC timestamps and convert to Pacific floating time
-        const isUTCStart = actualStartStr.includes('T') && (actualStartStr.includes('Z') || actualStartStr.includes('+00:00'));
-        const isUTCEnd = actualEndStr.includes('T') && (actualEndStr.includes('Z') || actualEndStr.includes('+00:00'));
-
-        // Check for timezone offsets like -08:00 or -07:00 (already in local Pacific time)
-        const isOffsetStart = actualStartStr.includes('T') && /[+-]\d{2}:\d{2}$/.test(actualStartStr) && !actualStartStr.includes('+00:00');
-        const isOffsetEnd = actualEndStr.includes('T') && /[+-]\d{2}:\d{2}$/.test(actualEndStr) && !actualEndStr.includes('+00:00');
+        // Notion formulas output Pacific times with +00:00 (the face value IS Pacific).
+        // Detect any ISO timestamp with a time component.
+        const isISOStart = actualStartStr.includes('T');
+        const isISOEnd = actualEndStr.includes('T');
         
-        // Check if this appears to be an all-day event (midnight UTC times)
-        // All-day events typically have times at 00:00:00 UTC
-        const isAllDayStart = isUTCStart && actualStartStr.match(/T00:00:00/);
-        const isAllDayEnd = isUTCEnd && actualEndStr.match(/T00:00:00/);
+        const isAllDayStart = isISOStart && actualStartStr.match(/T00:00:00/);
+        const isAllDayEnd = isISOEnd && actualEndStr.match(/T00:00:00/);
         
-        if (isAllDayStart && isAllDayEnd) {
-          // For all-day events, extract date components and create dates at midnight Pacific
-          // This prevents date shifting when converting from UTC
-          const startYear = actualStartDate.getUTCFullYear();
-          const startMonth = actualStartDate.getUTCMonth();
-          const startDay = actualStartDate.getUTCDate();
-          
-          const endYear = actualEndDate.getUTCFullYear();
-          const endMonth = actualEndDate.getUTCMonth();
-          const endDay = actualEndDate.getUTCDate();
-          
-          // Create new dates at midnight Pacific time (floating, no timezone).
-          // Use Date.UTC so ical-generator's getUTCHours() outputs correct time regardless of server TZ.
-          const pacificStart = new Date(Date.UTC(startYear, startMonth, startDay, 0, 0, 0));
-          const pacificEnd = new Date(Date.UTC(endYear, endMonth, endDay, 0, 0, 0));
-          
-          return {
-            start: pacificStart,
-            end: pacificEnd
-          };
-        }
-
-        // Convert start to Pacific floating time stored in UTC bytes (for ical-generator's getUTCHours())
-        if (isOffsetStart) {
-          // Pacific offset (-08:00 / -07:00): the local time in the string IS Pacific time.
-          // Extract it directly — no conversion needed.
+        // Notion formulas output Pacific wall-clock times regardless of suffix (+00:00, Z, -08:00).
+        // The face value in the string IS the Pacific time we want for floating iCal events.
+        // Extract local components directly — never apply UTC-to-Pacific conversion.
+        if (isISOStart) {
           const c = extractLocalComponents(actualStartStr);
           if (c) {
             actualStartDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
           }
-        } else if (isUTCStart) {
-          // UTC timestamp: convert UTC instant → Pacific floating time
-          const isDST = isDSTDate(actualStartDate);
-          const offsetHours = isDST ? 7 : 8;
-          const year = actualStartDate.getUTCFullYear();
-          const month = actualStartDate.getUTCMonth();
-          const day = actualStartDate.getUTCDate();
-          let hours = actualStartDate.getUTCHours() - offsetHours;
-          const minutes = actualStartDate.getUTCMinutes();
-          const seconds = actualStartDate.getUTCSeconds();
-          if (hours < 0) {
-            hours += 24;
-            actualStartDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
-          } else {
-            actualStartDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
-          }
         }
         
-        // Convert end to Pacific floating time stored in UTC bytes
-        if (isOffsetEnd) {
+        if (isISOEnd) {
           const c = extractLocalComponents(actualEndStr);
           if (c) {
             actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
-          }
-        } else if (isUTCEnd) {
-          const isDST = isDSTDate(actualEndDate);
-          const offsetHours = isDST ? 7 : 8;
-          const year = actualEndDate.getUTCFullYear();
-          const month = actualEndDate.getUTCMonth();
-          const day = actualEndDate.getUTCDate();
-          let hours = actualEndDate.getUTCHours() - offsetHours;
-          const minutes = actualEndDate.getUTCMinutes();
-          const seconds = actualEndDate.getUTCSeconds();
-          if (hours < 0) {
-            hours += 24;
-            actualEndDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
-          } else {
-            actualEndDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
           }
         }
         
@@ -784,33 +725,15 @@ function parseUnifiedDateTime(dateTimeStr) {
     
     if (!isNaN(date.getTime())) {
       const isISOTimestamp = cleanStr.includes('T');
-      const isPacificTimezone = cleanStr.includes('-07:00') || cleanStr.includes('-08:00');
 
-      if (isPacificTimezone && isISOTimestamp) {
-        // Pacific offset: the local time in the string IS the Pacific time we want.
-        // Extract directly — no round-trip through Date/UTC needed.
+      if (isISOTimestamp) {
+        // Notion formulas output Pacific wall-clock times regardless of suffix.
+        // Extract face-value time directly — it IS Pacific.
         const c = extractLocalComponents(cleanStr);
         if (c) {
           const pacificDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
           return { start: pacificDate, end: pacificDate };
         }
-      } else if (isISOTimestamp && !isPacificTimezone) {
-        // UTC or other timezone: convert UTC instant → Pacific floating time
-        const isDST = isDSTDate(date);
-        const offsetHours = isDST ? 7 : 8;
-        const year = date.getUTCFullYear();
-        const month = date.getUTCMonth();
-        const day = date.getUTCDate();
-        let hours = date.getUTCHours() - offsetHours;
-        const minutes = date.getUTCMinutes();
-        const seconds = date.getUTCSeconds();
-        if (hours < 0) {
-          hours += 24;
-          const pacificDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
-          return { start: pacificDate, end: pacificDate };
-        }
-        const pacificDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
-        return { start: pacificDate, end: pacificDate };
       }
       
       return {
@@ -1033,15 +956,12 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
           }
 
-          // TEMP DEBUG: include raw data in description for first 5 events
-          const debugInfo = `\n\n[DEBUG] raw_event_date: ${event.event_date}\n[DEBUG] raw_calltime: ${event.calltime}\n[DEBUG] parsed_start_iso: ${eventTimes.start.toISOString()}\n[DEBUG] parsed_end_iso: ${eventTimes.end.toISOString()}`;
-
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || '') + debugInfo,
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
@@ -2978,7 +2898,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v2-2026-02-18',
+    version: 'tz-fix-v4-floating-pacific',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
@@ -3462,7 +3382,7 @@ app.get('/debug/parse-test', async (req, res) => {
       endISO: result?.end?.toISOString?.() || null,
       startUTCHours: result?.start?.getUTCHours?.() ?? null,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      version: 'tz-fix-v3'
+      version: 'tz-fix-v4-floating-pacific'
     };
     if (personId) {
       const calendarData = await getCalendarDataFromDatabase(personId);
