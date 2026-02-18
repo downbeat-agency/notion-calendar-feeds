@@ -247,15 +247,32 @@ function isDSTDate(date) {
   const day = date.getDate();
   
   // DST starts second Sunday in March at 2 AM
-  const marchFirst = new Date(year, 2, 1); // March 1
-  const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7); // Second Sunday
+  const marchFirst = new Date(year, 2, 1);
+  const dstStart = new Date(year, 2, 1 + (7 - marchFirst.getDay() + 7) % 7 + 7);
   
   // DST ends first Sunday in November at 2 AM
-  const novFirst = new Date(year, 10, 1); // November 1
-  const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7); // First Sunday
+  const novFirst = new Date(year, 10, 1);
+  const dstEnd = new Date(year, 10, 1 + (7 - novFirst.getDay()) % 7);
   
   const checkDate = new Date(year, month, day);
   return checkDate >= dstStart && checkDate < dstEnd;
+}
+
+// Precise DST check for a UTC moment — used when converting actual UTC to Pacific.
+// DST starts: second Sunday of March at 10:00 UTC (2 AM PST)
+// DST ends: first Sunday of November at 9:00 UTC (2 AM PDT)
+function isPacificDSTAtUTC(utcDate) {
+  const year = utcDate.getUTCFullYear();
+  
+  const marchFirst = new Date(Date.UTC(year, 2, 1));
+  const secondSunday = 1 + ((7 - marchFirst.getUTCDay()) % 7) + 7;
+  const dstStartUTC = new Date(Date.UTC(year, 2, secondSunday, 10, 0, 0));
+  
+  const novFirst = new Date(Date.UTC(year, 10, 1));
+  const firstSunday = 1 + ((7 - novFirst.getUTCDay()) % 7);
+  const dstEndUTC = new Date(Date.UTC(year, 10, firstSunday, 9, 0, 0));
+  
+  return utcDate >= dstStartUTC && utcDate < dstEndUTC;
 }
 
 // Helper function to format ISO timestamp to readable time (e.g., "1:30 PM")
@@ -670,17 +687,15 @@ function parseUnifiedDateTime(dateTimeStr) {
       
       if (!isNaN(actualStartDate.getTime()) && !isNaN(actualEndDate.getTime())) {
         
-        // Notion formulas output Pacific times with +00:00 (the face value IS Pacific).
-        // Detect any ISO timestamp with a time component.
         const isISOStart = actualStartStr.includes('T');
         const isISOEnd = actualEndStr.includes('T');
         
         const isAllDayStart = isISOStart && actualStartStr.match(/T00:00:00/);
         const isAllDayEnd = isISOEnd && actualEndStr.match(/T00:00:00/);
         
-        // Notion formulas output Pacific wall-clock times regardless of suffix (+00:00, Z, -08:00).
-        // The face value in the string IS the Pacific time we want for floating iCal events.
-        // Extract local components directly — never apply UTC-to-Pacific conversion.
+        // Notion Calendar Data formula mixes two sources:
+        //   START = calltime formula → Pacific wall-clock (face value IS Pacific)
+        //   END   = native Notion date property → actual UTC (needs conversion)
         if (isISOStart) {
           const c = extractLocalComponents(actualStartStr);
           if (c) {
@@ -689,9 +704,20 @@ function parseUnifiedDateTime(dateTimeStr) {
         }
         
         if (isISOEnd) {
-          const c = extractLocalComponents(actualEndStr);
-          if (c) {
-            actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          // End is actual UTC — convert to Pacific floating time
+          const isDST = isPacificDSTAtUTC(actualEndDate);
+          const offsetHours = isDST ? 7 : 8;
+          const year = actualEndDate.getUTCFullYear();
+          const month = actualEndDate.getUTCMonth();
+          const day = actualEndDate.getUTCDate();
+          let hours = actualEndDate.getUTCHours() - offsetHours;
+          const minutes = actualEndDate.getUTCMinutes();
+          const seconds = actualEndDate.getUTCSeconds();
+          if (hours < 0) {
+            hours += 24;
+            actualEndDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
+          } else {
+            actualEndDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
           }
         }
         
@@ -2898,7 +2924,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v4-floating-pacific',
+    version: 'tz-fix-v5-mixed-start-end',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
