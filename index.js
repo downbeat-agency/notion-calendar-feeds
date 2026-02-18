@@ -551,7 +551,10 @@ function extractLocalComponents(isoStr) {
 }
 
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
-function parseUnifiedDateTime(dateTimeStr) {
+// options.endIsUTC: when true, the end portion of a date range is actual UTC and
+//   needs conversion to Pacific. Used for main event_date where Notion mixes
+//   Pacific start (calltime formula) with UTC end (native date property).
+function parseUnifiedDateTime(dateTimeStr, options = {}) {
   if (!dateTimeStr || dateTimeStr === null) {
     return null;
   }
@@ -703,8 +706,8 @@ function parseUnifiedDateTime(dateTimeStr) {
           }
         }
         
-        if (isISOEnd) {
-          // End is actual UTC — convert to Pacific floating time
+        if (isISOEnd && options.endIsUTC) {
+          // End is actual UTC (from native Notion date property) — convert to Pacific
           const isDST = isPacificDSTAtUTC(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
           const year = actualEndDate.getUTCFullYear();
@@ -718,6 +721,12 @@ function parseUnifiedDateTime(dateTimeStr) {
             actualEndDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
           } else {
             actualEndDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+          }
+        } else if (isISOEnd) {
+          // End is Pacific face value (same as start) — extract directly
+          const c = extractLocalComponents(actualEndStr);
+          if (c) {
+            actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
           }
         }
         
@@ -933,7 +942,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
           console.log(`[DEBUG] Event: ${event.event_name}`);
           console.log(`[DEBUG] event_date: ${event.event_date}`);
         }
-        let eventTimes = parseUnifiedDateTime(event.event_date);
+        let eventTimes = parseUnifiedDateTime(event.event_date, { endIsUTC: true });
         
         if (eventTimes) {
           // Debug logging for parsed times
@@ -2107,7 +2116,7 @@ function processAdminEvents(eventsArray) {
   eventsArray.forEach(event => {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
-      let eventTimes = parseUnifiedDateTime(event.event_date);
+      let eventTimes = parseUnifiedDateTime(event.event_date, { endIsUTC: true });
       
       if (eventTimes) {
         // Build payroll info for description (put at TOP)
@@ -2924,7 +2933,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v5-mixed-start-end',
+    version: 'tz-fix-v6-selective-end-utc',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
@@ -3417,8 +3426,8 @@ app.get('/debug/parse-test', async (req, res) => {
           name: e.event_name,
           raw_event_date: e.event_date,
           raw_calltime: e.calltime,
-          parsed_start: parseUnifiedDateTime(e.event_date)?.start?.toISOString?.() || null,
-          parsed_end: parseUnifiedDateTime(e.event_date)?.end?.toISOString?.() || null,
+          parsed_start: parseUnifiedDateTime(e.event_date, { endIsUTC: true })?.start?.toISOString?.() || null,
+          parsed_end: parseUnifiedDateTime(e.event_date, { endIsUTC: true })?.end?.toISOString?.() || null,
           parsed_calltime: formatCallTime(e.calltime)
         }));
       }
@@ -6329,7 +6338,7 @@ END:VCALENDAR`);
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
-        let eventTimes = parseUnifiedDateTime(event.event_date);
+        let eventTimes = parseUnifiedDateTime(event.event_date, { endIsUTC: true });
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
