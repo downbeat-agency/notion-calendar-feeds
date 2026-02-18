@@ -945,24 +945,23 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     eventsArray.forEach(event => {
       // Add main event
       if (event.event_name && event.event_date) {
-        // Debug logging for events crossing midnight
-        if (event.event_name.includes('Gold Standard') || event.event_name.includes('Wedding')) {
-          console.log(`[DEBUG] Event: ${event.event_name}`);
-          console.log(`[DEBUG] event_date: ${event.event_date}`);
-        }
+        const _rawEventDate = event.event_date;
+        const _rawCalltime = event.calltime;
+        
         let eventTimes = parseUnifiedDateTime(event.event_date);
+        
+        const _parsedStartBeforeCT = eventTimes?.start?.toISOString?.() || 'null';
+        const _parsedEndBeforeCT = eventTimes?.end?.toISOString?.() || 'null';
+        
         if (event.calltime && eventTimes) {
           const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
           if (ct?.start) eventTimes.start = ct.start;
         }
         
+        const _finalStart = eventTimes?.start?.toISOString?.() || 'null';
+        const _finalEnd = eventTimes?.end?.toISOString?.() || 'null';
+        
         if (eventTimes) {
-          // Debug logging for parsed times
-          if (event.event_name && (event.event_name.includes('Gold Standard') || event.event_name.includes('Wedding'))) {
-            console.log(`[DEBUG] Parsed start: ${eventTimes.start}`);
-            console.log(`[DEBUG] Parsed end: ${eventTimes.end}`);
-            console.log(`[DEBUG] Start > End? ${eventTimes.start.getTime() > eventTimes.end.getTime()}`);
-          }
           let payrollInfo = '';
           const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
           const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
@@ -992,7 +991,6 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
           }
 
-          // Build event personnel info (after gear checklist, before general info)
           let eventPersonnelInfo = '';
           if (event.event_personnel && event.event_personnel.trim()) {
             eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
@@ -1003,12 +1001,14 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
           }
 
+          const debugInfo = `\n[DEBUG] raw_event_date=${_rawEventDate} | raw_calltime=${_rawCalltime} | before_ct_start=${_parsedStartBeforeCT} | before_ct_end=${_parsedEndBeforeCT} | final_start=${_finalStart} | final_end=${_finalEnd}\n`;
+
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
+            description: debugInfo + payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
