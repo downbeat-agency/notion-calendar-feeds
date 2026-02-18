@@ -1033,12 +1033,15 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
           }
 
+          // TEMP DEBUG: include raw data in description for first 5 events
+          const debugInfo = `\n\n[DEBUG] raw_event_date: ${event.event_date}\n[DEBUG] raw_calltime: ${event.calltime}\n[DEBUG] parsed_start_iso: ${eventTimes.start.toISOString()}\n[DEBUG] parsed_end_iso: ${eventTimes.end.toISOString()}`;
+
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || '') + debugInfo,
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
