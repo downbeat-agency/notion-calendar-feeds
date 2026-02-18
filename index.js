@@ -279,8 +279,8 @@ function formatCallTime(isoTimestamp) {
     return formatTimeParts(hours, minutes);
   }
 
-  const hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const hours = date.getUTCHours();
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
   return formatTimeParts(hours, minutes);
 }
 
@@ -517,6 +517,22 @@ function processCalendarDataResponse(response) {
   };
 }
 
+// Extract year/month/day/hours/minutes/seconds directly from an ISO string's local components.
+// For "2026-02-21T07:00:00-08:00" → { year:2026, month:1, day:21, hours:7, minutes:0, seconds:0 }
+// The -08:00 offset is ignored — we want the LOCAL time as written in the string.
+function extractLocalComponents(isoStr) {
+  const match = isoStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return null;
+  return {
+    year: parseInt(match[1]),
+    month: parseInt(match[2]) - 1, // 0-indexed for Date.UTC
+    day: parseInt(match[3]),
+    hours: parseInt(match[4]),
+    minutes: parseInt(match[5]),
+    seconds: parseInt(match[6])
+  };
+}
+
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
 function parseUnifiedDateTime(dateTimeStr) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -689,63 +705,49 @@ function parseUnifiedDateTime(dateTimeStr) {
           };
         }
 
-        // For timed events, convert both start and end from their instant to Pacific floating time.
-        // This ensures flights with departure in one TZ (e.g. Pacific) and arrival in another (e.g. Eastern)
-        // display correctly: e.g. 2pm Pacific–9pm Eastern becomes 2pm–6pm Pacific.
-        const sameUTCDay = actualStartDate.getUTCFullYear() === actualEndDate.getUTCFullYear() &&
-                          actualStartDate.getUTCMonth() === actualEndDate.getUTCMonth() &&
-                          actualStartDate.getUTCDate() === actualEndDate.getUTCDate();
-        const startHourGreater = actualStartDate.getUTCHours() > actualEndDate.getUTCHours();
-        const isCrossMidnightEvent = sameUTCDay && startHourGreater;
-
-        // Convert start instant to Pacific floating time
-        if (isUTCStart || isOffsetStart) {
+        // Convert start to Pacific floating time stored in UTC bytes (for ical-generator's getUTCHours())
+        if (isOffsetStart) {
+          // Pacific offset (-08:00 / -07:00): the local time in the string IS Pacific time.
+          // Extract it directly — no conversion needed.
+          const c = extractLocalComponents(actualStartStr);
+          if (c) {
+            actualStartDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          }
+        } else if (isUTCStart) {
+          // UTC timestamp: convert UTC instant → Pacific floating time
           const isDST = isDSTDate(actualStartDate);
           const offsetHours = isDST ? 7 : 8;
-          // Extract UTC components
           const year = actualStartDate.getUTCFullYear();
           const month = actualStartDate.getUTCMonth();
           const day = actualStartDate.getUTCDate();
-          const originalUTCHours = actualStartDate.getUTCHours();
+          let hours = actualStartDate.getUTCHours() - offsetHours;
           const minutes = actualStartDate.getUTCMinutes();
           const seconds = actualStartDate.getUTCSeconds();
-          
-          // For cross-midnight events with UTC-only timestamps, start may be stored as Pacific (incorrectly tagged UTC).
-          // When either time has an explicit offset (e.g. flight arrival in Eastern), always convert from instant.
-          let hours;
-          if (isCrossMidnightEvent && isUTCStart && !isOffsetStart) {
-            hours = originalUTCHours; // Use directly as Pacific time
-          } else {
-            hours = originalUTCHours - offsetHours;
-          }
-          
-          // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Use Date.UTC so ical-generator's floating output uses correct Pacific time (server may be UTC)
             actualStartDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
           } else {
             actualStartDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
           }
         }
         
-        // Convert end instant to Pacific floating time
-        if (isUTCEnd || isOffsetEnd) {
+        // Convert end to Pacific floating time stored in UTC bytes
+        if (isOffsetEnd) {
+          const c = extractLocalComponents(actualEndStr);
+          if (c) {
+            actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          }
+        } else if (isUTCEnd) {
           const isDST = isDSTDate(actualEndDate);
           const offsetHours = isDST ? 7 : 8;
-          // Extract UTC components and convert to Pacific time
           const year = actualEndDate.getUTCFullYear();
           const month = actualEndDate.getUTCMonth();
           const day = actualEndDate.getUTCDate();
-          const originalUTCHours = actualEndDate.getUTCHours();
-          let hours = originalUTCHours - offsetHours;
+          let hours = actualEndDate.getUTCHours() - offsetHours;
           const minutes = actualEndDate.getUTCMinutes();
           const seconds = actualEndDate.getUTCSeconds();
-          
-          // Handle hour underflow (if subtracting offset makes hours negative, go to previous day)
           if (hours < 0) {
             hours += 24;
-            // Use Date.UTC so ical-generator's floating output uses correct Pacific time (server may be UTC)
             actualEndDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
           } else {
             actualEndDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
@@ -781,24 +783,34 @@ function parseUnifiedDateTime(dateTimeStr) {
     const date = new Date(cleanStr);
     
     if (!isNaN(date.getTime())) {
-      // For ISO timestamps (with T), convert from UTC to Pacific floating time
-      // This handles: "2026-02-12T14:00:00" (no TZ), "...+00:00", "...Z"
-      // Timestamps without explicit timezone are treated as UTC by JS Date
-      // Skip conversion only for explicitly Pacific timestamps (-07:00 or -08:00)
       const isISOTimestamp = cleanStr.includes('T');
       const isPacificTimezone = cleanStr.includes('-07:00') || cleanStr.includes('-08:00');
-      const isUTCTime = isISOTimestamp && !isPacificTimezone;
-      
-      if (isUTCTime) {
-        // NOTE: We no longer treat T00:00:00 as all-day events here.
-        // Midnight UTC (T00:00:00) should convert to 4/5 PM Pacific the previous day.
-        // All-day detection is only done in the date-range parsing section above.
-        
-        // For timed events (including midnight), subtract Pacific offset to convert UTC to Pacific floating time
-        // UTC is ahead of Pacific, so we subtract hours
+
+      if (isPacificTimezone && isISOTimestamp) {
+        // Pacific offset: the local time in the string IS the Pacific time we want.
+        // Extract directly — no round-trip through Date/UTC needed.
+        const c = extractLocalComponents(cleanStr);
+        if (c) {
+          const pacificDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          return { start: pacificDate, end: pacificDate };
+        }
+      } else if (isISOTimestamp && !isPacificTimezone) {
+        // UTC or other timezone: convert UTC instant → Pacific floating time
         const isDST = isDSTDate(date);
         const offsetHours = isDST ? 7 : 8;
-        date.setHours(date.getHours() - offsetHours);
+        const year = date.getUTCFullYear();
+        const month = date.getUTCMonth();
+        const day = date.getUTCDate();
+        let hours = date.getUTCHours() - offsetHours;
+        const minutes = date.getUTCMinutes();
+        const seconds = date.getUTCSeconds();
+        if (hours < 0) {
+          hours += 24;
+          const pacificDate = new Date(Date.UTC(year, month, day - 1, hours, minutes, seconds));
+          return { start: pacificDate, end: pacificDate };
+        }
+        const pacificDate = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+        return { start: pacificDate, end: pacificDate };
       }
       
       return {
