@@ -3447,6 +3447,25 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
   }
 });
 
+// Temporary diagnostic endpoint to verify parseUnifiedDateTime on the server
+app.get('/debug/parse-test', (req, res) => {
+  const input = req.query.input || '2026-02-21T07:00:00-08:00/2026-02-22T00:00:00-08:00';
+  const result = parseUnifiedDateTime(input);
+  const startISO = result?.start?.toISOString?.() || null;
+  const endISO = result?.end?.toISOString?.() || null;
+  const startUTCHours = result?.start?.getUTCHours?.() ?? null;
+  const endUTCHours = result?.end?.getUTCHours?.() ?? null;
+  res.json({
+    input,
+    startISO,
+    endISO,
+    startUTCHours,
+    endUTCHours,
+    serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    version: 'tz-fix-v2-2026-02-18'
+  });
+});
+
 // Regeneration endpoint - regenerate calendar for a specific person
 app.get('/regenerate/:personId', async (req, res) => {
   try {
