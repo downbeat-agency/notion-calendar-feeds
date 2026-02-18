@@ -3426,6 +3426,7 @@ app.get('/debug/parse-test', async (req, res) => {
   try {
     const input = req.query.input || '2026-02-21T07:00:00-08:00/2026-02-22T00:00:00-08:00';
     const personId = req.query.person;
+    const eventFilter = req.query.event;
     const result = parseUnifiedDateTime(input);
     const response = {
       input,
@@ -3433,19 +3434,35 @@ app.get('/debug/parse-test', async (req, res) => {
       endISO: result?.end?.toISOString?.() || null,
       startUTCHours: result?.start?.getUTCHours?.() ?? null,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      version: 'tz-fix-v4-floating-pacific'
+      version: 'tz-fix-v7-utc-conversion'
     };
     if (personId) {
       const calendarData = await getCalendarDataFromDatabase(personId);
       if (calendarData?.events) {
-        response.sampleEvents = calendarData.events.slice(0, 5).map(e => ({
-          name: e.event_name,
-          raw_event_date: e.event_date,
-          raw_calltime: e.calltime,
-          parsed_start: parseUnifiedDateTime(e.event_date)?.start?.toISOString?.() || null,
-          parsed_end: parseUnifiedDateTime(e.event_date)?.end?.toISOString?.() || null,
-          parsed_calltime: formatCallTime(e.calltime)
-        }));
+        let evts = calendarData.events;
+        if (eventFilter) {
+          evts = evts.filter(e => e.event_name && e.event_name.toLowerCase().includes(eventFilter.toLowerCase()));
+        }
+        response.sampleEvents = evts.slice(0, 10).map(e => {
+          const parsed = parseUnifiedDateTime(e.event_date);
+          const ctParsed = e.calltime ? parseUnifiedDateTime(e.calltime, { faceValue: true }) : null;
+          const ctDefault = e.calltime ? parseUnifiedDateTime(e.calltime) : null;
+          return {
+            name: e.event_name,
+            raw_event_date: e.event_date,
+            raw_calltime: e.calltime,
+            parsed_event_start_utc: parsed?.start?.toISOString?.() || null,
+            parsed_event_end_utc: parsed?.end?.toISOString?.() || null,
+            parsed_event_start_hours: parsed?.start?.getUTCHours?.() ?? null,
+            parsed_event_end_hours: parsed?.end?.getUTCHours?.() ?? null,
+            calltime_faceValue_utc: ctParsed?.start?.toISOString?.() || null,
+            calltime_faceValue_hours: ctParsed?.start?.getUTCHours?.() ?? null,
+            calltime_utcConvert_utc: ctDefault?.start?.toISOString?.() || null,
+            calltime_utcConvert_hours: ctDefault?.start?.getUTCHours?.() ?? null,
+            final_start_would_be: ctParsed?.start?.getUTCHours?.() ?? parsed?.start?.getUTCHours?.() ?? null,
+            final_end_would_be: parsed?.end?.getUTCHours?.() ?? null,
+          };
+        });
       }
     }
     res.json(response);
