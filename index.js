@@ -258,6 +258,28 @@ function isDSTDate(date) {
   return checkDate >= dstStart && checkDate < dstEnd;
 }
 
+// Precise DST check for a specific UTC moment.
+// DST starts: second Sunday of March at 10:00 UTC (2 AM PST)
+// DST ends:   first Sunday of November at 9:00 UTC (2 AM PDT)
+function isPacificDSTAtUTC(utcDate) {
+  const year = utcDate.getUTCFullYear();
+
+  const marchFirst = new Date(Date.UTC(year, 2, 1));
+  const secondSunday = 1 + ((7 - marchFirst.getUTCDay()) % 7) + 7;
+  const dstStartUTC = new Date(Date.UTC(year, 2, secondSunday, 10, 0, 0));
+
+  const novFirst = new Date(Date.UTC(year, 10, 1));
+  const firstSunday = 1 + ((7 - novFirst.getUTCDay()) % 7);
+  const dstEndUTC = new Date(Date.UTC(year, 10, firstSunday, 9, 0, 0));
+
+  return utcDate >= dstStartUTC && utcDate < dstEndUTC;
+}
+
+function convertUTCToPacific(utcDate) {
+  const offsetHours = isPacificDSTAtUTC(utcDate) ? 7 : 8;
+  return new Date(utcDate.getTime() - offsetHours * 60 * 60 * 1000);
+}
+
 // Helper function to format ISO timestamp to readable time (e.g., "1:30 PM")
 // Uses parseUnifiedDateTime so UTC timestamps display correctly in Pacific floating time.
 function formatCallTime(isoTimestamp) {
@@ -265,7 +287,7 @@ function formatCallTime(isoTimestamp) {
     return isoTimestamp;
   }
 
-  const parsed = parseUnifiedDateTime(isoTimestamp);
+  const parsed = parseUnifiedDateTime(isoTimestamp, { faceValue: true });
   const date = parsed?.start instanceof Date ? parsed.start : null;
 
   if (!date || isNaN(date.getTime())) {
@@ -534,7 +556,9 @@ function extractLocalComponents(isoStr) {
 }
 
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
-function parseUnifiedDateTime(dateTimeStr) {
+// options.faceValue: when true, extract face-value time from ISO strings (for Pacific formula output like calltime)
+//   Default (false): treat ISO timestamps as UTC and convert to Pacific
+function parseUnifiedDateTime(dateTimeStr, options = {}) {
   if (!dateTimeStr || dateTimeStr === null) {
     return null;
   }
@@ -670,28 +694,39 @@ function parseUnifiedDateTime(dateTimeStr) {
       
       if (!isNaN(actualStartDate.getTime()) && !isNaN(actualEndDate.getTime())) {
         
-        // Notion formulas output Pacific times with +00:00 (the face value IS Pacific).
-        // Detect any ISO timestamp with a time component.
         const isISOStart = actualStartStr.includes('T');
         const isISOEnd = actualEndStr.includes('T');
         
         const isAllDayStart = isISOStart && actualStartStr.match(/T00:00:00/);
         const isAllDayEnd = isISOEnd && actualEndStr.match(/T00:00:00/);
         
-        // Notion formulas output Pacific wall-clock times regardless of suffix (+00:00, Z, -08:00).
-        // The face value in the string IS the Pacific time we want for floating iCal events.
-        // Extract local components directly — never apply UTC-to-Pacific conversion.
-        if (isISOStart) {
-          const c = extractLocalComponents(actualStartStr);
-          if (c) {
-            actualStartDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+        if (options.faceValue) {
+          // Face-value mode: the time in the string IS Pacific (for formula outputs like calltime)
+          if (isISOStart) {
+            const c = extractLocalComponents(actualStartStr);
+            if (c) {
+              actualStartDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+            }
           }
-        }
-        
-        if (isISOEnd) {
-          const c = extractLocalComponents(actualEndStr);
-          if (c) {
-            actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          if (isISOEnd) {
+            const c = extractLocalComponents(actualEndStr);
+            if (c) {
+              actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+            }
+          }
+        } else {
+          // Default: timestamps are UTC from native Notion dates — convert to Pacific
+          if (isISOStart) {
+            const pacific = convertUTCToPacific(actualStartDate);
+            actualStartDate = new Date(Date.UTC(
+              pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
+              pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
+          }
+          if (isISOEnd) {
+            const pacific = convertUTCToPacific(actualEndDate);
+            actualEndDate = new Date(Date.UTC(
+              pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
+              pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
           }
         }
         
@@ -727,11 +762,19 @@ function parseUnifiedDateTime(dateTimeStr) {
       const isISOTimestamp = cleanStr.includes('T');
 
       if (isISOTimestamp) {
-        // Notion formulas output Pacific wall-clock times regardless of suffix.
-        // Extract face-value time directly — it IS Pacific.
-        const c = extractLocalComponents(cleanStr);
-        if (c) {
-          const pacificDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+        let pacificDate;
+        if (options.faceValue) {
+          const c = extractLocalComponents(cleanStr);
+          if (c) {
+            pacificDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+          }
+        } else {
+          const pacific = convertUTCToPacific(date);
+          pacificDate = new Date(Date.UTC(
+            pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
+            pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
+        }
+        if (pacificDate) {
           return { start: pacificDate, end: pacificDate };
         }
       }
@@ -908,6 +951,10 @@ async function regenerateCalendarForPerson(personId, options = {}) {
           console.log(`[DEBUG] event_date: ${event.event_date}`);
         }
         let eventTimes = parseUnifiedDateTime(event.event_date);
+        if (event.calltime && eventTimes) {
+          const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
+          if (ct?.start) eventTimes.start = ct.start;
+        }
         
         if (eventTimes) {
           // Debug logging for parsed times
@@ -2082,6 +2129,10 @@ function processAdminEvents(eventsArray) {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
       let eventTimes = parseUnifiedDateTime(event.event_date);
+      if (event.calltime && eventTimes) {
+        const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
+        if (ct?.start) eventTimes.start = ct.start;
+      }
       
       if (eventTimes) {
         // Build payroll info for description (put at TOP)
@@ -2898,7 +2949,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v4-floating-pacific',
+    version: 'tz-fix-v7-surgical',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
@@ -6304,6 +6355,10 @@ END:VCALENDAR`);
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
         let eventTimes = parseUnifiedDateTime(event.event_date);
+        if (event.calltime && eventTimes) {
+          const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
+          if (ct?.start) eventTimes.start = ct.start;
+        }
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
