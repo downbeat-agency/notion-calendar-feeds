@@ -2975,6 +2975,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
+    version: 'tz-fix-v2-2026-02-18',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
