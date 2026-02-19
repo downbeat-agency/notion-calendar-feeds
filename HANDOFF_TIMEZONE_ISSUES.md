@@ -7,8 +7,9 @@ This handoff has now been implemented in server version `tz-fix-v8-main-event-co
 ### What was implemented
 
 1. **Smart calltime parsing (`parseCalltimeSmart`)**
-   - If calltime includes `Z` or `±HH:MM`, it is parsed as UTC and converted to Pacific floating time.
-   - If calltime has no offset, it is treated as Pacific face-value for backward compatibility.
+   - Calltime is parsed as Pacific face-value first, even when `Z` or `±HH:MM` is present.
+   - This protects against formula outputs that append UTC offsets to Pacific wall-clock calltimes.
+   - UTC conversion is now fallback-only when face-value parsing fails.
 
 2. **Main-event end compatibility correction (`maybeCorrectMainEventEnd`)**
    - Applies only to main-event `event_date` ranges where both start/end are offset-tagged.

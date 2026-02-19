@@ -593,13 +593,20 @@ function parseCalltimeSmart(calltimeStr) {
     return null;
   }
 
+  // Calltime values from formula output are Pacific wall-clock values, even when an offset
+  // suffix is present (e.g., "...+00:00"). Parse face-value first to preserve intended call hour.
+  const faceValueParsed = parseUnifiedDateTime(cleanStr, { faceValue: true });
+  if (faceValueParsed?.start instanceof Date && !isNaN(faceValueParsed.start.getTime())) {
+    return faceValueParsed;
+  }
+
+  // Fallback for unexpected non-formula data: if face-value parsing fails, trust explicit offsets.
   const hasOffset = cleanStr.includes('/') ? isOffsetTaggedRange(cleanStr) : hasExplicitOffset(cleanStr);
   if (hasOffset) {
     return parseUnifiedDateTime(cleanStr);
   }
 
-  // Legacy compatibility: some formula outputs are Pacific wall-clock values with no offset.
-  return parseUnifiedDateTime(cleanStr, { faceValue: true });
+  return null;
 }
 
 function maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime) {
@@ -3107,7 +3114,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v8-main-event-compat',
+    version: 'tz-fix-v9-calltime-facevalue',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
@@ -3592,7 +3599,7 @@ app.get('/debug/parse-test', async (req, res) => {
       endISO: result?.end?.toISOString?.() || null,
       startUTCHours: result?.start?.getUTCHours?.() ?? null,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      version: 'tz-fix-v8-main-event-compat'
+      version: 'tz-fix-v9-calltime-facevalue'
     };
     if (personId) {
       const calendarData = await getCalendarDataFromDatabase(personId);
