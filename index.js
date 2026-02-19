@@ -945,21 +945,22 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     eventsArray.forEach(event => {
       // Add main event
       if (event.event_name && event.event_date) {
-        const _rawEventDate = event.event_date;
-        const _rawCalltime = event.calltime;
-        
         let eventTimes = parseUnifiedDateTime(event.event_date);
         
-        const _parsedStartBeforeCT = eventTimes?.start?.toISOString?.() || 'null';
-        const _parsedEndBeforeCT = eventTimes?.end?.toISOString?.() || 'null';
-        
-        if (event.calltime && eventTimes) {
-          const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
-          if (ct?.start) eventTimes.start = ct.start;
+        if (event.calltime && eventTimes?.end) {
+          const ctComponents = extractLocalComponents(event.calltime);
+          if (ctComponents) {
+            const endDate = eventTimes.end;
+            const ctStart = new Date(Date.UTC(
+              endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
+              ctComponents.hours, ctComponents.minutes, ctComponents.seconds
+            ));
+            if (ctStart.getTime() > endDate.getTime()) {
+              ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
+            }
+            eventTimes.start = ctStart;
+          }
         }
-        
-        const _finalStart = eventTimes?.start?.toISOString?.() || 'null';
-        const _finalEnd = eventTimes?.end?.toISOString?.() || 'null';
         
         if (eventTimes) {
           let payrollInfo = '';
@@ -1001,14 +1002,12 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
           }
 
-          const debugInfo = `\n[DEBUG] raw_event_date=${_rawEventDate} | raw_calltime=${_rawCalltime} | before_ct_start=${_parsedStartBeforeCT} | before_ct_end=${_parsedEndBeforeCT} | final_start=${_finalStart} | final_end=${_finalEnd}\n`;
-
           allCalendarEvents.push({
             type: 'main_event',
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: debugInfo + payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
@@ -2129,9 +2128,19 @@ function processAdminEvents(eventsArray) {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
       let eventTimes = parseUnifiedDateTime(event.event_date);
-      if (event.calltime && eventTimes) {
-        const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
-        if (ct?.start) eventTimes.start = ct.start;
+      if (event.calltime && eventTimes?.end) {
+        const ctComponents = extractLocalComponents(event.calltime);
+        if (ctComponents) {
+          const endDate = eventTimes.end;
+          const ctStart = new Date(Date.UTC(
+            endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
+            ctComponents.hours, ctComponents.minutes, ctComponents.seconds
+          ));
+          if (ctStart.getTime() > endDate.getTime()) {
+            ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
+          }
+          eventTimes.start = ctStart;
+        }
       }
       
       if (eventTimes) {
@@ -6371,24 +6380,22 @@ END:VCALENDAR`);
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
-        // TEMP DEBUG: capture raw values before any processing
-        const _rawEventDate = event.event_date;
-        const _rawCalltime = event.calltime;
-        
         let eventTimes = parseUnifiedDateTime(event.event_date);
         
-        // TEMP DEBUG: capture post-parse pre-calltime values
-        const _parsedStartBeforeCT = eventTimes?.start?.toISOString?.() || 'null';
-        const _parsedEndBeforeCT = eventTimes?.end?.toISOString?.() || 'null';
-        
-        if (event.calltime && eventTimes) {
-          const ct = parseUnifiedDateTime(event.calltime, { faceValue: true });
-          if (ct?.start) eventTimes.start = ct.start;
+        if (event.calltime && eventTimes?.end) {
+          const ctComponents = extractLocalComponents(event.calltime);
+          if (ctComponents) {
+            const endDate = eventTimes.end;
+            const ctStart = new Date(Date.UTC(
+              endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
+              ctComponents.hours, ctComponents.minutes, ctComponents.seconds
+            ));
+            if (ctStart.getTime() > endDate.getTime()) {
+              ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
+            }
+            eventTimes.start = ctStart;
+          }
         }
-        
-        // TEMP DEBUG: capture final values
-        const _finalStart = eventTimes?.start?.toISOString?.() || 'null';
-        const _finalEnd = eventTimes?.end?.toISOString?.() || 'null';
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
@@ -6435,9 +6442,6 @@ END:VCALENDAR`);
             eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
           }
 
-          // TEMP DEBUG: add raw values to description for all events
-          let debugInfo = `\n[DEBUG] raw_event_date=${_rawEventDate} | raw_calltime=${_rawCalltime} | parsed_start_before_ct=${_parsedStartBeforeCT} | parsed_end_before_ct=${_parsedEndBeforeCT} | final_start=${_finalStart} | final_end=${_finalEnd}\n`;
-
           // Build Notion URL info (after personnel, before general info)
           let notionUrlInfo = '';
           if (event.notion_url && event.notion_url.trim()) {
@@ -6449,7 +6453,7 @@ END:VCALENDAR`);
             title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
             start: eventTimes.start,
             end: eventTimes.end,
-            description: debugInfo + payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
+            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
             location: event.venue_address || event.venue || '',
             band: event.band || '',
             mainEvent: event.event_name
