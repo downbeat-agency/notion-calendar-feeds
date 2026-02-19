@@ -281,13 +281,13 @@ function convertUTCToPacific(utcDate) {
 }
 
 // Helper function to format ISO timestamp to readable time (e.g., "1:30 PM")
-// Uses parseUnifiedDateTime so UTC timestamps display correctly in Pacific floating time.
+// Uses smart calltime parsing to support both UTC-tagged and Pacific face-value calltime strings.
 function formatCallTime(isoTimestamp) {
   if (!isoTimestamp || typeof isoTimestamp !== 'string') {
     return isoTimestamp;
   }
 
-  const parsed = parseUnifiedDateTime(isoTimestamp, { faceValue: true });
+  const parsed = parseCalltimeSmart(isoTimestamp);
   const date = parsed?.start instanceof Date ? parsed.start : null;
 
   if (!date || isNaN(date.getTime())) {
@@ -552,6 +552,182 @@ function extractLocalComponents(isoStr) {
     hours: parseInt(match[4]),
     minutes: parseInt(match[5]),
     seconds: parseInt(match[6])
+  };
+}
+
+const MAIN_EVENT_MAX_DURATION_HOURS = 16;
+const MAIN_EVENT_MS_PER_HOUR = 60 * 60 * 1000;
+const MAIN_EVENT_MS_PER_DAY = 24 * MAIN_EVENT_MS_PER_HOUR;
+
+function hasExplicitOffset(dateStr) {
+  if (typeof dateStr !== 'string') return false;
+  return /(?:Z|[+\-]\d{2}:\d{2})$/i.test(dateStr.trim());
+}
+
+function isOffsetTaggedRange(rangeStr) {
+  if (typeof rangeStr !== 'string') return false;
+  const cleanRange = rangeStr.replace(/[']/g, '').trim();
+  if (!cleanRange.includes('/')) return false;
+  const parts = cleanRange.split('/');
+  if (parts.length !== 2) return false;
+  return hasExplicitOffset(parts[0]) && hasExplicitOffset(parts[1]);
+}
+
+function isSameUTCDate(a, b) {
+  return a.getUTCFullYear() === b.getUTCFullYear() &&
+         a.getUTCMonth() === b.getUTCMonth() &&
+         a.getUTCDate() === b.getUTCDate();
+}
+
+function toSecondsFromUTCClock(date) {
+  return date.getUTCHours() * 3600 + date.getUTCMinutes() * 60 + date.getUTCSeconds();
+}
+
+function parseCalltimeSmart(calltimeStr) {
+  if (!calltimeStr || typeof calltimeStr !== 'string') {
+    return null;
+  }
+
+  const cleanStr = calltimeStr.replace(/[']/g, '').trim();
+  if (!cleanStr) {
+    return null;
+  }
+
+  const hasOffset = cleanStr.includes('/') ? isOffsetTaggedRange(cleanStr) : hasExplicitOffset(cleanStr);
+  if (hasOffset) {
+    return parseUnifiedDateTime(cleanStr);
+  }
+
+  // Legacy compatibility: some formula outputs are Pacific wall-clock values with no offset.
+  return parseUnifiedDateTime(cleanStr, { faceValue: true });
+}
+
+function maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime) {
+  const result = { eventTimes, applied: false, reason: null };
+  if (!eventTimes?.start || !eventTimes?.end || typeof eventDateRaw !== 'string') {
+    return result;
+  }
+
+  const cleanRange = eventDateRaw.replace(/[']/g, '').trim();
+  if (!cleanRange.includes('/') || !isOffsetTaggedRange(cleanRange)) {
+    return result;
+  }
+
+  const [rawStartStr, rawEndStr] = cleanRange.split('/');
+  const rawStart = extractLocalComponents(rawStartStr?.trim());
+  const rawEnd = extractLocalComponents(rawEndStr?.trim());
+  if (!rawEnd) {
+    return result;
+  }
+
+  const anchorStart = parsedCalltime?.start instanceof Date && !isNaN(parsedCalltime.start.getTime())
+    ? parsedCalltime.start
+    : eventTimes.start;
+  const parsedEnd = eventTimes.end;
+
+  if (!(anchorStart instanceof Date) || isNaN(anchorStart.getTime())) {
+    return result;
+  }
+  if (!(parsedEnd instanceof Date) || isNaN(parsedEnd.getTime())) {
+    return result;
+  }
+
+  let fallbackEnd = new Date(Date.UTC(
+    anchorStart.getUTCFullYear(),
+    anchorStart.getUTCMonth(),
+    anchorStart.getUTCDate(),
+    rawEnd.hours,
+    rawEnd.minutes,
+    rawEnd.seconds
+  ));
+  if (fallbackEnd.getTime() <= anchorStart.getTime()) {
+    fallbackEnd = new Date(fallbackEnd.getTime() + MAIN_EVENT_MS_PER_DAY);
+  }
+
+  const parsedDurationHours = (parsedEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
+  const fallbackDurationHours = (fallbackEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
+
+  const durationImplausible = parsedDurationHours <= 0 || parsedDurationHours > MAIN_EVENT_MAX_DURATION_HOURS;
+  const rawEndEarlierThanAnchor = toSecondsFromUTCClock(anchorStart) > (rawEnd.hours * 3600 + rawEnd.minutes * 60 + rawEnd.seconds);
+  const parsedEndSameDayAsAnchor = isSameUTCDate(parsedEnd, anchorStart);
+  const overnightGuard = rawEndEarlierThanAnchor && parsedEndSameDayAsAnchor;
+  const fallbackDurationValid = fallbackDurationHours > 0 && fallbackDurationHours <= MAIN_EVENT_MAX_DURATION_HOURS;
+
+  const reasons = [];
+  if (durationImplausible) reasons.push('implausible_duration');
+  if (overnightGuard) reasons.push('overnight_guard');
+
+  if (reasons.length === 0 || !fallbackDurationValid) {
+    return result;
+  }
+
+  const originalEnd = eventTimes.end;
+  eventTimes.end = fallbackEnd;
+  const reason = reasons.join('+');
+
+  console.log(`[TZ-COMPAT] Main event end corrected (${reason})`, {
+    raw_event_date: cleanRange,
+    anchor_start_utc: anchorStart.toISOString(),
+    original_end_utc: originalEnd.toISOString(),
+    corrected_end_utc: fallbackEnd.toISOString(),
+    parsed_duration_hours: Number(parsedDurationHours.toFixed(2)),
+    corrected_duration_hours: Number(fallbackDurationHours.toFixed(2)),
+    raw_start_clock: rawStart ? `${String(rawStart.hours).padStart(2, '0')}:${String(rawStart.minutes).padStart(2, '0')}:${String(rawStart.seconds).padStart(2, '0')}` : null,
+    raw_end_clock: `${String(rawEnd.hours).padStart(2, '0')}:${String(rawEnd.minutes).padStart(2, '0')}:${String(rawEnd.seconds).padStart(2, '0')}`
+  });
+
+  return { eventTimes, applied: true, reason };
+}
+
+function applyCalltimeOverride(eventTimes, parsedCalltime) {
+  if (!eventTimes?.end || !parsedCalltime?.start) {
+    return eventTimes;
+  }
+
+  const endDate = eventTimes.end;
+  const calltimeDate = parsedCalltime.start;
+  if (!(endDate instanceof Date) || isNaN(endDate.getTime())) {
+    return eventTimes;
+  }
+  if (!(calltimeDate instanceof Date) || isNaN(calltimeDate.getTime())) {
+    return eventTimes;
+  }
+
+  let ctStart = new Date(Date.UTC(
+    endDate.getUTCFullYear(),
+    endDate.getUTCMonth(),
+    endDate.getUTCDate(),
+    calltimeDate.getUTCHours(),
+    calltimeDate.getUTCMinutes(),
+    calltimeDate.getUTCSeconds()
+  ));
+  if (ctStart.getTime() > endDate.getTime()) {
+    ctStart = new Date(ctStart.getTime() - MAIN_EVENT_MS_PER_DAY);
+  }
+  eventTimes.start = ctStart;
+  return eventTimes;
+}
+
+function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
+  const eventTimes = parseUnifiedDateTime(eventDateRaw);
+  if (!eventTimes) {
+    return {
+      eventTimes: null,
+      parsedCalltime: null,
+      endCompatApplied: false,
+      endCompatReason: null
+    };
+  }
+
+  const parsedCalltime = parseCalltimeSmart(calltimeRaw);
+  const endCompatResult = maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime);
+  const finalTimes = applyCalltimeOverride(endCompatResult.eventTimes, parsedCalltime);
+
+  return {
+    eventTimes: finalTimes,
+    parsedCalltime,
+    endCompatApplied: endCompatResult.applied,
+    endCompatReason: endCompatResult.reason
   };
 }
 
@@ -945,22 +1121,8 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     eventsArray.forEach(event => {
       // Add main event
       if (event.event_name && event.event_date) {
-        let eventTimes = parseUnifiedDateTime(event.event_date);
-        
-        if (event.calltime && eventTimes?.end) {
-          const ctComponents = extractLocalComponents(event.calltime);
-          if (ctComponents) {
-            const endDate = eventTimes.end;
-            const ctStart = new Date(Date.UTC(
-              endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
-              ctComponents.hours, ctComponents.minutes, ctComponents.seconds
-            ));
-            if (ctStart.getTime() > endDate.getTime()) {
-              ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
-            }
-            eventTimes.start = ctStart;
-          }
-        }
+        const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
+        const eventTimes = mainEventTimeResult.eventTimes;
         
         if (eventTimes) {
           let payrollInfo = '';
@@ -2127,21 +2289,8 @@ function processAdminEvents(eventsArray) {
   eventsArray.forEach(event => {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
-      let eventTimes = parseUnifiedDateTime(event.event_date);
-      if (event.calltime && eventTimes?.end) {
-        const ctComponents = extractLocalComponents(event.calltime);
-        if (ctComponents) {
-          const endDate = eventTimes.end;
-          const ctStart = new Date(Date.UTC(
-            endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
-            ctComponents.hours, ctComponents.minutes, ctComponents.seconds
-          ));
-          if (ctStart.getTime() > endDate.getTime()) {
-            ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
-          }
-          eventTimes.start = ctStart;
-        }
-      }
+      const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
+      const eventTimes = mainEventTimeResult.eventTimes;
       
       if (eventTimes) {
         // Build payroll info for description (put at TOP)
@@ -2958,7 +3107,7 @@ app.get('/debug/blockout', async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({
     status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v7-surgical',
+    version: 'tz-fix-v8-main-event-compat',
     endpoints: {
       subscribe: '/subscribe/:personId',
       calendar: '/calendar/:personId',
@@ -3443,7 +3592,7 @@ app.get('/debug/parse-test', async (req, res) => {
       endISO: result?.end?.toISOString?.() || null,
       startUTCHours: result?.start?.getUTCHours?.() ?? null,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      version: 'tz-fix-v7-utc-conversion'
+      version: 'tz-fix-v8-main-event-compat'
     };
     if (personId) {
       const calendarData = await getCalendarDataFromDatabase(personId);
@@ -3456,6 +3605,8 @@ app.get('/debug/parse-test', async (req, res) => {
           const parsed = parseUnifiedDateTime(e.event_date);
           const ctParsed = e.calltime ? parseUnifiedDateTime(e.calltime, { faceValue: true }) : null;
           const ctDefault = e.calltime ? parseUnifiedDateTime(e.calltime) : null;
+          const ctSmart = parseCalltimeSmart(e.calltime);
+          const resolvedMainTimes = resolveMainEventTimes(e.event_date, e.calltime);
           return {
             name: e.event_name,
             raw_event_date: e.event_date,
@@ -3468,8 +3619,12 @@ app.get('/debug/parse-test', async (req, res) => {
             calltime_faceValue_hours: ctParsed?.start?.getUTCHours?.() ?? null,
             calltime_utcConvert_utc: ctDefault?.start?.toISOString?.() || null,
             calltime_utcConvert_hours: ctDefault?.start?.getUTCHours?.() ?? null,
-            final_start_would_be: ctParsed?.start?.getUTCHours?.() ?? parsed?.start?.getUTCHours?.() ?? null,
-            final_end_would_be: parsed?.end?.getUTCHours?.() ?? null,
+            calltime_smart_utc: ctSmart?.start?.toISOString?.() || null,
+            calltime_smart_hours: ctSmart?.start?.getUTCHours?.() ?? null,
+            end_compat_applied: resolvedMainTimes.endCompatApplied,
+            end_compat_reason: resolvedMainTimes.endCompatReason,
+            final_start_would_be: resolvedMainTimes.eventTimes?.start?.getUTCHours?.() ?? null,
+            final_end_would_be: resolvedMainTimes.eventTimes?.end?.getUTCHours?.() ?? null,
           };
         });
       }
@@ -6380,22 +6535,8 @@ END:VCALENDAR`);
     eventsArray.forEach(event => {
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
-        let eventTimes = parseUnifiedDateTime(event.event_date);
-        
-        if (event.calltime && eventTimes?.end) {
-          const ctComponents = extractLocalComponents(event.calltime);
-          if (ctComponents) {
-            const endDate = eventTimes.end;
-            const ctStart = new Date(Date.UTC(
-              endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(),
-              ctComponents.hours, ctComponents.minutes, ctComponents.seconds
-            ));
-            if (ctStart.getTime() > endDate.getTime()) {
-              ctStart.setTime(ctStart.getTime() - 24 * 60 * 60 * 1000);
-            }
-            eventTimes.start = ctStart;
-          }
-        }
+        const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
+        const eventTimes = mainEventTimeResult.eventTimes;
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
