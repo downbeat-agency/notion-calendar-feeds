@@ -603,9 +603,67 @@ function parseCalltimeSmart(calltimeStr) {
 }
 
 function maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime) {
-  // UTC→Pacific conversion in parseUnifiedDateTime now handles all timestamp formats
-  // correctly, so no post-hoc end-time correction is needed.
-  return { eventTimes, applied: false, reason: null };
+  const result = { eventTimes, applied: false, reason: null };
+  if (!eventTimes?.start || !eventTimes?.end || typeof eventDateRaw !== 'string') {
+    return result;
+  }
+
+  const cleanRange = eventDateRaw.replace(/[']/g, '').trim();
+  if (!cleanRange.includes('/') || !isOffsetTaggedRange(cleanRange)) {
+    return result;
+  }
+
+  const [rawStartStr, rawEndStr] = cleanRange.split('/');
+  const rawStart = extractLocalComponents(rawStartStr?.trim());
+  const rawEnd = extractLocalComponents(rawEndStr?.trim());
+  if (!rawEnd) {
+    return result;
+  }
+
+  const anchorStart = parsedCalltime?.start instanceof Date && !isNaN(parsedCalltime.start.getTime())
+    ? parsedCalltime.start
+    : eventTimes.start;
+  const parsedEnd = eventTimes.end;
+
+  if (!(anchorStart instanceof Date) || isNaN(anchorStart.getTime())) {
+    return result;
+  }
+  if (!(parsedEnd instanceof Date) || isNaN(parsedEnd.getTime())) {
+    return result;
+  }
+
+  // Build a fallback end by placing the raw face-value hours on the anchor's date
+  let fallbackEnd = new Date(Date.UTC(
+    anchorStart.getUTCFullYear(),
+    anchorStart.getUTCMonth(),
+    anchorStart.getUTCDate(),
+    rawEnd.hours,
+    rawEnd.minutes,
+    rawEnd.seconds
+  ));
+  if (fallbackEnd.getTime() <= anchorStart.getTime()) {
+    fallbackEnd = new Date(fallbackEnd.getTime() + MAIN_EVENT_MS_PER_DAY);
+  }
+
+  const parsedDurationHours = (parsedEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
+  const fallbackDurationHours = (fallbackEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
+
+  const durationImplausible = parsedDurationHours <= 0 || parsedDurationHours > MAIN_EVENT_MAX_DURATION_HOURS;
+  const rawEndEarlierThanAnchor = toSecondsFromUTCClock(anchorStart) > (rawEnd.hours * 3600 + rawEnd.minutes * 60 + rawEnd.seconds);
+  const parsedEndSameDayAsAnchor = isSameUTCDate(parsedEnd, anchorStart);
+  const overnightGuard = rawEndEarlierThanAnchor && parsedEndSameDayAsAnchor;
+  const fallbackDurationValid = fallbackDurationHours > 0 && fallbackDurationHours <= MAIN_EVENT_MAX_DURATION_HOURS;
+
+  const reasons = [];
+  if (durationImplausible) reasons.push('implausible_duration');
+  if (overnightGuard) reasons.push('overnight_guard');
+
+  if (reasons.length === 0 || !fallbackDurationValid) {
+    return result;
+  }
+
+  eventTimes.end = fallbackEnd;
+  return { eventTimes, applied: true, reason: reasons.join('+') };
 }
 
 function applyCalltimeOverride(eventTimes, parsedCalltime) {
@@ -638,11 +696,10 @@ function applyCalltimeOverride(eventTimes, parsedCalltime) {
 }
 
 function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
-  // event_date from the Notion formula contains Pacific face-value times with a UTC
-  // offset (e.g., "T02:00:00+00:00" means 2 AM Pacific, not 2 AM UTC). Use faceValue
-  // to extract the literal digits. Calltime uses true UTC and is handled separately
-  // by parseCalltimeSmart with UTC→Pacific conversion.
-  const eventTimes = parseUnifiedDateTime(eventDateRaw, { faceValue: true });
+  // event_date from the Notion formula is in UTC (+00:00). Convert to Pacific.
+  // End dates may have anomalies (wrong UTC date); maybeCorrectMainEventEnd fixes those
+  // by extracting face-value hours and reconstructing relative to the start.
+  const eventTimes = parseUnifiedDateTime(eventDateRaw);
   if (!eventTimes) {
     return {
       eventTimes: null,
