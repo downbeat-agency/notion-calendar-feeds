@@ -291,14 +291,13 @@ function formatCallTime(isoTimestamp) {
   const date = parsed?.start instanceof Date ? parsed.start : null;
 
   if (!date || isNaN(date.getTime())) {
-    // Fallback: Try to parse as ISO timestamp directly
-    const match = isoTimestamp.match(/T(\d{2}):(\d{2})/);
-    if (!match) {
-      return isoTimestamp; // Return as-is if not ISO format
+    // Fallback: parse as ISO and convert UTC→Pacific
+    const fallback = new Date(isoTimestamp);
+    if (!isNaN(fallback.getTime())) {
+      const pacific = convertUTCToPacific(fallback);
+      return formatTimeParts(pacific.getUTCHours(), String(pacific.getUTCMinutes()).padStart(2, '0'));
     }
-    const hours = parseInt(match[1], 10);
-    const minutes = match[2];
-    return formatTimeParts(hours, minutes);
+    return isoTimestamp;
   }
 
   const hours = date.getUTCHours();
@@ -593,97 +592,20 @@ function parseCalltimeSmart(calltimeStr) {
     return null;
   }
 
-  // Calltime values from formula output are Pacific wall-clock values, even when an offset
-  // suffix is present (e.g., "...+00:00"). Parse face-value first to preserve intended call hour.
-  const faceValueParsed = parseUnifiedDateTime(cleanStr, { faceValue: true });
-  if (faceValueParsed?.start instanceof Date && !isNaN(faceValueParsed.start.getTime())) {
-    return faceValueParsed;
-  }
-
-  // Fallback for unexpected non-formula data: if face-value parsing fails, trust explicit offsets.
-  const hasOffset = cleanStr.includes('/') ? isOffsetTaggedRange(cleanStr) : hasExplicitOffset(cleanStr);
-  if (hasOffset) {
-    return parseUnifiedDateTime(cleanStr);
+  // Calltime values from the Notion formula are true UTC timestamps (e.g., "T22:00:00+00:00"
+  // for 2 PM PST). Parse with standard UTC→Pacific conversion, same as event_date.
+  const parsed = parseUnifiedDateTime(cleanStr);
+  if (parsed?.start instanceof Date && !isNaN(parsed.start.getTime())) {
+    return parsed;
   }
 
   return null;
 }
 
 function maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime) {
-  const result = { eventTimes, applied: false, reason: null };
-  if (!eventTimes?.start || !eventTimes?.end || typeof eventDateRaw !== 'string') {
-    return result;
-  }
-
-  const cleanRange = eventDateRaw.replace(/[']/g, '').trim();
-  if (!cleanRange.includes('/') || !isOffsetTaggedRange(cleanRange)) {
-    return result;
-  }
-
-  const [rawStartStr, rawEndStr] = cleanRange.split('/');
-  const rawStart = extractLocalComponents(rawStartStr?.trim());
-  const rawEnd = extractLocalComponents(rawEndStr?.trim());
-  if (!rawEnd) {
-    return result;
-  }
-
-  const anchorStart = parsedCalltime?.start instanceof Date && !isNaN(parsedCalltime.start.getTime())
-    ? parsedCalltime.start
-    : eventTimes.start;
-  const parsedEnd = eventTimes.end;
-
-  if (!(anchorStart instanceof Date) || isNaN(anchorStart.getTime())) {
-    return result;
-  }
-  if (!(parsedEnd instanceof Date) || isNaN(parsedEnd.getTime())) {
-    return result;
-  }
-
-  let fallbackEnd = new Date(Date.UTC(
-    anchorStart.getUTCFullYear(),
-    anchorStart.getUTCMonth(),
-    anchorStart.getUTCDate(),
-    rawEnd.hours,
-    rawEnd.minutes,
-    rawEnd.seconds
-  ));
-  if (fallbackEnd.getTime() <= anchorStart.getTime()) {
-    fallbackEnd = new Date(fallbackEnd.getTime() + MAIN_EVENT_MS_PER_DAY);
-  }
-
-  const parsedDurationHours = (parsedEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
-  const fallbackDurationHours = (fallbackEnd.getTime() - anchorStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
-
-  const durationImplausible = parsedDurationHours <= 0 || parsedDurationHours > MAIN_EVENT_MAX_DURATION_HOURS;
-  const rawEndEarlierThanAnchor = toSecondsFromUTCClock(anchorStart) > (rawEnd.hours * 3600 + rawEnd.minutes * 60 + rawEnd.seconds);
-  const parsedEndSameDayAsAnchor = isSameUTCDate(parsedEnd, anchorStart);
-  const overnightGuard = rawEndEarlierThanAnchor && parsedEndSameDayAsAnchor;
-  const fallbackDurationValid = fallbackDurationHours > 0 && fallbackDurationHours <= MAIN_EVENT_MAX_DURATION_HOURS;
-
-  const reasons = [];
-  if (durationImplausible) reasons.push('implausible_duration');
-  if (overnightGuard) reasons.push('overnight_guard');
-
-  if (reasons.length === 0 || !fallbackDurationValid) {
-    return result;
-  }
-
-  const originalEnd = eventTimes.end;
-  eventTimes.end = fallbackEnd;
-  const reason = reasons.join('+');
-
-  console.log(`[TZ-COMPAT] Main event end corrected (${reason})`, {
-    raw_event_date: cleanRange,
-    anchor_start_utc: anchorStart.toISOString(),
-    original_end_utc: originalEnd.toISOString(),
-    corrected_end_utc: fallbackEnd.toISOString(),
-    parsed_duration_hours: Number(parsedDurationHours.toFixed(2)),
-    corrected_duration_hours: Number(fallbackDurationHours.toFixed(2)),
-    raw_start_clock: rawStart ? `${String(rawStart.hours).padStart(2, '0')}:${String(rawStart.minutes).padStart(2, '0')}:${String(rawStart.seconds).padStart(2, '0')}` : null,
-    raw_end_clock: `${String(rawEnd.hours).padStart(2, '0')}:${String(rawEnd.minutes).padStart(2, '0')}:${String(rawEnd.seconds).padStart(2, '0')}`
-  });
-
-  return { eventTimes, applied: true, reason };
+  // UTC→Pacific conversion in parseUnifiedDateTime now handles all timestamp formats
+  // correctly, so no post-hoc end-time correction is needed.
+  return { eventTimes, applied: false, reason: null };
 }
 
 function applyCalltimeOverride(eventTimes, parsedCalltime) {
@@ -739,8 +661,8 @@ function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
 }
 
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
-// options.faceValue: when true, extract face-value time from ISO strings (for Pacific formula output like calltime)
-//   Default (false): treat ISO timestamps as UTC and convert to Pacific
+// Treats ISO timestamps as UTC and converts to Pacific via convertUTCToPacific.
+// options.faceValue: when true, extract literal time digits from ISO strings (used only for debugging)
 function parseUnifiedDateTime(dateTimeStr, options = {}) {
   if (!dateTimeStr || dateTimeStr === null) {
     return null;
