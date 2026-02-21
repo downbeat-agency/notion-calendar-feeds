@@ -638,7 +638,11 @@ function applyCalltimeOverride(eventTimes, parsedCalltime) {
 }
 
 function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
-  const eventTimes = parseUnifiedDateTime(eventDateRaw);
+  // event_date from the Notion formula contains Pacific face-value times with a UTC
+  // offset (e.g., "T02:00:00+00:00" means 2 AM Pacific, not 2 AM UTC). Use faceValue
+  // to extract the literal digits. Calltime uses true UTC and is handled separately
+  // by parseCalltimeSmart with UTC→Pacific conversion.
+  const eventTimes = parseUnifiedDateTime(eventDateRaw, { faceValue: true });
   if (!eventTimes) {
     return {
       eventTimes: null,
