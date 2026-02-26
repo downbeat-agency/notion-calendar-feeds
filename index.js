@@ -363,6 +363,27 @@ async function getCalendarDataFromDatabase(personId) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
 
+  // Fast path: read the person's direct "Calendar Data" relation and fetch that page.
+  // This avoids relation-filter scans on the whole Calendar Data DB, which can 504 on large datasets.
+  try {
+    const personPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: personId }));
+    const calendarDataRelation = personPage?.properties?.['Calendar Data'];
+    const calendarDataPageId = Array.isArray(calendarDataRelation?.relation) && calendarDataRelation.relation.length > 0
+      ? calendarDataRelation.relation[0].id
+      : null;
+
+    if (calendarDataPageId) {
+      const calendarDataPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: calendarDataPageId }));
+      const processed = processCalendarDataProperties(calendarDataPage?.properties);
+      if (processed) {
+        return processed;
+      }
+    }
+  } catch (directFetchError) {
+    // Fall back to DB query mode below.
+    console.warn(`⚠️  Direct Calendar Data page fetch failed for ${personId}, falling back to DB query: ${directFetchError.message}`);
+  }
+
   // Query Calendar Data database for events related to this person
   // Use page_size: 1 since we only expect one result per person
   const response = await retryNotionCall(() => 
@@ -387,7 +408,13 @@ function processCalendarDataResponse(response) {
     return null;
   }
 
-  const calendarData = response.results[0].properties;
+  return processCalendarDataProperties(response.results[0].properties);
+}
+
+function processCalendarDataProperties(calendarData) {
+  if (!calendarData) {
+    return null;
+  }
 
   
   // Parse all the JSON strings with better error handling
