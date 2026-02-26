@@ -319,46 +319,182 @@ function formatTimeParts(hours24, minutes) {
   return `${hours}:${minutes} ${period}`;
 }
 
-// Helper function to retry Notion API calls with exponential backoff
+const NOTION_RATE_LIMIT_RPS = Number(process.env.NOTION_RATE_LIMIT_RPS || 3);
+const NOTION_MIN_INTERVAL_MS = Math.max(1, Math.floor(1000 / NOTION_RATE_LIMIT_RPS));
+const NOTION_MAX_RETRY_BUDGET_MS = Number(process.env.NOTION_MAX_RETRY_BUDGET_MS || 120000);
+const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
+const REGEN_LOCK_TTL_SECONDS = Number(process.env.REGEN_LOCK_TTL_SECONDS || 240);
+
+let notionCallQueue = Promise.resolve();
+let notionNextAllowedAt = 0;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRetryAfterMs(error) {
+  const rawHeader = error?.headers?.['retry-after']
+    || error?.headers?.['Retry-After']
+    || error?.response?.headers?.['retry-after']
+    || error?.response?.headers?.['Retry-After'];
+  if (!rawHeader) return null;
+  const parsed = Number(rawHeader);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed * 1000;
+}
+
+function isRetryableNotionError(error) {
+  const message = error?.message || '';
+  return error?.code === 'notionhq_client_request_timeout' ||
+         error?.status === 429 ||
+         error?.status === 502 ||
+         error?.status === 503 ||
+         error?.status === 504 ||
+         message.includes('504') ||
+         message.includes('503') ||
+         message.includes('502') ||
+         message.includes('429') ||
+         message.includes('timeout') ||
+         message.includes('ECONNRESET') ||
+         message.includes('EAI_AGAIN') ||
+         message.includes('Request to Notion API failed');
+}
+
+async function runRateLimitedNotionCall(apiCall) {
+  notionCallQueue = notionCallQueue.then(async () => {
+    const waitMs = Math.max(0, notionNextAllowedAt - Date.now());
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    notionNextAllowedAt = Date.now() + NOTION_MIN_INTERVAL_MS;
+  });
+
+  await notionCallQueue;
+  return apiCall();
+}
+
+// Helper function to retry Notion API calls with exponential backoff + jitter.
+// Honors Retry-After for 429s when present.
 async function retryNotionCall(apiCall, maxRetries = 5) {
   let lastError;
+  const opStart = Date.now();
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await apiCall();
+      return await runRateLimitedNotionCall(apiCall);
     } catch (error) {
       lastError = error;
-      const isRetryable = error.code === 'notionhq_client_request_timeout' || 
-                         error.status === 429 ||
-                         error.status === 502 ||
-                         error.status === 503 ||
-                         error.status === 504 || 
-                         error.message?.includes('504') ||
-                         error.message?.includes('503') ||
-                         error.message?.includes('502') ||
-                         error.message?.includes('429') ||
-                         error.message?.includes('timeout') ||
-                         error.message?.includes('ECONNRESET') ||
-                         error.message?.includes('EAI_AGAIN') ||
-                         error.message?.includes('Request to Notion API failed');
-      
-      if (isRetryable && attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 15000); // Exponential backoff, max 15s
-        console.log(`⚠️  Notion API timeout (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
+      const elapsedMs = Date.now() - opStart;
+      const isRetryable = isRetryableNotionError(error);
+
+      if (!isRetryable || attempt >= maxRetries || elapsedMs >= NOTION_MAX_RETRY_BUDGET_MS) {
+        throw error;
       }
-      
-      // Not retryable or max retries reached
-      throw error;
+
+      const retryAfterMs = getRetryAfterMs(error);
+      const baseBackoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
+      const jitterMs = Math.floor(Math.random() * 500);
+      const delay = Math.max(retryAfterMs || 0, baseBackoffMs + jitterMs);
+      console.log(`⚠️  Notion retryable error (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+      await sleep(delay);
     }
   }
   
   throw lastError;
 }
 
+async function fetchAllDatabasePages(databaseId, options = {}) {
+  const {
+    pageSize = 100,
+    filter,
+    sorts,
+    maxRetries = 5
+  } = options;
+
+  const results = [];
+  let hasMore = true;
+  let cursor = undefined;
+
+  while (hasMore) {
+    const queryParams = {
+      database_id: databaseId,
+      page_size: pageSize
+    };
+    if (filter) queryParams.filter = filter;
+    if (sorts) queryParams.sorts = sorts;
+    if (cursor) queryParams.start_cursor = cursor;
+
+    const response = await retryNotionCall(() => notion.databases.query(queryParams), maxRetries);
+    results.push(...(response.results || []));
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+  }
+
+  return results;
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const safeConcurrency = Math.max(1, Math.min(concurrency || 1, items.length || 1));
+  const results = new Array(items.length);
+  let currentIndex = 0;
+
+  const runners = Array.from({ length: safeConcurrency }, async () => {
+    while (true) {
+      const idx = currentIndex++;
+      if (idx >= items.length) return;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
+const REGEN_TOTAL_TIMEOUT_MS = 180000; // 3 minutes hard cap per regeneration run
+const REGEN_FETCH_STEP_TIMEOUT_MS = 45000; // cap slow upstream fetch phases
+const REGEN_PERSON_STEP_TIMEOUT_MS = 30000;
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return Promise.reject(new Error(timeoutMessage));
+  }
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function getRemainingMs(deadlineTs) {
+  return deadlineTs - Date.now();
+}
+
+async function triggerBackgroundRegeneration(personId, reason = 'unknown') {
+  try {
+    if (redis && cacheEnabled) {
+      const status = await redis.get(`regenerate:status:${personId}`);
+      const hasLock = await redis.exists(`regenerate:lock:${personId}`);
+      if (status === 'in_progress' || hasLock) {
+        console.log(`⏭️  Background regeneration already in progress for ${personId} (${reason})`);
+        return false;
+      }
+    }
+
+    regenerateCalendarForPerson(personId).catch(err => {
+      console.error(`Background regeneration failed for ${personId}:`, err);
+    });
+    return true;
+  } catch (error) {
+    console.error(`Failed to trigger background regeneration for ${personId}:`, error.message);
+    return false;
+  }
+}
+
 // Helper function to get calendar data from Calendar Data database
-async function getCalendarDataFromDatabase(personId) {
+async function getCalendarDataFromDatabase(personId, options = {}) {
+  const { maxRetries = 5 } = options;
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
@@ -366,16 +502,21 @@ async function getCalendarDataFromDatabase(personId) {
   // Fast path: read the person's direct "Calendar Data" relation and fetch that page.
   // This avoids relation-filter scans on the whole Calendar Data DB, which can 504 on large datasets.
   try {
-    const personPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: personId }));
+    const fastPathStart = Date.now();
+    const personPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), maxRetries);
+    const personFetchMs = Date.now() - fastPathStart;
     const calendarDataRelation = personPage?.properties?.['Calendar Data'];
     const calendarDataPageId = Array.isArray(calendarDataRelation?.relation) && calendarDataRelation.relation.length > 0
       ? calendarDataRelation.relation[0].id
       : null;
 
     if (calendarDataPageId) {
-      const calendarDataPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: calendarDataPageId }));
+      const relationFetchStart = Date.now();
+      const calendarDataPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: calendarDataPageId }), maxRetries);
+      const relationFetchMs = Date.now() - relationFetchStart;
       const processed = processCalendarDataProperties(calendarDataPage?.properties);
       if (processed) {
+        console.log(`📊 CalendarData fast-path timings for ${personId}: person=${personFetchMs}ms relation=${relationFetchMs}ms`);
         return processed;
       }
     }
@@ -386,6 +527,7 @@ async function getCalendarDataFromDatabase(personId) {
 
   // Query Calendar Data database for events related to this person
   // Use page_size: 1 since we only expect one result per person
+  const fallbackStart = Date.now();
   const response = await retryNotionCall(() => 
     notion.databases.query({
       database_id: CALENDAR_DATA_DB,
@@ -396,8 +538,10 @@ async function getCalendarDataFromDatabase(personId) {
           contains: personId
         }
       }
-    })
+    }),
+    maxRetries
   );
+  console.log(`📊 CalendarData fallback query timing for ${personId}: ${Date.now() - fallbackStart}ms`);
   
   return processCalendarDataResponse(response);
 }
@@ -1091,18 +1235,38 @@ async function regenerateCalendarForPerson(personId, options = {}) {
   const { setStatus = true } = options;
   const statusKey = `regenerate:status:${personId}`;
   const statusDetailsKey = `regenerate:status_details:${personId}`;
+  const lockKey = `regenerate:lock:${personId}`;
   const STATUS_TTL = 300; // 5 minutes
+  let lockAcquired = false;
 
   try {
     console.log(`🔄 Regenerating calendar for ${personId}...`);
+    if (redis && cacheEnabled) {
+      const lockResult = await redis.set(lockKey, '1', { NX: true, EX: REGEN_LOCK_TTL_SECONDS });
+      if (!lockResult) {
+        console.log(`⏭️  Regeneration lock active for ${personId}, skipping duplicate run.`);
+        if (setStatus) {
+          await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
+        }
+        return { success: false, personId, reason: 'already_in_progress' };
+      }
+      lockAcquired = true;
+    }
+
     if (setStatus && redis && cacheEnabled) {
       await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
       await redis.del(statusDetailsKey);
     }
     
     // Keep last-good cache in place until successful rebuild.
-    // Notion retries are consolidated inside retryNotionCall().
-    const calendarData = await getCalendarDataFromDatabase(personId);
+    // Enforce a hard regeneration time budget to prevent indefinite in_progress state.
+    const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
+    const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
+    const calendarData = await withTimeout(
+      getCalendarDataFromDatabase(personId, { maxRetries: 3 }),
+      fetchTimeoutMs,
+      'Regeneration calendar-data fetch timed out'
+    );
 
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       console.log(`⚠️  No events found for ${personId}, skipping...`);
@@ -1116,8 +1280,11 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const events = calendarData;
     
     // Get person name from Personnel database
-    const person = await retryNotionCall(() => 
-      notion.pages.retrieve({ page_id: personId })
+    const personFetchTimeoutMs = Math.min(REGEN_PERSON_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
+    const person = await withTimeout(
+      retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), 3),
+      personFetchTimeoutMs,
+      'Regeneration person fetch timed out'
     );
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
@@ -1933,6 +2100,14 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       await redis.setEx(statusDetailsKey, STATUS_TTL, error.message || 'Unknown regeneration error');
     }
     return { success: false, personId, error: error.message };
+  } finally {
+    if (lockAcquired && redis && cacheEnabled) {
+      try {
+        await redis.del(lockKey);
+      } catch (lockError) {
+        console.error(`Failed to clear regeneration lock for ${personId}:`, lockError.message);
+      }
+    }
   }
 }
 
@@ -1941,79 +2116,36 @@ async function regenerateAllCalendars() {
   const startTime = Date.now();
   
   try {
-    console.log('🚀 Starting BATCHED PARALLEL calendar regeneration...');
-    
-    // Get all person IDs from Personnel database
-    const response = await notion.databases.query({
-      database_id: PERSONNEL_DB,
-      page_size: 100
+    console.log('🚀 Starting bounded-concurrency calendar regeneration...');
+
+    const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
+    const personIds = people.map(page => page.id);
+    const concurrency = Math.max(1, DEFAULT_REGEN_CONCURRENCY);
+    console.log(`Found ${personIds.length} people in Personnel database`);
+    console.log(`Processing with worker concurrency=${concurrency}`);
+
+    const allResults = await mapWithConcurrency(personIds, concurrency, async (personId) => {
+      try {
+        return await regenerateCalendarForPerson(personId);
+      } catch (error) {
+        console.error(`❌ Failed to process ${personId}:`, error.message);
+        return { success: false, personId, error: error.message };
+      }
     });
 
-    const personIds = response.results.map(page => page.id);
-    console.log(`Found ${personIds.length} people in Personnel database`);
-    console.log(`Processing ${personIds.length} people in batches of 100...`);
-    
-    const batchSize = 100;
-    const batches = [];
-    for (let i = 0; i < personIds.length; i += batchSize) {
-      batches.push(personIds.slice(i, i + batchSize));
-    }
-    
-    let totalSuccess = 0;
-    let totalFailed = 0;
-    let totalSkipped = 0;
-    const allResults = [];
-    
-    // Process each batch
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex];
-      const batchStart = Date.now();
-      
-      console.log(`\n📦 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} people)...`);
-      
-      // Process batch in parallel
-      const batchPromises = batch.map(async (personId) => {
-        try {
-          return await regenerateCalendarForPerson(personId);
-        } catch (error) {
-          console.error(`❌ Failed to process ${personId}:`, error.message);
-          return { success: false, personId, error: error.message };
-        }
-      });
-      
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
-      
-      // Count batch results
-      const batchSuccess = batchResults.filter(r => r.success).length;
-      const batchSkipped = batchResults.filter(r => r.reason === 'no_events').length;
-      const batchFailed = batchResults.filter(r => !r.success && r.reason !== 'no_events').length;
-      
-      totalSuccess += batchSuccess;
-      totalSkipped += batchSkipped;
-      totalFailed += batchFailed;
-      allResults.push(...batchResults);
-      
-      const batchTime = Math.round((Date.now() - batchStart) / 1000);
-      console.log(`   ✅ Batch ${batchIndex + 1} complete in ${batchTime}s: ${batchSuccess} success, ${batchFailed} failed, ${batchSkipped} skipped`);
-      
-      // Add delay between batches to avoid overwhelming Notion API
-      if (batchIndex < batches.length - 1) {
-        console.log('   ⏳ Waiting 5s before next batch...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      }
-    }
-    
+    const totalSuccess = allResults.filter(r => r.success).length;
+    const totalSkipped = allResults.filter(r => r.reason === 'no_events').length;
+    const totalFailed = allResults.filter(r => !r.success && r.reason !== 'no_events').length;
     const totalTime = Math.round((Date.now() - startTime) / 1000);
-    
-    console.log(`\n✅ Batched parallel regeneration complete in ${totalTime}s!`);
-    console.log(`   Total: ${personIds.length} people, ${batches.length} batches`);
+
+    console.log(`\n✅ Regeneration complete in ${totalTime}s`);
+    console.log(`   Total: ${personIds.length}`);
     console.log(`   Success: ${totalSuccess}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
     
     return { 
       success: true, 
       total: personIds.length, 
-      batches: batches.length,
+      concurrency: concurrency,
       successCount: totalSuccess, 
       failCount: totalFailed, 
       skippedCount: totalSkipped, 
@@ -2031,40 +2163,15 @@ async function regenerateAllCalendars() {
 // Background job to update all people in parallel batches every 5 minutes
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
-  console.log('   Processing all people in parallel batches each cycle');
+  console.log(`   Processing all people with bounded workers (concurrency=${DEFAULT_REGEN_CONCURRENCY}) each cycle`);
   
   setInterval(async () => {
     try {
       const jobStart = Date.now();
       console.log('\n⏰ Background job triggered - fetching all people...');
       
-      // Get all person IDs from Personnel database with pagination
-      const personIds = [];
-      let cursor = undefined;
-      let hasMore = true;
-      
-      while (hasMore) {
-        const queryParams = {
-          database_id: PERSONNEL_DB,
-          page_size: 100
-        };
-        
-        if (cursor) {
-          queryParams.start_cursor = cursor;
-        }
-        
-        const response = await notion.databases.query(queryParams);
-        
-        // Add person IDs from this page
-        const pagePersonIds = response.results.map(page => page.id);
-        personIds.push(...pagePersonIds);
-        
-        // Check if there are more pages
-        hasMore = response.has_more;
-        cursor = response.next_cursor;
-        
-        console.log(`   Fetched ${pagePersonIds.length} people (total so far: ${personIds.length})`);
-      }
+      const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
+      const personIds = people.map(page => page.id);
       
       if (personIds.length === 0) {
         console.log('⚠️  No personnel found in database');
@@ -2073,42 +2180,17 @@ function startBackgroundJob() {
       
       console.log(`   Found ${personIds.length} total people to update`);
       
-      // Process all people in parallel (batches of 100)
-      const batchSize = 100;
-      const batches = [];
-      for (let i = 0; i < personIds.length; i += batchSize) {
-        batches.push(personIds.slice(i, i + batchSize));
-      }
-      
-      let totalSuccess = 0;
-      let totalFailed = 0;
-      let totalSkipped = 0;
-      
-      // Process each batch
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        
-        // Process batch in parallel
-        const batchPromises = batch.map(async (personId) => {
-          try {
-            return await regenerateCalendarForPerson(personId);
-          } catch (error) {
-            return { success: false, personId, error: error.message };
-          }
-        });
-        
-        // Wait for batch to complete
-        const batchResults = await Promise.all(batchPromises);
-        
-        // Count results
-        const batchSuccess = batchResults.filter(r => r.success).length;
-        const batchSkipped = batchResults.filter(r => r.reason === 'no_events').length;
-        const batchFailed = batchResults.filter(r => !r.success && r.reason !== 'no_events').length;
-        
-        totalSuccess += batchSuccess;
-        totalSkipped += batchSkipped;
-        totalFailed += batchFailed;
-      }
+      const results = await mapWithConcurrency(personIds, DEFAULT_REGEN_CONCURRENCY, async (personId) => {
+        try {
+          return await regenerateCalendarForPerson(personId);
+        } catch (error) {
+          return { success: false, personId, error: error.message };
+        }
+      });
+
+      const totalSuccess = results.filter(r => r.success).length;
+      const totalSkipped = results.filter(r => r.reason === 'no_events').length;
+      const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events').length;
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
@@ -3702,6 +3784,7 @@ app.get('/regenerate/:personId/status', async (req, res) => {
 
     if (redis && cacheEnabled) {
       const status = await redis.get(`regenerate:status:${personId}`);
+      const hasLock = await redis.exists(`regenerate:lock:${personId}`);
       if (status) {
         const statusDetails = status === 'failed'
           ? await redis.get(`regenerate:status_details:${personId}`)
@@ -3714,6 +3797,15 @@ app.get('/regenerate/:personId/status', async (req, res) => {
                    status === 'completed' ? 'Regeneration completed' :
                    status === 'failed' ? 'Regeneration failed' : 'Unknown status',
           details: statusDetails || undefined
+        });
+      }
+
+      if (hasLock) {
+        return res.json({
+          success: true,
+          personId: personId,
+          status: 'in_progress',
+          message: 'Regeneration in progress'
         });
       }
     }
@@ -6436,9 +6528,7 @@ app.get('/calendar/:personId', async (req, res) => {
         } catch (quickError) {
           // Quick fetch failed or timed out - trigger background regeneration
           console.log(`⏱️  Quick fetch ${quickError.message === 'Quick fetch timeout' ? 'timed out' : 'failed'} for ${personId}, triggering background regeneration...`);
-          regenerateCalendarForPerson(personId).catch(err => {
-            console.error(`Background regeneration failed for ${personId}:`, err);
-          });
+          await triggerBackgroundRegeneration(personId, `quick_fetch_${quickError.message === 'Quick fetch timeout' ? 'timeout' : 'error'}`);
           
           if (shouldReturnICS) {
             res.setHeader('Content-Type', 'text/calendar');
@@ -6489,15 +6579,13 @@ END:VCALENDAR`);
         });
         
         calendarData = await Promise.race([
-          getCalendarDataFromDatabase(personId),
+          getCalendarDataFromDatabase(personId, { maxRetries: 3 }),
           timeoutPromise
         ]);
     } catch (error) {
       if (error.message === 'Notion API query timeout') {
         console.error(`⏱️  Notion query timeout for ${personId}, triggering background regeneration...`);
-        regenerateCalendarForPerson(personId).catch(err => {
-          console.error(`Background regeneration failed for ${personId}:`, err);
-        });
+        await triggerBackgroundRegeneration(personId, 'direct_fetch_timeout');
         
         if (shouldReturnICS) {
           res.setHeader('Content-Type', 'text/calendar');
