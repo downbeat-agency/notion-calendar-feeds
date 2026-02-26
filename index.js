@@ -320,7 +320,7 @@ function formatTimeParts(hours24, minutes) {
 }
 
 // Helper function to retry Notion API calls with exponential backoff
-async function retryNotionCall(apiCall, maxRetries = 3) {
+async function retryNotionCall(apiCall, maxRetries = 5) {
   let lastError;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -329,13 +329,21 @@ async function retryNotionCall(apiCall, maxRetries = 3) {
     } catch (error) {
       lastError = error;
       const isRetryable = error.code === 'notionhq_client_request_timeout' || 
+                         error.status === 429 ||
+                         error.status === 502 ||
+                         error.status === 503 ||
                          error.status === 504 || 
                          error.message?.includes('504') ||
+                         error.message?.includes('503') ||
+                         error.message?.includes('502') ||
+                         error.message?.includes('429') ||
                          error.message?.includes('timeout') ||
+                         error.message?.includes('ECONNRESET') ||
+                         error.message?.includes('EAI_AGAIN') ||
                          error.message?.includes('Request to Notion API failed');
       
       if (isRetryable && attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 15000); // Exponential backoff, max 15s
         console.log(`⚠️  Notion API timeout (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
@@ -563,6 +571,64 @@ function hasExplicitOffset(dateStr) {
   return /(?:Z|[+\-]\d{2}:\d{2})$/i.test(dateStr.trim());
 }
 
+function isDateOnlyString(dateStr) {
+  if (typeof dateStr !== 'string') return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim());
+}
+
+function parseDateOnlyAsFloating(dateStr) {
+  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Date.UTC(
+    parseInt(match[1], 10),
+    parseInt(match[2], 10) - 1,
+    parseInt(match[3], 10),
+    0, 0, 0
+  ));
+}
+
+// Unified parser for ISO-like timestamp fragments:
+// - Explicit offset -> UTC moment converted to Pacific floating time
+// - No offset -> treat as Pacific wall-time face value
+function parseTimestampFragment(fragment, options = {}) {
+  if (typeof fragment !== 'string') return null;
+  const clean = fragment.replace(/[']/g, '').trim();
+  if (!clean) return null;
+
+  if (isDateOnlyString(clean)) {
+    return parseDateOnlyAsFloating(clean);
+  }
+
+  if (clean.includes('T')) {
+    if (options.faceValue || !hasExplicitOffset(clean)) {
+      const c = extractLocalComponents(clean);
+      if (c) {
+        return new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+      }
+    }
+  }
+
+  const parsed = new Date(clean);
+  if (isNaN(parsed.getTime())) return null;
+
+  if (options.faceValue) {
+    const c = extractLocalComponents(clean);
+    if (c) {
+      return new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
+    }
+  }
+
+  if (clean.includes('T') && hasExplicitOffset(clean)) {
+    const pacific = convertUTCToPacific(parsed);
+    return new Date(Date.UTC(
+      pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
+      pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()
+    ));
+  }
+
+  return parsed;
+}
+
 function isOffsetTaggedRange(rangeStr) {
   if (typeof rangeStr !== 'string') return false;
   const cleanRange = rangeStr.replace(/[']/g, '').trim();
@@ -592,8 +658,9 @@ function parseCalltimeSmart(calltimeStr) {
     return null;
   }
 
-  // Calltime values from the Notion formula are true UTC timestamps (e.g., "T22:00:00+00:00"
-  // for 2 PM PST). Parse with standard UTC→Pacific conversion, same as event_date.
+  // Parse calltime through the unified parser contract:
+  // - no offset => Pacific wall time
+  // - explicit offset => normalize to Pacific floating time
   const parsed = parseUnifiedDateTime(cleanStr);
   if (parsed?.start instanceof Date && !isNaN(parsed.start.getTime())) {
     return parsed;
@@ -667,38 +734,47 @@ function maybeCorrectMainEventEnd(eventDateRaw, eventTimes, parsedCalltime) {
 }
 
 function applyCalltimeOverride(eventTimes, parsedCalltime) {
-  if (!eventTimes?.end || !parsedCalltime?.start) {
+  if (!eventTimes?.start || !parsedCalltime?.start) {
     return eventTimes;
   }
 
+  const startDate = eventTimes.start;
   const endDate = eventTimes.end;
   const calltimeDate = parsedCalltime.start;
-  if (!(endDate instanceof Date) || isNaN(endDate.getTime())) {
+  if (!(startDate instanceof Date) || isNaN(startDate.getTime())) {
     return eventTimes;
   }
   if (!(calltimeDate instanceof Date) || isNaN(calltimeDate.getTime())) {
     return eventTimes;
   }
 
+  // Always anchor to event START date to preserve event-day semantics.
   let ctStart = new Date(Date.UTC(
-    endDate.getUTCFullYear(),
-    endDate.getUTCMonth(),
-    endDate.getUTCDate(),
+    startDate.getUTCFullYear(),
+    startDate.getUTCMonth(),
+    startDate.getUTCDate(),
     calltimeDate.getUTCHours(),
     calltimeDate.getUTCMinutes(),
     calltimeDate.getUTCSeconds()
   ));
-  if (ctStart.getTime() > endDate.getTime()) {
-    ctStart = new Date(ctStart.getTime() - MAIN_EVENT_MS_PER_DAY);
+
+  // Guard malformed ranges: if calltime lands after end, use previous day only when needed.
+  if (endDate instanceof Date && !isNaN(endDate.getTime()) && ctStart.getTime() > endDate.getTime()) {
+    const previousDay = new Date(ctStart.getTime() - MAIN_EVENT_MS_PER_DAY);
+    if (previousDay.getTime() <= endDate.getTime()) {
+      ctStart = previousDay;
+    }
   }
+
   eventTimes.start = ctStart;
   return eventTimes;
 }
 
 function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
-  // event_date from the Notion formula is in UTC (+00:00). Convert to Pacific.
-  // End dates may have anomalies (wrong UTC date); maybeCorrectMainEventEnd fixes those
-  // by extracting face-value hours and reconstructing relative to the start.
+  // Unified contract for event_date:
+  // - no offset => Pacific wall time
+  // - explicit offset => normalize to Pacific floating time
+  // Keep legacy end-compat correction only for offset-tagged ranges with anomalies.
   const eventTimes = parseUnifiedDateTime(eventDateRaw);
   if (!eventTimes) {
     return {
@@ -797,18 +873,15 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
         endDate.setHours(endDate.getHours() + offsetHours);
         
         if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-          // Final validation: ensure start is before end after conversion
-          // This catches cases where multi-day events might have incorrect ordering
+          // Keep start-date contract: don't swap start/end silently.
+          // If end appears earlier than start, treat as overnight and roll end forward one day.
           let finalStart = startDate;
           let finalEnd = endDate;
-          
+
           if (startDate.getTime() > endDate.getTime()) {
-            console.warn(`[parseUnifiedDateTime @ format] Start > End after conversion. Swapping dates. Original: ${cleanStr}`);
-            // Swap them - this handles edge cases with multi-day events
-            finalStart = endDate;
-            finalEnd = startDate;
+            finalEnd = new Date(endDate.getTime() + MAIN_EVENT_MS_PER_DAY);
           }
-          
+
           return {
             start: finalStart,
             end: finalEnd
@@ -849,72 +922,25 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
       const parts = cleanStr.split('/');
       const firstStr = parts[0].trim();
       const secondStr = parts[1].trim();
-      
-      // Parse both dates - trust the order in the string (first = start, second = end)
-      // Don't swap based on UTC comparison, as the database may have times that cross midnight
-      // in a way that makes UTC comparison misleading
-      let actualStartDate = new Date(firstStr);
-      let actualEndDate = new Date(secondStr);
-      const actualStartStr = firstStr;
-      const actualEndStr = secondStr;
-      
-      if (!isNaN(actualStartDate.getTime()) && !isNaN(actualEndDate.getTime())) {
-        
-        const isISOStart = actualStartStr.includes('T');
-        const isISOEnd = actualEndStr.includes('T');
-        
-        const isAllDayStart = isISOStart && actualStartStr.match(/T00:00:00/);
-        const isAllDayEnd = isISOEnd && actualEndStr.match(/T00:00:00/);
-        
-        if (options.faceValue) {
-          // Face-value mode: the time in the string IS Pacific (for formula outputs like calltime)
-          if (isISOStart) {
-            const c = extractLocalComponents(actualStartStr);
-            if (c) {
-              actualStartDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
-            }
-          }
-          if (isISOEnd) {
-            const c = extractLocalComponents(actualEndStr);
-            if (c) {
-              actualEndDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
-            }
-          }
-        } else {
-          // Default: timestamps are UTC from native Notion dates — convert to Pacific
-          if (isISOStart) {
-            const pacific = convertUTCToPacific(actualStartDate);
-            actualStartDate = new Date(Date.UTC(
-              pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
-              pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
-          }
-          if (isISOEnd) {
-            const pacific = convertUTCToPacific(actualEndDate);
-            actualEndDate = new Date(Date.UTC(
-              pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
-              pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
-          }
-        }
-        
-        // Validate that dates are valid
-        if (isNaN(actualStartDate.getTime()) || isNaN(actualEndDate.getTime())) {
-          console.warn(`[parseUnifiedDateTime] Invalid date after conversion. Original: ${cleanStr}`);
-          return null;
-        }
-        
-        // Handle cross-midnight events: if start > end after Pacific conversion,
-        // this means the event spans midnight and the start should be on the PREVIOUS day
-        // (NOT a swap - move start back 24 hours instead)
-        if (actualStartDate.getTime() > actualEndDate.getTime()) {
-          // Move start back by 24 hours (one day earlier) - this is a cross-midnight event
-          actualStartDate = new Date(actualStartDate.getTime() - 24 * 60 * 60 * 1000);
-        }
-        
-        return {
-          start: actualStartDate,
-          end: actualEndDate
-        };
+
+      let actualStartDate = parseTimestampFragment(firstStr, options);
+      let actualEndDate = parseTimestampFragment(secondStr, options);
+
+      if (!actualStartDate || !actualEndDate || isNaN(actualStartDate.getTime()) || isNaN(actualEndDate.getTime())) {
+        console.warn(`[parseUnifiedDateTime] Invalid range after normalization. Original: ${cleanStr}`);
+        return null;
       }
+
+      // Maintain source start date. If end is earlier, this is usually an overnight event.
+      if (actualStartDate.getTime() > actualEndDate.getTime()) {
+        const rolledEnd = new Date(actualEndDate.getTime() + MAIN_EVENT_MS_PER_DAY);
+        actualEndDate = rolledEnd;
+      }
+
+      return {
+        start: actualStartDate,
+        end: actualEndDate
+      };
     } catch (e) {
       console.warn('Failed to parse date range format:', cleanStr, e);
     }
@@ -922,32 +948,11 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
   
   // Fallback: try to parse as regular ISO date
   try {
-    const date = new Date(cleanStr);
-    
-    if (!isNaN(date.getTime())) {
-      const isISOTimestamp = cleanStr.includes('T');
-
-      if (isISOTimestamp) {
-        let pacificDate;
-        if (options.faceValue) {
-          const c = extractLocalComponents(cleanStr);
-          if (c) {
-            pacificDate = new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
-          }
-        } else {
-          const pacific = convertUTCToPacific(date);
-          pacificDate = new Date(Date.UTC(
-            pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
-            pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()));
-        }
-        if (pacificDate) {
-          return { start: pacificDate, end: pacificDate };
-        }
-      }
-      
+    const normalized = parseTimestampFragment(cleanStr, options);
+    if (normalized && !isNaN(normalized.getTime())) {
       return {
-        start: date,
-        end: date
+        start: normalized,
+        end: normalized
       };
     }
   } catch (e) {
@@ -1043,7 +1048,7 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
     const startParsed = parseUnifiedDateTime(departureTimeStr);
     const endParsed = parseUnifiedDateTime(arrivalTimeStr);
     if (startParsed && endParsed && !isNaN(startParsed.start.getTime()) && !isNaN(endParsed.start.getTime())) {
-      return { start: startParsed.start, end: endParsed.start };
+      return { start: startParsed.start, end: endParsed.end };
     }
   }
   const parsed = parseUnifiedDateTime(departureTimeStr);
@@ -1058,32 +1063,26 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 async function regenerateCalendarForPerson(personId, options = {}) {
   const { setStatus = true } = options;
   const statusKey = `regenerate:status:${personId}`;
+  const statusDetailsKey = `regenerate:status_details:${personId}`;
   const STATUS_TTL = 300; // 5 minutes
 
   try {
     console.log(`🔄 Regenerating calendar for ${personId}...`);
     if (setStatus && redis && cacheEnabled) {
       await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
-    }
-
-    // CLEAR CACHE FIRST to ensure fresh data from Notion (intentional for regeneration)
-    if (redis && cacheEnabled) {
-      const icsKey = `calendar:${personId}:ics`;
-      const jsonKey = `calendar:${personId}:json`;
-      await redis.del(icsKey);
-      await redis.del(jsonKey);
-      const icsStillExists = await redis.exists(icsKey);
-      const jsonStillExists = await redis.exists(jsonKey);
-      if (icsStillExists || jsonStillExists) {
-        console.error(`⚠️  Cache was not fully cleared for ${personId}`);
-      }
+      await redis.del(statusDetailsKey);
     }
     
-    // Get calendar data from Calendar Data database (fresh from Notion API)
+    // Keep last-good cache in place until successful rebuild.
+    // Notion retries are consolidated inside retryNotionCall().
     const calendarData = await getCalendarDataFromDatabase(personId);
+
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       console.log(`⚠️  No events found for ${personId}, skipping...`);
-      if (setStatus && redis && cacheEnabled) await redis.setEx(statusKey, STATUS_TTL, 'no_events');
+      if (setStatus && redis && cacheEnabled) {
+        await redis.setEx(statusKey, STATUS_TTL, 'no_events');
+        await redis.del(statusDetailsKey);
+      }
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -1351,15 +1350,10 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
           } else if (hotel.check_in && hotel.check_out) {
             try {
-              hotelTimes = parseUnifiedDateTime(hotel.check_in);
-              if (!hotelTimes) {
-                const startDate = new Date(hotel.check_in);
-                const endDate = new Date(hotel.check_out);
-                const isDST = isDSTDate(startDate);
-                const offsetHours = isDST ? 7 : 8;
-                startDate.setHours(startDate.getHours() + offsetHours);
-                endDate.setHours(endDate.getHours() + offsetHours);
-                hotelTimes = { start: startDate, end: endDate };
+              const startParsed = parseUnifiedDateTime(hotel.check_in);
+              const endParsed = parseUnifiedDateTime(hotel.check_out);
+              if (startParsed && endParsed) {
+                hotelTimes = { start: startParsed.start, end: endParsed.end };
               }
             } catch (e) {
               console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
@@ -1395,17 +1389,17 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       // Add ground transport events (same logic)
       if (event.ground_transport && Array.isArray(event.ground_transport)) {
         event.ground_transport.forEach(transport => {
-          if (transport.start && transport.end) {
-            let transportTimes = parseUnifiedDateTime(transport.start);
-            if (!transportTimes) {
-              transportTimes = {
-                start: transport.start,
-                end: transport.end || transport.start
-              };
+          if (transport.start) {
+            const startParsed = parseUnifiedDateTime(transport.start);
+            const endParsed = transport.end ? parseUnifiedDateTime(transport.end) : null;
+            if (!startParsed) {
+              return;
             }
 
-            const startTime = new Date(transportTimes.start);
-            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+            const startTime = new Date(startParsed.start);
+            const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime())
+              ? new Date(endParsed.end)
+              : new Date(startTime.getTime() + 30 * 60 * 1000);
 
             let formattedTitle = transport.title || 'Ground Transport';
             formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
@@ -1504,8 +1498,8 @@ async function regenerateCalendarForPerson(personId, options = {}) {
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
               title: `🚙 ${formattedTitle}`,
-              start: startTime.toISOString(),
-              end: endTime.toISOString(),
+              start: startTime,
+              end: endTime,
               description: description.trim(),
               location: transport.location || '',
               url: transport.transportation_url || '',
@@ -1897,14 +1891,20 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const cacheKey = `calendar:${personId}:ics`;
       await redis.setEx(cacheKey, CACHE_TTL, icsData);
       console.log(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, TTL: ${CACHE_TTL}s)`);
-      if (setStatus) await redis.setEx(statusKey, STATUS_TTL, 'completed');
+      if (setStatus) {
+        await redis.setEx(statusKey, STATUS_TTL, 'completed');
+        await redis.del(statusDetailsKey);
+      }
     }
 
     return { success: true, personId, personName, eventCount: allCalendarEvents.length };
     
   } catch (error) {
     console.error(`❌ Error regenerating calendar for ${personId}:`, error.message);
-    if (setStatus && redis && cacheEnabled) await redis.setEx(statusKey, STATUS_TTL, 'failed');
+    if (setStatus && redis && cacheEnabled) {
+      await redis.setEx(statusKey, STATUS_TTL, 'failed');
+      await redis.setEx(statusDetailsKey, STATUS_TTL, error.message || 'Unknown regeneration error');
+    }
     return { success: false, personId, error: error.message };
   }
 }
@@ -2507,7 +2507,7 @@ function processTravelEvents(travelGroupsArray) {
           const depTimes = parseUnifiedDateTime(flight.departure_time);
           const depEndTimes = parseUnifiedDateTime(flight.departure_arrival_time);
           const depStart = depTimes ? depTimes.start : new Date(flight.departure_time);
-          const depEnd = depEndTimes ? depEndTimes.start : new Date(flight.departure_arrival_time);
+          const depEnd = depEndTimes ? depEndTimes.end : new Date(flight.departure_arrival_time);
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
             // Build route string
@@ -2574,7 +2574,7 @@ function processTravelEvents(travelGroupsArray) {
           const retTimes = parseUnifiedDateTime(flight.return_time);
           const retEndTimes = parseUnifiedDateTime(flight.return_arrival_time);
           const retStart = retTimes ? retTimes.start : new Date(flight.return_time);
-          const retEnd = retEndTimes ? retEndTimes.start : new Date(flight.return_arrival_time);
+          const retEnd = retEndTimes ? retEndTimes.end : new Date(flight.return_arrival_time);
           
           if (!isNaN(retStart.getTime()) && !isNaN(retEnd.getTime())) {
             // Build route string
@@ -3676,13 +3676,17 @@ app.get('/regenerate/:personId/status', async (req, res) => {
     if (redis && cacheEnabled) {
       const status = await redis.get(`regenerate:status:${personId}`);
       if (status) {
+        const statusDetails = status === 'failed'
+          ? await redis.get(`regenerate:status_details:${personId}`)
+          : null;
         return res.json({
           success: true,
           personId: personId,
           status: status,
           message: status === 'in_progress' ? 'Regeneration in progress' :
                    status === 'completed' ? 'Regeneration completed' :
-                   status === 'failed' ? 'Regeneration failed' : 'Unknown status'
+                   status === 'failed' ? 'Regeneration failed' : 'Unknown status',
+          details: statusDetails || undefined
         });
       }
     }
@@ -6784,25 +6788,11 @@ END:VCALENDAR`);
           if (hotel.dates_booked) {
             hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
           } else if (hotel.check_in && hotel.check_out) {
-            // Fallback to old format - try to parse with unified function
             try {
-              // Try to parse as unified format first
-              hotelTimes = parseUnifiedDateTime(hotel.check_in);
-              if (!hotelTimes) {
-                // If that fails, create dates and apply Pacific offset
-                const startDate = new Date(hotel.check_in);
-                const endDate = new Date(hotel.check_out);
-                
-                const isDST = isDSTDate(startDate);
-                const offsetHours = isDST ? 7 : 8;
-                
-                startDate.setHours(startDate.getHours() + offsetHours);
-                endDate.setHours(endDate.getHours() + offsetHours);
-                
-                hotelTimes = {
-            start: startDate,
-                  end: endDate
-                };
+              const startParsed = parseUnifiedDateTime(hotel.check_in);
+              const endParsed = parseUnifiedDateTime(hotel.check_out);
+              if (startParsed && endParsed) {
+                hotelTimes = { start: startParsed.start, end: endParsed.end };
               }
             } catch (e) {
               console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
@@ -6839,22 +6829,17 @@ END:VCALENDAR`);
       // Add ground transport events (same logic as before)
       if (event.ground_transport && Array.isArray(event.ground_transport)) {
         event.ground_transport.forEach(transport => {
-          if (transport.start && transport.end) {
-            let transportTimes = parseUnifiedDateTime(transport.start);
-            if (!transportTimes) {
-              // Fallback: treat as single time point
-              transportTimes = {
-                start: transport.start,
-                end: transport.end || transport.start
-              };
+          if (transport.start) {
+            const startParsed = parseUnifiedDateTime(transport.start);
+            const endParsed = transport.end ? parseUnifiedDateTime(transport.end) : null;
+            if (!startParsed) {
+              return;
             }
 
-            // For ground transport, make events 30 minutes long
-            const startTime = new Date(transportTimes.start);
-            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
-            
-            // Ground transport times are already processed by parseUnifiedDateTime
-            // No additional offset needed - same logic as main events
+            const startTime = new Date(startParsed.start);
+            const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime())
+              ? new Date(endParsed.end)
+              : new Date(startTime.getTime() + 30 * 60 * 1000);
 
             // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
             let formattedTitle = transport.title || 'Ground Transport';
@@ -6933,8 +6918,8 @@ END:VCALENDAR`);
             allCalendarEvents.push({
               type: transport.type || 'ground_transport',
               title: `🚙 ${formattedTitle}`,
-              start: startTime.toISOString(),
-              end: endTime.toISOString(),
+              start: startTime,
+              end: endTime,
               description: description.trim(),
               location: transport.location || '',
               url: transport.transportation_url || '',
