@@ -492,6 +492,111 @@ async function triggerBackgroundRegeneration(personId, reason = 'unknown') {
   }
 }
 
+let calendarDataPropertyIdCache = null;
+
+async function getCalendarDataPropertyIdMap(maxRetries = 5) {
+  if (calendarDataPropertyIdCache) {
+    return calendarDataPropertyIdCache;
+  }
+
+  const dbInfo = await retryNotionCall(
+    () => notion.databases.retrieve({ database_id: CALENDAR_DATA_DB }),
+    maxRetries
+  );
+  const props = dbInfo?.properties || {};
+
+  calendarDataPropertyIdCache = {
+    Events: props.Events?.id || null,
+    Flights: props.Flights?.id || null,
+    Transportation: props.Transportation?.id || null,
+    Hotels: props.Hotels?.id || null,
+    Rehearsals: props.Rehearsals?.id || null,
+    TeamCalendar: props['Team Calendar']?.id || null,
+  };
+  return calendarDataPropertyIdCache;
+}
+
+function extractPropertyStringFromItem(item) {
+  if (!item || typeof item !== 'object') return '';
+
+  if (item.type === 'formula') {
+    const formula = item.formula;
+    if (formula?.type === 'string') return formula.string || '';
+    if (formula?.type === 'number') return formula.number != null ? String(formula.number) : '';
+    if (formula?.type === 'boolean') return formula.boolean != null ? String(formula.boolean) : '';
+    if (formula?.type === 'date') {
+      if (!formula.date) return '';
+      const start = formula.date.start || '';
+      const end = formula.date.end || '';
+      return end ? `${start}/${end}` : start;
+    }
+    return '';
+  }
+
+  if (item.type === 'rich_text' && Array.isArray(item.rich_text)) {
+    return item.rich_text.map(t => t?.plain_text || '').join('');
+  }
+
+  if (item.type === 'title' && Array.isArray(item.title)) {
+    return item.title.map(t => t?.plain_text || '').join('');
+  }
+
+  return '';
+}
+
+async function fetchPagePropertyString(pageId, propertyId, maxRetries = 5) {
+  if (!propertyId) return '';
+
+  const first = await retryNotionCall(
+    () => notion.pages.properties.retrieve({ page_id: pageId, property_id: propertyId }),
+    maxRetries
+  );
+
+  if (first?.object !== 'list') {
+    return extractPropertyStringFromItem(first);
+  }
+
+  let text = (first.results || []).map(extractPropertyStringFromItem).join('');
+  let cursor = first.next_cursor || null;
+  let hasMore = !!first.has_more;
+
+  while (hasMore && cursor) {
+    const next = await retryNotionCall(
+      () => notion.pages.properties.retrieve({
+        page_id: pageId,
+        property_id: propertyId,
+        start_cursor: cursor,
+      }),
+      maxRetries
+    );
+    text += (next.results || []).map(extractPropertyStringFromItem).join('');
+    cursor = next.next_cursor || null;
+    hasMore = !!next.has_more;
+  }
+
+  return text;
+}
+
+async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
+  const ids = await getCalendarDataPropertyIdMap(maxRetries);
+
+  const eventsStr = await fetchPagePropertyString(pageId, ids.Events, maxRetries);
+  const flightsStr = await fetchPagePropertyString(pageId, ids.Flights, maxRetries);
+  const transportationStr = await fetchPagePropertyString(pageId, ids.Transportation, maxRetries);
+  const hotelsStr = await fetchPagePropertyString(pageId, ids.Hotels, maxRetries);
+  const rehearsalsStr = await fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries);
+  const teamCalendarStr = await fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries);
+
+  return {
+    Events: { formula: { string: eventsStr || '[]' } },
+    Flights: { formula: { string: flightsStr || '[]' } },
+    Transportation: { formula: { string: transportationStr || '[]' } },
+    Hotels: { formula: { string: hotelsStr || '[]' } },
+    Rehearsals: { formula: { string: rehearsalsStr || '[]' } },
+    'Team Calendar': { formula: { string: teamCalendarStr || '[]' } },
+  };
+}
+
 // Helper function to get calendar data from Calendar Data database
 async function getCalendarDataFromDatabase(personId, options = {}) {
   const { maxRetries = 5 } = options;
@@ -512,9 +617,9 @@ async function getCalendarDataFromDatabase(personId, options = {}) {
 
     if (calendarDataPageId) {
       const relationFetchStart = Date.now();
-      const calendarDataPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: calendarDataPageId }), maxRetries);
+      const calendarDataProps = await getCalendarDataPagePropertiesLean(calendarDataPageId, maxRetries);
       const relationFetchMs = Date.now() - relationFetchStart;
-      const processed = processCalendarDataProperties(calendarDataPage?.properties);
+      const processed = processCalendarDataProperties(calendarDataProps);
       if (processed) {
         console.log(`📊 CalendarData fast-path timings for ${personId}: person=${personFetchMs}ms relation=${relationFetchMs}ms`);
         return processed;
