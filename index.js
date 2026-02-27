@@ -322,11 +322,62 @@ function formatTimeParts(hours24, minutes) {
 const NOTION_RATE_LIMIT_RPS = Number(process.env.NOTION_RATE_LIMIT_RPS || 3);
 const NOTION_MIN_INTERVAL_MS = Math.max(1, Math.floor(1000 / NOTION_RATE_LIMIT_RPS));
 const NOTION_MAX_RETRY_BUDGET_MS = Number(process.env.NOTION_MAX_RETRY_BUDGET_MS || 120000);
+const NOTION_CIRCUIT_WINDOW_MS = Number(process.env.NOTION_CIRCUIT_WINDOW_MS || 60000);
+const NOTION_CIRCUIT_FAILURE_THRESHOLD = Number(process.env.NOTION_CIRCUIT_FAILURE_THRESHOLD || 10);
+const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS || 90000);
+const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const REGEN_LOCK_TTL_SECONDS = Number(process.env.REGEN_LOCK_TTL_SECONDS || 240);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
+let notionFailureTimestamps = [];
+let notionCircuitOpenUntil = 0;
+
+function isGatewayTimeoutError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.status === 504 ||
+    message.includes('status: 504') ||
+    message.includes('504 gateway') ||
+    message.includes('gateway time-out') ||
+    message.includes('gateway timeout')
+  );
+}
+
+function pruneNotionFailureWindow(nowTs) {
+  const minTs = nowTs - NOTION_CIRCUIT_WINDOW_MS;
+  notionFailureTimestamps = notionFailureTimestamps.filter(ts => ts >= minTs);
+}
+
+function isNotionCircuitOpen() {
+  return notionCircuitOpenUntil > Date.now();
+}
+
+function markNotionCallSuccess() {
+  const nowTs = Date.now();
+  pruneNotionFailureWindow(nowTs);
+  notionFailureTimestamps = [];
+  if (notionCircuitOpenUntil <= nowTs) {
+    notionCircuitOpenUntil = 0;
+  }
+}
+
+function markNotionCallFailure(error) {
+  if (!isRetryableNotionError(error)) return;
+  const nowTs = Date.now();
+  pruneNotionFailureWindow(nowTs);
+  notionFailureTimestamps.push(nowTs);
+  if (notionFailureTimestamps.length >= NOTION_CIRCUIT_FAILURE_THRESHOLD) {
+    const nextOpenUntil = nowTs + NOTION_CIRCUIT_COOLDOWN_MS;
+    if (nextOpenUntil > notionCircuitOpenUntil) {
+      notionCircuitOpenUntil = nextOpenUntil;
+      console.warn(
+        `🚨 Notion circuit opened for ${NOTION_CIRCUIT_COOLDOWN_MS}ms after ${notionFailureTimestamps.length} failures in ${NOTION_CIRCUIT_WINDOW_MS}ms`
+      );
+    }
+  }
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -380,14 +431,27 @@ async function retryNotionCall(apiCall, maxRetries = 5) {
   const opStart = Date.now();
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (isNotionCircuitOpen()) {
+      const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
+      const circuitError = new Error(`Notion circuit breaker open; retry after ${waitMs}ms`);
+      circuitError.code = 'notion_circuit_open';
+      throw circuitError;
+    }
     try {
-      return await runRateLimitedNotionCall(apiCall);
+      const result = await runRateLimitedNotionCall(apiCall);
+      markNotionCallSuccess();
+      return result;
     } catch (error) {
       lastError = error;
+      markNotionCallFailure(error);
       const elapsedMs = Date.now() - opStart;
       const isRetryable = isRetryableNotionError(error);
 
       if (!isRetryable || attempt >= maxRetries || elapsedMs >= NOTION_MAX_RETRY_BUDGET_MS) {
+        throw error;
+      }
+
+      if (isNotionCircuitOpen()) {
         throw error;
       }
 
@@ -473,6 +537,10 @@ function getRemainingMs(deadlineTs) {
 
 async function triggerBackgroundRegeneration(personId, reason = 'unknown') {
   try {
+    if (isNotionCircuitOpen()) {
+      console.log(`⏸️  Skipping background regeneration for ${personId} (${reason}) while Notion circuit is open`);
+      return false;
+    }
     if (redis && cacheEnabled) {
       const status = await redis.get(`regenerate:status:${personId}`);
       const hasLock = await redis.exists(`regenerate:lock:${personId}`);
@@ -599,7 +667,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
 
 // Helper function to get calendar data from Calendar Data database
 async function getCalendarDataFromDatabase(personId, options = {}) {
-  const { maxRetries = 5 } = options;
+  const { maxRetries = 5, allowFallbackQuery = false } = options;
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
@@ -626,8 +694,18 @@ async function getCalendarDataFromDatabase(personId, options = {}) {
       }
     }
   } catch (directFetchError) {
-    // Fall back to DB query mode below.
-    console.warn(`⚠️  Direct Calendar Data page fetch failed for ${personId}, falling back to DB query: ${directFetchError.message}`);
+    const shouldSkipFallback = isGatewayTimeoutError(directFetchError) || directFetchError?.code === 'notion_circuit_open';
+    if (shouldSkipFallback) {
+      console.warn(`⚠️  Direct Calendar Data page fetch failed for ${personId}; skipping DB fallback: ${directFetchError.message}`);
+      throw directFetchError;
+    }
+    // Fall back to DB query mode below only for non-timeout errors.
+    console.warn(`⚠️  Direct Calendar Data page fetch failed for ${personId}, considering DB fallback: ${directFetchError.message}`);
+  }
+
+  if (!(ENABLE_CALENDAR_DB_FALLBACK && allowFallbackQuery)) {
+    console.warn(`⏭️  Calendar Data DB fallback disabled for ${personId}`);
+    return null;
   }
 
   // Query Calendar Data database for events related to this person
@@ -1345,6 +1423,15 @@ async function regenerateCalendarForPerson(personId, options = {}) {
   let lockAcquired = false;
 
   try {
+    if (isNotionCircuitOpen()) {
+      const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
+      const reason = `Notion circuit open (${waitMs}ms remaining)`;
+      if (setStatus && redis && cacheEnabled) {
+        await redis.setEx(statusKey, STATUS_TTL, 'failed');
+        await redis.setEx(statusDetailsKey, STATUS_TTL, reason);
+      }
+      return { success: false, personId, error: reason };
+    }
     console.log(`🔄 Regenerating calendar for ${personId}...`);
     if (redis && cacheEnabled) {
       const lockResult = await redis.set(lockKey, '1', { NX: true, EX: REGEN_LOCK_TTL_SECONDS });
@@ -2221,6 +2308,10 @@ async function regenerateAllCalendars() {
   const startTime = Date.now();
   
   try {
+    if (isNotionCircuitOpen()) {
+      const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
+      return { success: false, error: `Notion circuit open (${waitMs}ms remaining)`, timeSeconds: 0 };
+    }
     console.log('🚀 Starting bounded-concurrency calendar regeneration...');
 
     const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
@@ -2272,6 +2363,11 @@ function startBackgroundJob() {
   
   setInterval(async () => {
     try {
+      if (isNotionCircuitOpen()) {
+        const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
+        console.warn(`⏸️  Skipping background job while Notion circuit is open (${waitMs}ms remaining)`);
+        return;
+      }
       const jobStart = Date.now();
       console.log('\n⏰ Background job triggered - fetching all people...');
       
@@ -5770,6 +5866,30 @@ app.get('/admin/calendar', async (req, res) => {
       }
     } catch (error) {
       console.error('Error fetching admin calendar data:', error);
+      const isTransientNotionFailure =
+        error.message?.includes('504') ||
+        error.message?.includes('timeout') ||
+        error.message?.includes('Gateway Timeout') ||
+        error.code === 'notion_circuit_open';
+
+      if (isTransientNotionFailure && redis && cacheEnabled) {
+        console.log('⚠️  Notion transient failure - attempting to return cached admin data...');
+        try {
+          const cachedData = await redis.get(cacheKey);
+          if (cachedData) {
+            console.log('✅ Returning cached admin calendar data');
+            if (format === 'json') {
+              res.setHeader('Content-Type', 'application/json');
+              return res.send(cachedData);
+            }
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
+            return res.send(cachedData);
+          }
+        } catch (cacheError) {
+          console.error('Error retrieving cached admin data:', cacheError);
+        }
+      }
       
       const errorMsg = {
         error: 'Error fetching admin calendar data',
@@ -6027,7 +6147,11 @@ app.get('/travel/calendar', async (req, res) => {
       console.error('Error fetching travel calendar data:', error);
       
       // If Notion API times out, try to return cached data as fallback
-      const isTimeout = error.message?.includes('504') || error.message?.includes('timeout') || error.message?.includes('Gateway Timeout');
+      const isTimeout =
+        error.message?.includes('504') ||
+        error.message?.includes('timeout') ||
+        error.message?.includes('Gateway Timeout') ||
+        error.code === 'notion_circuit_open';
       
       if (isTimeout && redis && cacheEnabled) {
         console.log('⚠️  Notion API timeout - attempting to return cached data...');
@@ -6306,7 +6430,11 @@ app.get('/blockout/calendar', async (req, res) => {
       console.error('Error fetching blockout calendar data:', error);
       
       // If Notion API times out, try to return cached data as fallback
-      const isTimeout = error.message?.includes('504') || error.message?.includes('timeout') || error.message?.includes('Gateway Timeout');
+      const isTimeout =
+        error.message?.includes('504') ||
+        error.message?.includes('timeout') ||
+        error.message?.includes('Gateway Timeout') ||
+        error.code === 'notion_circuit_open';
       
       if (isTimeout && redis && cacheEnabled) {
         console.log('⚠️  Notion API timeout - attempting to return cached data...');
@@ -6608,6 +6736,31 @@ app.get('/calendar/:personId', async (req, res) => {
         // If Notion responds quickly, serve immediately. If slow, trigger background regeneration.
         const QUICK_FETCH_TIMEOUT_MS = 55000;
         console.log(`⏱️  Attempting quick fetch for ${personId} (${QUICK_FETCH_TIMEOUT_MS / 1000}s timeout)...`);
+
+        if (redis && cacheEnabled) {
+          const hasRegenLock = await redis.exists(`regenerate:lock:${personId}`);
+          if (hasRegenLock) {
+            console.log(`⏭️  Regeneration lock exists for ${personId}, skipping duplicate quick fetch`);
+            if (shouldReturnICS) {
+              res.setHeader('Content-Type', 'text/calendar');
+              return res.status(503).send(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Calendar Feed//EN
+BEGIN:VEVENT
+DTSTART:19900101T000000Z
+DTEND:19900101T000000Z
+SUMMARY:Calendar is being regenerated
+DESCRIPTION:Your calendar is already regenerating. Please try again in a few moments.
+END:VEVENT
+END:VCALENDAR`);
+            }
+            return res.status(503).json({
+              error: 'Calendar cache is empty',
+              message: 'Your calendar is already regenerating in the background. Please try again shortly.',
+              retryAfter: 120
+            });
+          }
+        }
         
         try {
           const quickTimeoutPromise = new Promise((_, reject) => {
