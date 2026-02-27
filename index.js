@@ -451,7 +451,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 }
 
 const REGEN_TOTAL_TIMEOUT_MS = 180000; // 3 minutes hard cap per regeneration run
-const REGEN_FETCH_STEP_TIMEOUT_MS = 45000; // cap slow upstream fetch phases
+const REGEN_FETCH_STEP_TIMEOUT_MS = 120000; // allow full retry cycle for slow upstream fetch phases
 const REGEN_PERSON_STEP_TIMEOUT_MS = 30000;
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -1263,7 +1263,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
     const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
     const calendarData = await withTimeout(
-      getCalendarDataFromDatabase(personId, { maxRetries: 3 }),
+      getCalendarDataFromDatabase(personId, { maxRetries: 6 }),
       fetchTimeoutMs,
       'Regeneration calendar-data fetch timed out'
     );
@@ -1282,7 +1282,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     // Get person name from Personnel database
     const personFetchTimeoutMs = Math.min(REGEN_PERSON_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
     const person = await withTimeout(
-      retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), 3),
+      retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), 6),
       personFetchTimeoutMs,
       'Regeneration person fetch timed out'
     );
@@ -6579,7 +6579,7 @@ END:VCALENDAR`);
         });
         
         calendarData = await Promise.race([
-          getCalendarDataFromDatabase(personId, { maxRetries: 3 }),
+          getCalendarDataFromDatabase(personId, { maxRetries: 6 }),
           timeoutPromise
         ]);
     } catch (error) {
