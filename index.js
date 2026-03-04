@@ -916,6 +916,54 @@ function extractLocalComponents(isoStr) {
   };
 }
 
+const MONTH_NAME_TO_INDEX = {
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11
+};
+
+function parseHumanDateAsFloating(dateStr) {
+  if (typeof dateStr !== 'string') return null;
+  const match = dateStr.trim().match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+  if (!match) return null;
+  const monthIndex = MONTH_NAME_TO_INDEX[match[1].toLowerCase()];
+  if (monthIndex === undefined) return null;
+  const day = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  return new Date(Date.UTC(year, monthIndex, day, 0, 0, 0));
+}
+
+function parseHumanDateTimeAsFloating(dateStr, timeStr) {
+  if (typeof timeStr !== 'string') return null;
+  const date = parseHumanDateAsFloating(dateStr);
+  if (!date) return null;
+  const timeMatch = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!timeMatch) return null;
+
+  let hours = parseInt(timeMatch[1], 10) % 12;
+  const minutes = parseInt(timeMatch[2], 10);
+  const meridiem = timeMatch[3].toUpperCase();
+  if (meridiem === 'PM') hours += 12;
+
+  return new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    hours,
+    minutes,
+    0
+  ));
+}
+
 const MAIN_EVENT_MAX_DURATION_HOURS = 16;
 const MAIN_EVENT_MS_PER_HOUR = 60 * 60 * 1000;
 const MAIN_EVENT_MS_PER_DAY = 24 * MAIN_EVENT_MS_PER_HOUR;
@@ -1124,12 +1172,12 @@ function applyCalltimeOverride(eventTimes, parsedCalltime) {
   return eventTimes;
 }
 
-function resolveMainEventTimes(eventDateRaw, calltimeRaw) {
+function resolveMainEventTimes(eventDateRaw, calltimeRaw, options = {}) {
   // Unified contract for event_date:
   // - no offset => Pacific wall time
   // - explicit offset => normalize to Pacific floating time
   // Keep legacy end-compat correction only for offset-tagged ranges with anomalies.
-  const eventTimes = parseUnifiedDateTime(eventDateRaw);
+  const eventTimes = parseUnifiedDateTime(eventDateRaw, options);
   if (!eventTimes) {
     return {
       eventTimes: null,
@@ -1161,6 +1209,44 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
 
   // Clean up the string
   const cleanStr = dateTimeStr.replace(/[']/g, '').trim();
+  const humanWallClock = options.humanWallClock === true;
+
+  // Support admin main-event ranges without '@', e.g.
+  // "February 15, 2026 5:00 PM → 10:00 PM" or
+  // "February 15, 2026 6:30 PM → February 16, 2026 12:00 AM"
+  const humanRangeMatch = humanWallClock
+    ? cleanStr.match(
+      /^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s*(?:→|->)\s*(?:([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+)?(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?$/i
+    )
+    : null;
+  if (humanRangeMatch && humanWallClock) {
+    const startDateStr = humanRangeMatch[1].trim();
+    const startTimeStr = humanRangeMatch[2].trim();
+    const explicitEndDateStr = humanRangeMatch[3] ? humanRangeMatch[3].trim() : null;
+    const endTimeStr = humanRangeMatch[4].trim();
+    const endDateStr = explicitEndDateStr || startDateStr;
+
+    try {
+      const startDate = parseHumanDateTimeAsFloating(startDateStr, startTimeStr);
+      const endDate = parseHumanDateTimeAsFloating(endDateStr, endTimeStr);
+
+      if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        let finalStart = startDate;
+        let finalEnd = endDate;
+
+        if (startDate.getTime() > endDate.getTime()) {
+          finalEnd = new Date(endDate.getTime() + MAIN_EVENT_MS_PER_DAY);
+        }
+
+        return {
+          start: finalStart,
+          end: finalEnd
+        };
+      }
+    } catch (e) {
+      console.warn('Failed to parse non-@ human-readable date range:', cleanStr, e);
+    }
+  }
   
   // Check if it's the unified format with @
   if (cleanStr.startsWith('@')) {
@@ -1170,19 +1256,23 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
       try {
         const startDateStr = dateOnlyMatch[1].trim();
         const endDateStr = dateOnlyMatch[2].trim();
+
+        let startDate;
+        let endDate;
+        if (humanWallClock) {
+          startDate = parseHumanDateAsFloating(startDateStr);
+          endDate = parseHumanDateAsFloating(endDateStr);
+        } else {
+          // Legacy behavior for non-admin paths.
+          startDate = new Date(startDateStr);
+          endDate = new Date(endDateStr);
+          const isDST = isDSTDate(startDate);
+          const offsetHours = isDST ? 7 : 8;
+          startDate.setHours(startDate.getHours() + offsetHours);
+          endDate.setHours(endDate.getHours() + offsetHours);
+        }
         
-        // Parse dates and set to midnight (for all-day events)
-        const startDate = new Date(startDateStr);
-        const endDate = new Date(endDateStr);
-        
-        // Add Pacific offset for floating times
-        const isDST = isDSTDate(startDate);
-        const offsetHours = isDST ? 7 : 8;
-        
-        startDate.setHours(startDate.getHours() + offsetHours);
-        endDate.setHours(endDate.getHours() + offsetHours);
-        
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
             start: startDate,
             end: endDate
@@ -1214,19 +1304,22 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
       }
       
       try {
-        // Parse dates as Pacific time and add offset to create floating times
-        const startDate = new Date(`${dateStr} ${startTimeStr}`);
-        const endDate = new Date(`${endDateStr} ${endTimeStr}`);
+        let startDate;
+        let endDate;
+        if (humanWallClock) {
+          startDate = parseHumanDateTimeAsFloating(dateStr, startTimeStr);
+          endDate = parseHumanDateTimeAsFloating(endDateStr, endTimeStr);
+        } else {
+          // Legacy behavior for non-admin paths.
+          startDate = new Date(`${dateStr} ${startTimeStr}`);
+          endDate = new Date(`${endDateStr} ${endTimeStr}`);
+          const isDST = isDSTDate(startDate);
+          const offsetHours = isDST ? 7 : 8;
+          startDate.setHours(startDate.getHours() + offsetHours);
+          endDate.setHours(endDate.getHours() + offsetHours);
+        }
         
-        // Add Pacific offset to create floating times that display correctly
-        // DST: +7 hours (PDT), Standard: +8 hours (PST)
-        const isDST = isDSTDate(startDate);
-        const offsetHours = isDST ? 7 : 8;
-        
-        startDate.setHours(startDate.getHours() + offsetHours);
-        endDate.setHours(endDate.getHours() + offsetHours);
-        
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           // Keep start-date contract: don't swap start/end silently.
           // If end appears earlier than start, treat as overnight and roll end forward one day.
           let finalStart = startDate;
@@ -1251,14 +1344,22 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
     if (singleMatch) {
       try {
         const dateStr = singleMatch[1].trim();
-        const date = new Date(dateStr);
+        const humanDateTimeMatch = dateStr.match(/^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s+(?:AM|PM))$/i);
+
+        let date = null;
+        if (humanWallClock && humanDateTimeMatch) {
+          date = parseHumanDateTimeAsFloating(humanDateTimeMatch[1].trim(), humanDateTimeMatch[2].trim());
+        } else if (humanDateTimeMatch) {
+          // Legacy behavior for non-admin paths.
+          date = new Date(dateStr);
+          const isDST = isDSTDate(date);
+          const offsetHours = isDST ? 7 : 8;
+          date.setHours(date.getHours() + offsetHours);
+        } else {
+          date = parseTimestampFragment(dateStr, options);
+        }
         
-        // Add Pacific offset for floating times
-        const isDST = isDSTDate(date);
-        const offsetHours = isDST ? 7 : 8;
-        date.setHours(date.getHours() + offsetHours);
-        
-        if (!isNaN(date.getTime())) {
+        if (date && !isNaN(date.getTime())) {
           return {
             start: date,
             end: date
@@ -2589,7 +2690,7 @@ function processAdminEvents(eventsArray) {
   eventsArray.forEach(event => {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
-      const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
+      const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime, { humanWallClock: true });
       const eventTimes = mainEventTimeResult.eventTimes;
       
       if (eventTimes) {
