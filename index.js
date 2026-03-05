@@ -1516,23 +1516,8 @@ function alignEventTimesToDateHelper(event, baseEventTimes) {
     return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
   }
 
-  const helperParsed = parseUnifiedDateTime(helperRaw, { atHumanNoConversion: true });
-  if (helperParsed?.start instanceof Date && !isNaN(helperParsed.start.getTime()) &&
-      helperParsed?.end instanceof Date && !isNaN(helperParsed.end.getTime())) {
-    const baseStartUtc = Date.UTC(
-      baseEventTimes.start.getUTCFullYear(),
-      baseEventTimes.start.getUTCMonth(),
-      baseEventTimes.start.getUTCDate()
-    );
-    const helperStartUtc = Date.UTC(
-      helperParsed.start.getUTCFullYear(),
-      helperParsed.start.getUTCMonth(),
-      helperParsed.start.getUTCDate()
-    );
-    const helperDeltaDays = Math.round((helperStartUtc - baseStartUtc) / MAIN_EVENT_MS_PER_DAY);
-    return { eventTimes: helperParsed, helperDeltaDays, helperAdjusted: true };
-  }
-
+  // Keep parity with admin behavior: Event Date Helper anchors the DATE only.
+  // Preserve times resolved from event_date/calltime and shift by whole-day delta.
   const helperDateUtc = extractFirstHumanDateFromText(helperRaw);
   if (helperDateUtc === null) {
     return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
