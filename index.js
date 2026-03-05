@@ -1461,6 +1461,14 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
   return null;
 }
 
+function getNestedRehearsals(event) {
+  if (!event || typeof event !== 'object') return [];
+  if (Array.isArray(event.rehearsals)) return event.rehearsals;
+  if (Array.isArray(event.rehearsal)) return event.rehearsal;
+  if (Array.isArray(event.Rehearsals)) return event.Rehearsals;
+  return [];
+}
+
 // Parse new structured format: "Driver: [driver_name:Name driver_phone:Phone,...]" -> [{name, phone}]
 function parseStructuredDriverLine(line) {
   const results = [];
@@ -1837,8 +1845,9 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       }
 
       // Add rehearsal events (same logic)
-      if (event.rehearsals && Array.isArray(event.rehearsals)) {
-        event.rehearsals.forEach(rehearsal => {
+      const nestedRehearsals = getNestedRehearsals(event);
+      if (nestedRehearsals.length > 0) {
+        nestedRehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
             let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
             let location = 'TBD';
@@ -2887,8 +2896,9 @@ function processAdminEvents(eventsArray) {
     }
 
     // Process rehearsals for this event
-    if (event.rehearsals && Array.isArray(event.rehearsals)) {
-      event.rehearsals.forEach(rehearsal => {
+    const nestedRehearsals = getNestedRehearsals(event);
+    if (nestedRehearsals.length > 0) {
+      nestedRehearsals.forEach(rehearsal => {
         if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
           let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
           
@@ -7391,8 +7401,9 @@ END:VCALENDAR`);
       }
 
       // Add rehearsal events (same logic as before)
-      if (event.rehearsals && Array.isArray(event.rehearsals)) {
-        event.rehearsals.forEach(rehearsal => {
+      const nestedRehearsals = getNestedRehearsals(event);
+      if (nestedRehearsals.length > 0) {
+        nestedRehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
             // Use the same parseUnifiedDateTime function as other event types
             let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
