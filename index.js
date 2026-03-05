@@ -933,7 +933,12 @@ const MONTH_NAME_TO_INDEX = {
 
 function parseHumanDateAsFloating(dateStr) {
   if (typeof dateStr !== 'string') return null;
-  const match = dateStr.trim().match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+  const normalizedDate = dateStr
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u202F/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const match = normalizedDate.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
   if (!match) return null;
   const monthIndex = MONTH_NAME_TO_INDEX[match[1].toLowerCase()];
   if (monthIndex === undefined) return null;
@@ -946,7 +951,12 @@ function parseHumanDateTimeAsFloating(dateStr, timeStr) {
   if (typeof timeStr !== 'string') return null;
   const date = parseHumanDateAsFloating(dateStr);
   if (!date) return null;
-  const timeMatch = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const normalizedTime = timeStr
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u202F/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const timeMatch = normalizedTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (!timeMatch) return null;
 
   let hours = parseInt(timeMatch[1], 10) % 12;
@@ -962,6 +972,68 @@ function parseHumanDateTimeAsFloating(dateStr, timeStr) {
     minutes,
     0
   ));
+}
+
+function parseAtHumanRangeNoConversion(rawStr) {
+  if (typeof rawStr !== 'string') return null;
+  const clean = rawStr
+    .replace(/[']/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u202F/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!clean.startsWith('@')) return null;
+  const payload = clean.slice(1).trim();
+
+  // Date-only all-day style: "Month D, YYYY → Month D, YYYY"
+  const dateOnlyMatch = payload.match(/^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s*(?:→|->)\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})$/i);
+  if (dateOnlyMatch) {
+    const startDate = parseHumanDateAsFloating(dateOnlyMatch[1]);
+    const endDate = parseHumanDateAsFloating(dateOnlyMatch[2]);
+    if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+      return { start: startDate, end: endDate };
+    }
+    return null;
+  }
+
+  // Date/time range:
+  // "Month D, YYYY h:mm AM → h:mm PM"
+  // "Month D, YYYY h:mm AM → Month D, YYYY h:mm PM"
+  // Optional timezone labels in parentheses are ignored.
+  const rangeMatch = payload.match(
+    /^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))(?:\s+\([^)]+\))?\s*(?:→|->)\s*(?:([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+)?(\d{1,2}:\d{2}\s*(?:AM|PM))(?:\s+\([^)]+\))?$/i
+  );
+  if (rangeMatch) {
+    const startDateStr = rangeMatch[1].trim();
+    const startTimeStr = rangeMatch[2].trim();
+    const endDateStr = (rangeMatch[3] || startDateStr).trim();
+    const endTimeStr = rangeMatch[4].trim();
+
+    const startDate = parseHumanDateTimeAsFloating(startDateStr, startTimeStr);
+    const endDate = parseHumanDateTimeAsFloating(endDateStr, endTimeStr);
+    if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return null;
+    }
+
+    return {
+      start: startDate,
+      end: startDate.getTime() > endDate.getTime()
+        ? new Date(endDate.getTime() + MAIN_EVENT_MS_PER_DAY)
+        : endDate
+    };
+  }
+
+  // Single timestamp: "@Month D, YYYY h:mm AM"
+  const singleMatch = payload.match(/^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))(?:\s+\([^)]+\))?$/i);
+  if (singleMatch) {
+    const date = parseHumanDateTimeAsFloating(singleMatch[1].trim(), singleMatch[2].trim());
+    if (date && !isNaN(date.getTime())) {
+      return { start: date, end: date };
+    }
+  }
+
+  return null;
 }
 
 const MAIN_EVENT_MAX_DURATION_HOURS = 16;
@@ -1210,6 +1282,17 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
   // Clean up the string
   const cleanStr = dateTimeStr.replace(/[']/g, '').trim();
   const humanWallClock = options.humanWallClock === true;
+  const atHumanNoConversion = options.atHumanNoConversion === true;
+
+  // Strict mode for admin-style @ human timestamps:
+  // treat as already-local wall clock and bypass timezone conversion logic.
+  if (atHumanNoConversion && cleanStr.startsWith('@')) {
+    const strictParsed = parseAtHumanRangeNoConversion(cleanStr);
+    if (strictParsed) {
+      return strictParsed;
+    }
+    return null;
+  }
 
   // Support admin main-event ranges without '@', e.g.
   // "February 15, 2026 5:00 PM → 10:00 PM" or
@@ -2690,7 +2773,10 @@ function processAdminEvents(eventsArray) {
   eventsArray.forEach(event => {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
-      const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime, { humanWallClock: true });
+      const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime, {
+        humanWallClock: true,
+        atHumanNoConversion: true
+      });
       const eventTimes = mainEventTimeResult.eventTimes;
       
       if (eventTimes) {
