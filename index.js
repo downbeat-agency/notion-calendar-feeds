@@ -291,11 +291,10 @@ function formatCallTime(isoTimestamp) {
   const date = parsed?.start instanceof Date ? parsed.start : null;
 
   if (!date || isNaN(date.getTime())) {
-    // Fallback: parse as ISO and convert UTC→Pacific
+    // Fallback: parse as-is with no timezone conversion.
     const fallback = new Date(isoTimestamp);
     if (!isNaN(fallback.getTime())) {
-      const pacific = convertUTCToPacific(fallback);
-      return formatTimeParts(pacific.getUTCHours(), String(pacific.getUTCMinutes()).padStart(2, '0'));
+      return formatTimeParts(fallback.getUTCHours(), String(fallback.getUTCMinutes()).padStart(2, '0'));
     }
     return isoTimestamp;
   }
@@ -1069,8 +1068,8 @@ function parseDateOnlyAsFloating(dateStr) {
 }
 
 // Unified parser for ISO-like timestamp fragments:
-// - Explicit offset -> UTC moment converted to Pacific floating time
-// - No offset -> treat as Pacific wall-time face value
+// - All timestamp forms are treated as literal wall-clock values.
+// - No timezone conversion is applied.
 function parseTimestampFragment(fragment, options = {}) {
   if (typeof fragment !== 'string') return null;
   const clean = fragment.replace(/[']/g, '').trim();
@@ -1081,11 +1080,9 @@ function parseTimestampFragment(fragment, options = {}) {
   }
 
   if (clean.includes('T')) {
-    if (options.faceValue || !hasExplicitOffset(clean)) {
-      const c = extractLocalComponents(clean);
-      if (c) {
-        return new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
-      }
+    const c = extractLocalComponents(clean);
+    if (c) {
+      return new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
     }
   }
 
@@ -1097,14 +1094,6 @@ function parseTimestampFragment(fragment, options = {}) {
     if (c) {
       return new Date(Date.UTC(c.year, c.month, c.day, c.hours, c.minutes, c.seconds));
     }
-  }
-
-  if (clean.includes('T') && hasExplicitOffset(clean)) {
-    const pacific = convertUTCToPacific(parsed);
-    return new Date(Date.UTC(
-      pacific.getUTCFullYear(), pacific.getUTCMonth(), pacific.getUTCDate(),
-      pacific.getUTCHours(), pacific.getUTCMinutes(), pacific.getUTCSeconds()
-    ));
   }
 
   return parsed;
@@ -1140,8 +1129,7 @@ function parseCalltimeSmart(calltimeStr) {
   }
 
   // Parse calltime through the unified parser contract:
-  // - no offset => Pacific wall time
-  // - explicit offset => normalize to Pacific floating time
+  // - all inputs are treated as literal wall-clock values
   const parsed = parseUnifiedDateTime(cleanStr);
   if (parsed?.start instanceof Date && !isNaN(parsed.start.getTime())) {
     return parsed;
@@ -1253,8 +1241,7 @@ function applyCalltimeOverride(eventTimes, parsedCalltime) {
 
 function resolveMainEventTimes(eventDateRaw, calltimeRaw, options = {}) {
   // Unified contract for event_date:
-  // - no offset => Pacific wall time
-  // - explicit offset => normalize to Pacific floating time
+  // - all inputs are treated as literal wall-clock values
   // Keep legacy end-compat correction only for offset-tagged ranges with anomalies.
   const eventTimes = parseUnifiedDateTime(eventDateRaw, options);
   if (!eventTimes) {
@@ -1279,7 +1266,7 @@ function resolveMainEventTimes(eventDateRaw, calltimeRaw, options = {}) {
 }
 
 // Helper function to parse @ format dates (for flights, rehearsals, hotels, transport)
-// Treats ISO timestamps as UTC and converts to Pacific via convertUTCToPacific.
+// Treats all timestamps as literal wall-clock values (no timezone conversion).
 // options.faceValue: when true, extract literal time digits from ISO strings (used only for debugging)
 function parseUnifiedDateTime(dateTimeStr, options = {}) {
   if (!dateTimeStr || dateTimeStr === null) {
@@ -1288,28 +1275,25 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
 
   // Clean up the string
   const cleanStr = dateTimeStr.replace(/[']/g, '').trim();
-  const humanWallClock = options.humanWallClock === true;
   const atHumanNoConversion = options.atHumanNoConversion === true;
 
-  // Strict mode for admin-style @ human timestamps:
-  // treat as already-local wall clock and bypass timezone conversion logic.
-  if (atHumanNoConversion && cleanStr.startsWith('@')) {
+  // Global @ parser path: treat as literal wall clock for all feeds.
+  if (cleanStr.startsWith('@')) {
     const strictParsed = parseAtHumanRangeNoConversion(cleanStr);
     if (strictParsed) {
       return strictParsed;
     }
-    return null;
+    // If strict mode was requested, fail closed when @ input does not match.
+    if (atHumanNoConversion) return null;
   }
 
-  // Support admin main-event ranges without '@', e.g.
+  // Support human-readable ranges without '@', e.g.
   // "February 15, 2026 5:00 PM → 10:00 PM" or
   // "February 15, 2026 6:30 PM → February 16, 2026 12:00 AM"
-  const humanRangeMatch = humanWallClock
-    ? cleanStr.match(
-      /^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s*(?:→|->)\s*(?:([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+)?(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?$/i
-    )
-    : null;
-  if (humanRangeMatch && humanWallClock) {
+  const humanRangeMatch = cleanStr.match(
+    /^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?\s*(?:→|->)\s*(?:([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+)?(\d{1,2}:\d{2}\s+(?:AM|PM))(?:\s+\([^)]+\))?$/i
+  );
+  if (humanRangeMatch) {
     const startDateStr = humanRangeMatch[1].trim();
     const startTimeStr = humanRangeMatch[2].trim();
     const explicitEndDateStr = humanRangeMatch[3] ? humanRangeMatch[3].trim() : null;
@@ -1347,20 +1331,8 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
         const startDateStr = dateOnlyMatch[1].trim();
         const endDateStr = dateOnlyMatch[2].trim();
 
-        let startDate;
-        let endDate;
-        if (humanWallClock) {
-          startDate = parseHumanDateAsFloating(startDateStr);
-          endDate = parseHumanDateAsFloating(endDateStr);
-        } else {
-          // Legacy behavior for non-admin paths.
-          startDate = new Date(startDateStr);
-          endDate = new Date(endDateStr);
-          const isDST = isDSTDate(startDate);
-          const offsetHours = isDST ? 7 : 8;
-          startDate.setHours(startDate.getHours() + offsetHours);
-          endDate.setHours(endDate.getHours() + offsetHours);
-        }
+        const startDate = parseHumanDateAsFloating(startDateStr);
+        const endDate = parseHumanDateAsFloating(endDateStr);
         
         if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           return {
@@ -1394,20 +1366,8 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
       }
       
       try {
-        let startDate;
-        let endDate;
-        if (humanWallClock) {
-          startDate = parseHumanDateTimeAsFloating(dateStr, startTimeStr);
-          endDate = parseHumanDateTimeAsFloating(endDateStr, endTimeStr);
-        } else {
-          // Legacy behavior for non-admin paths.
-          startDate = new Date(`${dateStr} ${startTimeStr}`);
-          endDate = new Date(`${endDateStr} ${endTimeStr}`);
-          const isDST = isDSTDate(startDate);
-          const offsetHours = isDST ? 7 : 8;
-          startDate.setHours(startDate.getHours() + offsetHours);
-          endDate.setHours(endDate.getHours() + offsetHours);
-        }
+        const startDate = parseHumanDateTimeAsFloating(dateStr, startTimeStr);
+        const endDate = parseHumanDateTimeAsFloating(endDateStr, endTimeStr);
         
         if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           // Keep start-date contract: don't swap start/end silently.
@@ -1437,14 +1397,8 @@ function parseUnifiedDateTime(dateTimeStr, options = {}) {
         const humanDateTimeMatch = dateStr.match(/^([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2}\s+(?:AM|PM))$/i);
 
         let date = null;
-        if (humanWallClock && humanDateTimeMatch) {
+        if (humanDateTimeMatch) {
           date = parseHumanDateTimeAsFloating(humanDateTimeMatch[1].trim(), humanDateTimeMatch[2].trim());
-        } else if (humanDateTimeMatch) {
-          // Legacy behavior for non-admin paths.
-          date = new Date(dateStr);
-          const isDST = isDSTDate(date);
-          const offsetHours = isDST ? 7 : 8;
-          date.setHours(date.getHours() + offsetHours);
         } else {
           date = parseTimestampFragment(dateStr, options);
         }
@@ -2777,6 +2731,53 @@ async function getAdminCalendarData() {
 function processAdminEvents(eventsArray) {
   const allCalendarEvents = [];
 
+  const extractFirstHumanDateFromText = (raw) => {
+    if (!raw || typeof raw !== 'string') return null;
+    const match = raw.match(/([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})/);
+    if (!match) return null;
+    const monthName = match[1];
+    const day = Number(match[2]);
+    const year = Number(match[3]);
+    const monthIndex = [
+      'january', 'february', 'march', 'april', 'may', 'june',
+      'july', 'august', 'september', 'october', 'november', 'december'
+    ].indexOf(monthName.toLowerCase());
+    if (monthIndex < 0) return null;
+    return Date.UTC(year, monthIndex, day);
+  };
+
+  const alignEventTimesToHelperDate = (eventTimes, helperRaw) => {
+    if (!eventTimes?.start || !helperRaw) {
+      return { eventTimes, helperAdjusted: false, helperDeltaDays: 0 };
+    }
+
+    const helperDateUtc = extractFirstHumanDateFromText(helperRaw);
+    if (helperDateUtc === null) {
+      return { eventTimes, helperAdjusted: false, helperDeltaDays: 0 };
+    }
+
+    const startDateUtc = Date.UTC(
+      eventTimes.start.getUTCFullYear(),
+      eventTimes.start.getUTCMonth(),
+      eventTimes.start.getUTCDate()
+    );
+
+    const deltaDays = Math.round((helperDateUtc - startDateUtc) / (24 * 60 * 60 * 1000));
+    if (deltaDays === 0) {
+      return { eventTimes, helperAdjusted: false, helperDeltaDays: 0 };
+    }
+
+    const deltaMs = deltaDays * 24 * 60 * 60 * 1000;
+    return {
+      eventTimes: {
+        start: new Date(eventTimes.start.getTime() + deltaMs),
+        end: new Date(eventTimes.end.getTime() + deltaMs)
+      },
+      helperAdjusted: true,
+      helperDeltaDays: deltaDays
+    };
+  };
+
   eventsArray.forEach(event => {
     // Process main events (same logic as existing main_event processing)
     if (event.event_name && event.event_date) {
@@ -2784,7 +2785,11 @@ function processAdminEvents(eventsArray) {
         humanWallClock: true,
         atHumanNoConversion: true
       });
-      const eventTimes = mainEventTimeResult.eventTimes;
+      const alignmentResult = alignEventTimesToHelperDate(
+        mainEventTimeResult.eventTimes,
+        event.event_date_helper
+      );
+      const eventTimes = alignmentResult.eventTimes;
       
       if (eventTimes) {
         // Build payroll info for description (put at TOP)
@@ -2874,7 +2879,9 @@ function processAdminEvents(eventsArray) {
           description: description.trim(),
           location: location,
           url: event.notion_url || '',
-          type: 'main_event'
+          type: 'main_event',
+          helperAdjusted: alignmentResult.helperAdjusted,
+          helperDeltaDays: alignmentResult.helperDeltaDays
         });
       }
     }
@@ -4086,7 +4093,8 @@ app.get('/debug/parse-test', async (req, res) => {
       endISO: result?.end?.toISOString?.() || null,
       startUTCHours: result?.start?.getUTCHours?.() ?? null,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      version: 'tz-fix-v9-calltime-facevalue'
+      parserMode: 'no_conversion_wall_clock',
+      version: 'no-conversion-v1'
     };
     if (personId) {
       const calendarData = await getCalendarDataFromDatabase(personId);
@@ -4188,6 +4196,7 @@ app.get('/debug/admin-parse', async (req, res) => {
       filtered_events: filtered.length,
       returned: sample.length,
       serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      parserMode: 'no_conversion_wall_clock',
       parserVersion: 'admin-at-no-conversion-debug-v1',
       filters: {
         contains: contains || null,
