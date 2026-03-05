@@ -4328,23 +4328,26 @@ app.get('/regenerate/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Run regeneration in background - return immediately to avoid Railway 60s timeout
-    regenerateCalendarForPerson(personId, { setStatus: true }).then(result => {
-      if (result.success) {
-        console.log(`✅ Background regeneration complete for ${result.personName} (${result.eventCount} events)`);
-      } else {
-        console.log(`⚠️  Background regeneration finished for ${personId}: ${result.reason || result.error}`);
-      }
-    }).catch(err => {
-      console.error(`❌ Background regeneration failed for ${personId}:`, err);
-    });
+    // Run regeneration synchronously (same style as admin/calendar/regen)
+    const result = await regenerateCalendarForPerson(personId, { setStatus: true });
+    if (result.success) {
+      return res.json({
+        success: true,
+        message: 'Calendar regenerated successfully',
+        personId,
+        personName: result.personName,
+        eventCount: result.eventCount
+      });
+    }
 
-    res.status(202).json({
-      success: true,
-      message: 'Calendar regeneration started',
+    const reason = result.reason || 'unknown';
+    const statusCode = reason === 'already_in_progress' ? 409 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: 'Calendar regeneration failed',
       personId,
-      note: 'Regeneration typically takes 1–2 minutes. Poll /regenerate/:personId/status for progress.',
-      statusUrl: `/regenerate/${personId}/status`
+      reason,
+      details: result.error || null
     });
   } catch (error) {
     console.error('Regeneration endpoint error:', error);
