@@ -873,6 +873,7 @@ function processCalendarDataProperties(calendarData) {
     events: events.map(event => ({
       event_name: event.event_name,
       event_date: event.event_date,
+      event_date_helper: event.event_date_helper,
       band: event.band,
       calltime: event.calltime,
       gear_checklist: event.gear_checklist,
