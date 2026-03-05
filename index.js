@@ -318,6 +318,14 @@ function formatTimeParts(hours24, minutes) {
   return `${hours}:${minutes} ${period}`;
 }
 
+function formatFloatingTimeFromDate(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  return formatTimeParts(
+    date.getUTCHours(),
+    String(date.getUTCMinutes()).padStart(2, '0')
+  );
+}
+
 const NOTION_RATE_LIMIT_RPS = Number(process.env.NOTION_RATE_LIMIT_RPS || 3);
 const NOTION_MIN_INTERVAL_MS = Math.max(1, Math.floor(1000 / NOTION_RATE_LIMIT_RPS));
 const NOTION_MAX_RETRY_BUDGET_MS = Number(process.env.NOTION_MAX_RETRY_BUDGET_MS || 120000);
@@ -1479,6 +1487,25 @@ function normalizeEventDateHelperString(raw) {
     .replace(/,+\s*$/, '');
 }
 
+function getHelperTimezoneOffsetHours(helperRaw) {
+  if (typeof helperRaw !== 'string') return null;
+  const tzMatch = helperRaw.match(/\((PST|PDT|HST|MST|MDT|CST|CDT|EST|EDT)\)/i);
+  if (!tzMatch) return null;
+  const zone = tzMatch[1].toUpperCase();
+  const offsetMap = {
+    PST: 8,
+    PDT: 7,
+    HST: 10,
+    MST: 7,
+    MDT: 6,
+    CST: 6,
+    CDT: 5,
+    EST: 5,
+    EDT: 4
+  };
+  return offsetMap[zone] ?? null;
+}
+
 function extractFirstHumanDateFromText(raw) {
   if (!raw || typeof raw !== 'string') return null;
   const match = raw.match(/([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})/);
@@ -1514,14 +1541,26 @@ function shiftRangeByDays(range, deltaDays) {
 function alignEventTimesToDateHelper(event, baseEventTimes) {
   const helperRaw = normalizeEventDateHelperString(event?.event_date_helper);
   if (!helperRaw || !baseEventTimes?.start || !baseEventTimes?.end) {
-    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+    return {
+      eventTimes: baseEventTimes,
+      helperDeltaDays: 0,
+      helperAdjusted: false,
+      helperClockCorrected: false,
+      helperClockCorrectionHours: 0
+    };
   }
 
   // Keep parity with admin behavior: Event Date Helper anchors the DATE only.
   // Preserve times resolved from event_date/calltime and shift by whole-day delta.
   const helperDateUtc = extractFirstHumanDateFromText(helperRaw);
   if (helperDateUtc === null) {
-    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+    return {
+      eventTimes: baseEventTimes,
+      helperDeltaDays: 0,
+      helperAdjusted: false,
+      helperClockCorrected: false,
+      helperClockCorrectionHours: 0
+    };
   }
 
   const baseStartUtc = Date.UTC(
@@ -1530,14 +1569,48 @@ function alignEventTimesToDateHelper(event, baseEventTimes) {
     baseEventTimes.start.getUTCDate()
   );
   const helperDeltaDays = Math.round((helperDateUtc - baseStartUtc) / MAIN_EVENT_MS_PER_DAY);
-  if (!helperDeltaDays) {
-    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+  let alignedRange = helperDeltaDays ? shiftRangeByDays(baseEventTimes, helperDeltaDays) : baseEventTimes;
+  let helperAdjusted = !!helperDeltaDays;
+  let helperClockCorrected = false;
+  let helperClockCorrectionHours = 0;
+
+  // Some formula chains shift calltimes/starts by timezone offset while helper retains
+  // the intended wall-clock event window. Correct only clear drift cases.
+  const helperRange = parseUnifiedDateTime(helperRaw, { atHumanNoConversion: true });
+  const helperOffsetHours = getHelperTimezoneOffsetHours(helperRaw);
+  if (
+    helperOffsetHours &&
+    helperRange?.start instanceof Date &&
+    !isNaN(helperRange.start.getTime()) &&
+    alignedRange?.start instanceof Date &&
+    !isNaN(alignedRange.start.getTime())
+  ) {
+    const correctedStart = new Date(alignedRange.start.getTime() - helperOffsetHours * MAIN_EVENT_MS_PER_HOUR);
+    const leadHours = (helperRange.start.getTime() - correctedStart.getTime()) / MAIN_EVENT_MS_PER_HOUR;
+    const currentStartsAfterHelper = alignedRange.start.getTime() > helperRange.start.getTime();
+
+    // Apply when current start is later than helper start, and corrected start lands
+    // in a realistic pre-show call window relative to helper start.
+    if (currentStartsAfterHelper && leadHours >= 0 && leadHours <= 10) {
+      alignedRange = {
+        ...alignedRange,
+        start: correctedStart,
+        end: helperRange?.end instanceof Date && !isNaN(helperRange.end.getTime())
+          ? new Date(helperRange.end)
+          : alignedRange.end
+      };
+      helperClockCorrected = true;
+      helperClockCorrectionHours = helperOffsetHours;
+      helperAdjusted = true;
+    }
   }
 
   return {
-    eventTimes: shiftRangeByDays(baseEventTimes, helperDeltaDays),
+    eventTimes: alignedRange,
     helperDeltaDays,
-    helperAdjusted: true
+    helperAdjusted,
+    helperClockCorrected,
+    helperClockCorrectionHours
   };
 }
 
@@ -1749,7 +1822,10 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
           let calltimeInfo = '';
           if (event.calltime) {
-            calltimeInfo = `➡️ Call Time: ${formatCallTime(event.calltime)}\n\n`;
+            const displayCalltime = alignmentResult.helperClockCorrected
+              ? formatFloatingTimeFromDate(eventTimes.start)
+              : formatCallTime(event.calltime);
+            calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
           }
 
           let gearChecklistInfo = '';
@@ -7310,7 +7386,10 @@ END:VCALENDAR`);
           // Build calltime info (after payroll, before general info)
           let calltimeInfo = '';
           if (event.calltime) {
-            calltimeInfo = `➡️ Call Time: ${formatCallTime(event.calltime)}\n\n`;
+            const displayCalltime = alignmentResult.helperClockCorrected
+              ? formatFloatingTimeFromDate(eventTimes.start)
+              : formatCallTime(event.calltime);
+            calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
           }
 
           // Build gear checklist info (after calltime, before personnel)
