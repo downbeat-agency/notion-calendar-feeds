@@ -974,8 +974,15 @@ function parseHumanDateTimeAsFloating(dateStr, timeStr) {
   ));
 }
 
-function parseAtHumanRangeNoConversion(rawStr) {
+function parseAtHumanRangeNoConversion(rawStr, options = {}) {
   if (typeof rawStr !== 'string') return null;
+  const includeMeta = options.includeMeta === true;
+  const withBranch = (value, branch) => {
+    if (!value) return value;
+    if (!includeMeta) return value;
+    return { ...value, __branch: branch };
+  };
+
   const clean = rawStr
     .replace(/[']/g, '')
     .replace(/\u00A0/g, ' ')
@@ -992,7 +999,7 @@ function parseAtHumanRangeNoConversion(rawStr) {
     const startDate = parseHumanDateAsFloating(dateOnlyMatch[1]);
     const endDate = parseHumanDateAsFloating(dateOnlyMatch[2]);
     if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-      return { start: startDate, end: endDate };
+      return withBranch({ start: startDate, end: endDate }, 'at_date_only_range');
     }
     return null;
   }
@@ -1016,12 +1023,12 @@ function parseAtHumanRangeNoConversion(rawStr) {
       return null;
     }
 
-    return {
+    return withBranch({
       start: startDate,
       end: startDate.getTime() > endDate.getTime()
         ? new Date(endDate.getTime() + MAIN_EVENT_MS_PER_DAY)
         : endDate
-    };
+    }, 'at_time_range');
   }
 
   // Single timestamp: "@Month D, YYYY h:mm AM"
@@ -1029,7 +1036,7 @@ function parseAtHumanRangeNoConversion(rawStr) {
   if (singleMatch) {
     const date = parseHumanDateTimeAsFloating(singleMatch[1].trim(), singleMatch[2].trim());
     if (date && !isNaN(date.getTime())) {
-      return { start: date, end: date };
+      return withBranch({ start: date, end: date }, 'at_single_time');
     }
   }
 
@@ -4119,6 +4126,81 @@ app.get('/debug/parse-test', async (req, res) => {
     res.json(response);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/debug/admin-parse', async (req, res) => {
+  try {
+    const limitParam = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 200)) : 50;
+    const contains = typeof req.query.contains === 'string' ? req.query.contains.toLowerCase() : null;
+    const notionUrl = typeof req.query.url === 'string' ? req.query.url.trim() : null;
+
+    const adminEvents = await getAdminCalendarData();
+
+    let filtered = adminEvents;
+    if (contains) {
+      filtered = filtered.filter(event =>
+        typeof event.event_name === 'string' &&
+        event.event_name.toLowerCase().includes(contains)
+      );
+    }
+    if (notionUrl) {
+      filtered = filtered.filter(event => event.notion_url === notionUrl);
+    }
+
+    const sample = filtered.slice(0, limit).map(event => {
+      const rawEventDate = event.event_date;
+      const strictAtParse = parseAtHumanRangeNoConversion(rawEventDate, { includeMeta: true });
+      const strictUnified = parseUnifiedDateTime(rawEventDate, {
+        humanWallClock: true,
+        atHumanNoConversion: true
+      });
+      const defaultUnified = parseUnifiedDateTime(rawEventDate);
+      const strictResolved = resolveMainEventTimes(rawEventDate, event.calltime, {
+        humanWallClock: true,
+        atHumanNoConversion: true
+      });
+
+      return {
+        title: event.event_name || '',
+        notion_url: event.notion_url || '',
+        raw_event_date: rawEventDate || '',
+        raw_calltime: event.calltime || '',
+        has_at_prefix: typeof rawEventDate === 'string' && rawEventDate.trim().startsWith('@'),
+        strict_at_branch: strictAtParse?.__branch || null,
+        strict_at_start_iso: strictAtParse?.start?.toISOString?.() || null,
+        strict_at_end_iso: strictAtParse?.end?.toISOString?.() || null,
+        unified_strict_start_iso: strictUnified?.start?.toISOString?.() || null,
+        unified_strict_end_iso: strictUnified?.end?.toISOString?.() || null,
+        unified_default_start_iso: defaultUnified?.start?.toISOString?.() || null,
+        unified_default_end_iso: defaultUnified?.end?.toISOString?.() || null,
+        resolved_strict_start_iso: strictResolved?.eventTimes?.start?.toISOString?.() || null,
+        resolved_strict_end_iso: strictResolved?.eventTimes?.end?.toISOString?.() || null,
+        resolved_strict_end_compat_applied: strictResolved?.endCompatApplied || false,
+        resolved_strict_end_compat_reason: strictResolved?.endCompatReason || null
+      };
+    });
+
+    res.json({
+      success: true,
+      total_admin_events: adminEvents.length,
+      filtered_events: filtered.length,
+      returned: sample.length,
+      serverTZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      parserVersion: 'admin-at-no-conversion-debug-v1',
+      filters: {
+        contains: contains || null,
+        url: notionUrl || null,
+        limit
+      },
+      events: sample
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
