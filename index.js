@@ -1469,6 +1469,92 @@ function getNestedRehearsals(event) {
   return [];
 }
 
+function normalizeEventDateHelperString(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u202F/g, ' ')
+    .trim()
+    .replace(/,+\s*$/, '');
+}
+
+function extractFirstHumanDateFromText(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const match = raw.match(/([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})/);
+  if (!match) return null;
+  const monthName = match[1];
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const monthIndex = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december'
+  ].indexOf(monthName.toLowerCase());
+  if (monthIndex < 0) return null;
+  return Date.UTC(year, monthIndex, day);
+}
+
+function shiftDateByDays(value, deltaDays) {
+  if (!deltaDays) return value instanceof Date ? new Date(value) : value;
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (isNaN(date.getTime())) return value;
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return date;
+}
+
+function shiftRangeByDays(range, deltaDays) {
+  if (!range || !deltaDays) return range;
+  return {
+    ...range,
+    start: shiftDateByDays(range.start, deltaDays),
+    end: shiftDateByDays(range.end, deltaDays)
+  };
+}
+
+function alignEventTimesToDateHelper(event, baseEventTimes) {
+  const helperRaw = normalizeEventDateHelperString(event?.event_date_helper);
+  if (!helperRaw || !baseEventTimes?.start || !baseEventTimes?.end) {
+    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+  }
+
+  const helperParsed = parseUnifiedDateTime(helperRaw, { atHumanNoConversion: true });
+  if (helperParsed?.start instanceof Date && !isNaN(helperParsed.start.getTime()) &&
+      helperParsed?.end instanceof Date && !isNaN(helperParsed.end.getTime())) {
+    const baseStartUtc = Date.UTC(
+      baseEventTimes.start.getUTCFullYear(),
+      baseEventTimes.start.getUTCMonth(),
+      baseEventTimes.start.getUTCDate()
+    );
+    const helperStartUtc = Date.UTC(
+      helperParsed.start.getUTCFullYear(),
+      helperParsed.start.getUTCMonth(),
+      helperParsed.start.getUTCDate()
+    );
+    const helperDeltaDays = Math.round((helperStartUtc - baseStartUtc) / MAIN_EVENT_MS_PER_DAY);
+    return { eventTimes: helperParsed, helperDeltaDays, helperAdjusted: true };
+  }
+
+  const helperDateUtc = extractFirstHumanDateFromText(helperRaw);
+  if (helperDateUtc === null) {
+    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+  }
+
+  const baseStartUtc = Date.UTC(
+    baseEventTimes.start.getUTCFullYear(),
+    baseEventTimes.start.getUTCMonth(),
+    baseEventTimes.start.getUTCDate()
+  );
+  const helperDeltaDays = Math.round((helperDateUtc - baseStartUtc) / MAIN_EVENT_MS_PER_DAY);
+  if (!helperDeltaDays) {
+    return { eventTimes: baseEventTimes, helperDeltaDays: 0, helperAdjusted: false };
+  }
+
+  return {
+    eventTimes: shiftRangeByDays(baseEventTimes, helperDeltaDays),
+    helperDeltaDays,
+    helperAdjusted: true
+  };
+}
+
 // Parse new structured format: "Driver: [driver_name:Name driver_phone:Phone,...]" -> [{name, phone}]
 function parseStructuredDriverLine(line) {
   const results = [];
@@ -1647,10 +1733,13 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
+      let helperDeltaDays = 0;
       // Add main event
       if (event.event_name && event.event_date) {
         const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
-        const eventTimes = mainEventTimeResult.eventTimes;
+        const alignmentResult = alignEventTimesToDateHelper(event, mainEventTimeResult.eventTimes);
+        const eventTimes = alignmentResult.eventTimes;
+        helperDeltaDays = alignmentResult.helperDeltaDays || 0;
         
         if (eventTimes) {
           let payrollInfo = '';
@@ -1716,6 +1805,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
                 end: flight.departure_arrival_time || flight.departure_time
               };
             }
+            departureTimes = shiftRangeByDays(departureTimes, helperDeltaDays);
             
             // Generate countdown URL for flight departure
             const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
@@ -1758,6 +1848,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
                 end: flight.return_arrival_time || flight.return_time
               };
             }
+            returnTimes = shiftRangeByDays(returnTimes, helperDeltaDays);
             
             // Generate countdown URL for flight return
             const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
@@ -1801,6 +1892,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
                 end: flight.departure_lo_time
               };
             }
+            departureLoTimes = shiftRangeByDays(departureLoTimes, helperDeltaDays);
 
             allCalendarEvents.push({
               type: 'flight_departure_layover',
@@ -1826,6 +1918,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
                 end: flight.return_lo_time
               };
             }
+            returnLoTimes = shiftRangeByDays(returnLoTimes, helperDeltaDays);
 
             allCalendarEvents.push({
               type: 'flight_return_layover',
@@ -1850,6 +1943,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
         nestedRehearsals.forEach(rehearsal => {
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
             let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+            rehearsalTimes = shiftRangeByDays(rehearsalTimes, helperDeltaDays);
             let location = 'TBD';
             if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
               location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
@@ -1900,6 +1994,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
               return;
             }
           }
+          hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
 
           if (hotelTimes) {
             let namesFormatted = 'N/A';
@@ -1930,8 +2025,8 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       if (event.ground_transport && Array.isArray(event.ground_transport)) {
         event.ground_transport.forEach(transport => {
           if (transport.start) {
-            const startParsed = parseUnifiedDateTime(transport.start);
-            const endParsed = transport.end ? parseUnifiedDateTime(transport.end) : null;
+            const startParsed = shiftRangeByDays(parseUnifiedDateTime(transport.start), helperDeltaDays);
+            const endParsed = transport.end ? shiftRangeByDays(parseUnifiedDateTime(transport.end), helperDeltaDays) : null;
             if (!startParsed) {
               return;
             }
@@ -7188,10 +7283,13 @@ END:VCALENDAR`);
     const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
+      let helperDeltaDays = 0;
       // Add main event (using same logic as before)
       if (event.event_name && event.event_date) {
         const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
-        const eventTimes = mainEventTimeResult.eventTimes;
+        const alignmentResult = alignEventTimesToDateHelper(event, mainEventTimeResult.eventTimes);
+        const eventTimes = alignmentResult.eventTimes;
+        helperDeltaDays = alignmentResult.helperDeltaDays || 0;
         
         if (eventTimes) {
           // Build payroll info for description (put at TOP)
@@ -7270,6 +7368,7 @@ END:VCALENDAR`);
                 end: flight.departure_arrival_time || flight.departure_time
               };
             }
+            departureTimes = shiftRangeByDays(departureTimes, helperDeltaDays);
 
             // Generate countdown URL for flight departure
             const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
@@ -7314,6 +7413,7 @@ END:VCALENDAR`);
                 end: flight.return_arrival_time || flight.return_time
               };
             }
+            returnTimes = shiftRangeByDays(returnTimes, helperDeltaDays);
 
             // Generate countdown URL for flight return
             const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
@@ -7357,6 +7457,7 @@ END:VCALENDAR`);
                 end: flight.departure_lo_time
               };
             }
+            departureLoTimes = shiftRangeByDays(departureLoTimes, helperDeltaDays);
 
             allCalendarEvents.push({
               type: 'flight_departure_layover',
@@ -7382,6 +7483,7 @@ END:VCALENDAR`);
                 end: flight.return_lo_time
               };
             }
+            returnLoTimes = shiftRangeByDays(returnLoTimes, helperDeltaDays);
 
             allCalendarEvents.push({
               type: 'flight_return_layover',
@@ -7407,6 +7509,7 @@ END:VCALENDAR`);
           if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
             // Use the same parseUnifiedDateTime function as other event types
             let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
+            rehearsalTimes = shiftRangeByDays(rehearsalTimes, helperDeltaDays);
 
             // Build location string
             let location = 'TBD';
@@ -7461,6 +7564,7 @@ END:VCALENDAR`);
               return;
             }
           }
+          hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
 
           if (hotelTimes) {
             // Format names on reservation - each name on a separate line
@@ -7492,8 +7596,8 @@ END:VCALENDAR`);
       if (event.ground_transport && Array.isArray(event.ground_transport)) {
         event.ground_transport.forEach(transport => {
           if (transport.start) {
-            const startParsed = parseUnifiedDateTime(transport.start);
-            const endParsed = transport.end ? parseUnifiedDateTime(transport.end) : null;
+            const startParsed = shiftRangeByDays(parseUnifiedDateTime(transport.start), helperDeltaDays);
+            const endParsed = transport.end ? shiftRangeByDays(parseUnifiedDateTime(transport.end), helperDeltaDays) : null;
             if (!startParsed) {
               return;
             }
