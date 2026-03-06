@@ -1958,13 +1958,32 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       'Regeneration calendar-data fetch timed out'
     );
 
-    if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
-      console.log(`⚠️  No events found for ${personId}, skipping...`);
+    if (!calendarData) {
+      console.log(`⚠️  No calendar data found for ${personId}, skipping...`);
       await writeRegenJob(personId, 'failed', { trigger, error: 'No events found' });
       return { success: false, personId, reason: 'no_events' };
     }
     
     const events = calendarData;
+    const eventsArray = Array.isArray(events) ? events : events.events || [];
+    const topLevelFlights = events.flights || [];
+    const topLevelRehearsals = events.rehearsals || [];
+    const topLevelHotels = events.hotels || [];
+    const topLevelTransport = events.ground_transport || [];
+    const topLevelTeamCalendar = events.team_calendar || [];
+    const hasAnySourceData =
+      eventsArray.length > 0 ||
+      topLevelFlights.length > 0 ||
+      topLevelRehearsals.length > 0 ||
+      topLevelHotels.length > 0 ||
+      topLevelTransport.length > 0 ||
+      topLevelTeamCalendar.length > 0;
+
+    if (!hasAnySourceData) {
+      console.warn(`⚠️  No source event data for ${personId}: events=${eventsArray.length}, flights=${topLevelFlights.length}, rehearsals=${topLevelRehearsals.length}, hotels=${topLevelHotels.length}, transport=${topLevelTransport.length}, team=${topLevelTeamCalendar.length}`);
+      await writeRegenJob(personId, 'failed', { trigger, error: 'No events found' });
+      return { success: false, personId, reason: 'no_events' };
+    }
     
     // Get person name from Personnel database
     const personFetchTimeoutMs = Math.min(REGEN_PERSON_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
@@ -1980,13 +1999,6 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     // Process events into calendar format (duplicated from main endpoint)
     const allCalendarEvents = [];
-    
-    const eventsArray = Array.isArray(events) ? events : events.events || [];
-    const topLevelFlights = events.flights || [];
-    const topLevelRehearsals = events.rehearsals || [];
-    const topLevelHotels = events.hotels || [];
-    const topLevelTransport = events.ground_transport || [];
-    const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
       let helperDeltaDays = 0;
@@ -7555,7 +7567,7 @@ END:VCALENDAR`);
     }
     }
     
-    if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
+    if (!calendarData) {
       return res.status(404).json({ 
         error: 'No events found',
         message: 'No calendar data found in Calendar Data database for this person'
@@ -7563,27 +7575,35 @@ END:VCALENDAR`);
     }
     
     const events = calendarData;
+    const eventsArray = Array.isArray(events) ? events : events.events || [];
+    const topLevelFlights = events.flights || [];
+    const topLevelRehearsals = events.rehearsals || [];
+    const topLevelHotels = events.hotels || [];
+    const topLevelTransport = events.ground_transport || [];
+    const topLevelTeamCalendar = events.team_calendar || [];
+    const hasAnySourceData =
+      eventsArray.length > 0 ||
+      topLevelFlights.length > 0 ||
+      topLevelRehearsals.length > 0 ||
+      topLevelHotels.length > 0 ||
+      topLevelTransport.length > 0 ||
+      topLevelTeamCalendar.length > 0;
+    if (!hasAnySourceData) {
+      return res.status(404).json({
+        error: 'No events found',
+        message: 'No usable event data found in Calendar Data database for this person'
+      });
+    }
     
     // Get person name from Personnel database
     const person = await notion.pages.retrieve({ page_id: personId });
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
     
-    console.log(`Using Calendar Data database for ${personName} (${calendarData.events.length} events)`);
+    console.log(`Using Calendar Data database for ${personName} (${eventsArray.length} events)`);
 
     // Process events into calendar format (same logic as before)
     const allCalendarEvents = [];
-    
-    // Handle both array format and object with events property
-    const eventsArray = Array.isArray(events) ? events : events.events || [];
-    
-    // Extract top-level arrays for new data source (if available)
-    const topLevelFlights = events.flights || [];
-    const topLevelRehearsals = events.rehearsals || [];
-    const topLevelHotels = events.hotels || [];
-    const topLevelTransport = events.ground_transport || [];
-    
-    const topLevelTeamCalendar = events.team_calendar || [];
     
     eventsArray.forEach(event => {
       let helperDeltaDays = 0;
