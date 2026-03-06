@@ -804,31 +804,10 @@ function processCalendarDataProperties(calendarData) {
   // Parse all the JSON strings with better error handling
   let events, flights, transportation, hotels, rehearsals, teamCalendar;
   
-  // DEBUG: Log raw formula string before parsing
   const rawFormulaString = calendarData.Events?.formula?.string || '';
-  if (rawFormulaString.includes('Pacific Palisades') || rawFormulaString.includes('2025-11-15')) {
-    console.log('[DEBUG FORMULA OUTPUT] Raw formula string length:', rawFormulaString.length);
-    // Find the calltime value in the raw string for 11/15 event
-    const calltimeMatch = rawFormulaString.match(/"calltime":"([^"]*2025-11-15[^"]*)"/);
-    if (calltimeMatch) {
-      console.log('[DEBUG FORMULA OUTPUT] Raw calltime from formula string:', calltimeMatch[1]);
-    }
-  }
   
   try {
     events = JSON.parse(rawFormulaString || '[]');
-    // DEBUG: Log raw calltime values from database for 11/15 event
-    if (events && Array.isArray(events)) {
-      events.forEach(event => {
-        if (event.event_name && event.event_name.includes('Pacific Palisades')) {
-          console.log('[DEBUG RAW FROM DB] Event:', event.event_name);
-          console.log('[DEBUG RAW FROM DB] Raw calltime from JSON:', event.calltime);
-          console.log('[DEBUG RAW FROM DB] Raw calltime type:', typeof event.calltime);
-          console.log('[DEBUG RAW FROM DB] Raw event_date from JSON:', event.event_date);
-          console.log('[DEBUG RAW FROM DB] Full event JSON:', JSON.stringify(event, null, 2));
-        }
-      });
-    }
   } catch (e) {
     console.error('Error parsing Events JSON:', calendarData.Events?.formula?.string?.substring(0, 100));
     throw new Error(`Events JSON parse error: ${e.message}`);
