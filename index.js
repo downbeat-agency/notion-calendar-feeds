@@ -2795,8 +2795,8 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     // Cache the ICS data
     if (redis && cacheEnabled) {
       const cacheKey = `calendar:${personId}:ics`;
-      await redis.setEx(cacheKey, CACHE_TTL, icsData);
-      verboseLog(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, TTL: ${CACHE_TTL}s)`);
+      await redis.set(cacheKey, icsData);
+      verboseLog(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, persists until refresh)`);
     }
     await markRecentlyRegenerated(personId);
     await writeRegenJob(personId, 'succeeded', { trigger });
@@ -2983,7 +2983,7 @@ function startBackgroundJob() {
             });
             
             const icsData = calendar.toString();
-            await redis.setEx('calendar:admin:ics', CACHE_TTL, icsData);
+            await redis.set('calendar:admin:ics', icsData);
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -2991,7 +2991,7 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await redis.setEx('calendar:admin:json', CACHE_TTL, jsonData);
+            await redis.set('calendar:admin:json', jsonData);
             
             console.log(`✅ Admin calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -3034,7 +3034,7 @@ function startBackgroundJob() {
             });
             
             const icsData = calendar.toString();
-            await redis.setEx('calendar:travel:ics', CACHE_TTL, icsData);
+            await redis.set('calendar:travel:ics', icsData);
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -3042,7 +3042,7 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await redis.setEx('calendar:travel:json', CACHE_TTL, jsonData);
+            await redis.set('calendar:travel:json', jsonData);
             
             console.log(`✅ Travel calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -3079,13 +3079,13 @@ function startBackgroundJob() {
               });
             });
             const icsData = calendar.toString();
-            await redis.setEx('calendar:blockout:ics', CACHE_TTL, icsData);
+            await redis.set('calendar:blockout:ics', icsData);
             const jsonData = JSON.stringify({
               calendar_name: 'Blockout Calendar',
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await redis.setEx('calendar:blockout:json', CACHE_TTL, jsonData);
+            await redis.set('calendar:blockout:json', jsonData);
             console.log(`✅ Blockout calendar cached (${allCalendarEvents.length} events)`);
           }
         } catch (blockoutError) {
@@ -4252,7 +4252,7 @@ app.get('/', (_req, res) => {
       regenerate_all: '/regenerate-all'
     },
     cache: {
-      ttl: `${CACHE_TTL} seconds (2 hours)`,
+      ttl: 'persistent (until next refresh or manual clear)',
       status: cacheEnabled ? 'enabled' : 'disabled'
     },
     backgroundJob: {
@@ -6866,8 +6866,8 @@ app.get('/admin/calendar', async (req, res) => {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
-          verboseLog(`💾 Cached admin calendar JSON (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, jsonData);
+          verboseLog('💾 Cached admin calendar JSON (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -6904,8 +6904,8 @@ app.get('/admin/calendar', async (req, res) => {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, icsData);
-          verboseLog(`💾 Cached admin calendar ICS (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, icsData);
+          verboseLog('💾 Cached admin calendar ICS (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -6987,8 +6987,8 @@ app.get('/admin/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await redis.setEx('calendar:admin:ics', CACHE_TTL, icsData);
-        await redis.setEx('calendar:admin:json', CACHE_TTL, jsonData);
+        await redis.set('calendar:admin:ics', icsData);
+        await redis.set('calendar:admin:json', jsonData);
         console.log(`💾 Admin calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -7152,8 +7152,8 @@ app.get('/travel/calendar', async (req, res) => {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
-          verboseLog(`💾 Cached travel calendar JSON (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, jsonData);
+          verboseLog('💾 Cached travel calendar JSON (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -7190,8 +7190,8 @@ app.get('/travel/calendar', async (req, res) => {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, icsData);
-          verboseLog(`💾 Cached travel calendar ICS (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, icsData);
+          verboseLog('💾 Cached travel calendar ICS (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -7273,8 +7273,8 @@ app.get('/travel/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await redis.setEx('calendar:travel:ics', CACHE_TTL, icsData);
-        await redis.setEx('calendar:travel:json', CACHE_TTL, jsonData);
+        await redis.set('calendar:travel:ics', icsData);
+        await redis.set('calendar:travel:json', jsonData);
         console.log(`💾 Travel calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -7438,8 +7438,8 @@ app.get('/blockout/calendar', async (req, res) => {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, jsonData);
-          verboseLog(`💾 Cached blockout calendar JSON (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, jsonData);
+          verboseLog('💾 Cached blockout calendar JSON (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -7476,8 +7476,8 @@ app.get('/blockout/calendar', async (req, res) => {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, icsData);
-          verboseLog(`💾 Cached blockout calendar ICS (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, icsData);
+          verboseLog('💾 Cached blockout calendar ICS (persistent)');
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -7559,8 +7559,8 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await redis.setEx('calendar:blockout:ics', CACHE_TTL, icsData);
-        await redis.setEx('calendar:blockout:json', CACHE_TTL, jsonData);
+        await redis.set('calendar:blockout:ics', icsData);
+        await redis.set('calendar:blockout:json', jsonData);
         console.log(`💾 Blockout calendar cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -8602,8 +8602,8 @@ END:VCALENDAR`);
       // Cache the ICS data (if enabled)
       if (redis && cacheEnabled) {
         try {
-          await redis.setEx(cacheKey, CACHE_TTL, icsData);
-          verboseLog(`💾 Cached ICS for ${personId} (TTL: ${CACHE_TTL}s)`);
+          await redis.set(cacheKey, icsData);
+          verboseLog(`💾 Cached ICS for ${personId} (persistent)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -8633,8 +8633,8 @@ END:VCALENDAR`);
     // Cache the JSON data (if enabled)
     if (redis && cacheEnabled) {
       try {
-        await redis.setEx(cacheKey, CACHE_TTL, JSON.stringify(jsonResponse));
-        verboseLog(`💾 Cached JSON for ${personId} (TTL: ${CACHE_TTL}s)`);
+        await redis.set(cacheKey, JSON.stringify(jsonResponse));
+        verboseLog(`💾 Cached JSON for ${personId} (persistent)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
       }
