@@ -361,17 +361,11 @@ const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
-const PERSONNEL_REGEN_CONCURRENCY = Number(process.env.PERSONNEL_REGEN_CONCURRENCY || 1);
-const REGEN_LOCK_TTL_SECONDS = Number(process.env.REGEN_LOCK_TTL_SECONDS || 240);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
 let notionFailureTimestamps = [];
 let notionCircuitOpenUntil = 0;
-let personnelRegenActive = 0;
-const personnelRegenQueue = [];
-const personnelRegenTaskByPersonId = new Map();
-const recentRegenUntilByPersonId = new Map();
 
 function isGatewayTimeoutError(error) {
   const message = String(error?.message || '').toLowerCase();
@@ -570,11 +564,6 @@ async function mapWithConcurrency(items, concurrency, worker) {
 const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 55000); // hard per-person budget
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 45000);
 const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 10000);
-const REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS = Number(process.env.REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS || 3);
-const REGEN_JOB_TTL_SECONDS = Number(process.env.REGEN_JOB_TTL_SECONDS || 900);
-const REGEN_RECENT_SKIP_MS = Number(process.env.REGEN_RECENT_SKIP_MS || (CACHE_TTL * 1000));
-const REGEN_WAIT_TIMEOUT_MS = Number(process.env.REGEN_WAIT_TIMEOUT_MS || 180000);
-const REGEN_WAIT_POLL_MS = Number(process.env.REGEN_WAIT_POLL_MS || 3000);
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -591,208 +580,6 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
 
 function getRemainingMs(deadlineTs) {
   return deadlineTs - Date.now();
-}
-
-function getRegenJobKey(personId) {
-  return `regen:job:${personId}`;
-}
-
-function getRegenLockKey(personId) {
-  return `regenerate:lock:${personId}`;
-}
-
-function getRecentRegenKey(personId) {
-  return `regen:recent:${personId}`;
-}
-
-async function markRecentlyRegenerated(personId) {
-  const ttlSeconds = Math.max(1, Math.ceil(REGEN_RECENT_SKIP_MS / 1000));
-  const untilTs = Date.now() + REGEN_RECENT_SKIP_MS;
-  try {
-    if (redis && cacheEnabled) {
-      await redis.setEx(getRecentRegenKey(personId), ttlSeconds, String(untilTs));
-      return;
-    }
-  } catch (error) {
-    console.warn(`⚠️ Failed to persist recent-regeneration marker for ${personId}: ${error.message}`);
-  }
-  recentRegenUntilByPersonId.set(personId, untilTs);
-}
-
-async function wasRecentlyRegenerated(personId) {
-  const now = Date.now();
-  if (redis && cacheEnabled) {
-    const raw = await redis.get(getRecentRegenKey(personId));
-    if (!raw) return false;
-    const untilTs = Number(raw);
-    return Number.isFinite(untilTs) ? untilTs > now : true;
-  }
-  const untilTs = recentRegenUntilByPersonId.get(personId);
-  if (!untilTs) return false;
-  if (untilTs <= now) {
-    recentRegenUntilByPersonId.delete(personId);
-    return false;
-  }
-  return true;
-}
-
-async function readRegenJob(personId) {
-  if (!redis || !cacheEnabled) return null;
-  const raw = await redis.get(getRegenJobKey(personId));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-async function writeRegenJob(personId, state, patch = {}) {
-  if (!redis || !cacheEnabled) return null;
-  const nowIso = new Date().toISOString();
-  const existing = await readRegenJob(personId);
-  const next = {
-    personId,
-    state,
-    startedAt: state === 'running' ? (existing?.startedAt || nowIso) : (existing?.startedAt || null),
-    updatedAt: nowIso,
-    finishedAt: (state === 'succeeded' || state === 'failed') ? nowIso : null,
-    attempt: typeof patch.attempt === 'number'
-      ? patch.attempt
-      : (existing?.attempt || 0) + (state === 'running' ? 1 : 0),
-    trigger: patch.trigger || existing?.trigger || 'unknown',
-    error: patch.error || null
-  };
-  await redis.setEx(getRegenJobKey(personId), REGEN_JOB_TTL_SECONDS, JSON.stringify(next));
-  return next;
-}
-
-async function isRegenRunning(personId) {
-  if (!redis || !cacheEnabled) return false;
-  const job = await readRegenJob(personId);
-  return job?.state === 'running';
-}
-
-async function waitForRegenToFinish(personId, options = {}) {
-  const timeoutMs = Number(options.timeoutMs || REGEN_WAIT_TIMEOUT_MS);
-  const pollMs = Number(options.pollMs || REGEN_WAIT_POLL_MS);
-  const startTs = Date.now();
-  let lastJob = null;
-
-  while (Date.now() - startTs < timeoutMs) {
-    lastJob = await readRegenJob(personId);
-    if (lastJob?.state === 'succeeded' || lastJob?.state === 'failed') {
-      return { done: true, timedOut: false, job: lastJob };
-    }
-    await sleep(pollMs);
-  }
-
-  lastJob = await readRegenJob(personId);
-  return { done: false, timedOut: true, job: lastJob };
-}
-
-async function schedulePersonnelRegeneration(personId, trigger) {
-  const existingTask = personnelRegenTaskByPersonId.get(personId);
-  if (existingTask) {
-    return existingTask;
-  }
-  const task = new Promise((resolve) => {
-    personnelRegenQueue.push({ personId, trigger, resolve });
-    if (personnelRegenQueue.length % 25 === 0) {
-      console.warn(`⚠️ Personnel regeneration queue backlog: pending=${personnelRegenQueue.length}, active=${personnelRegenActive}, concurrency=${PERSONNEL_REGEN_CONCURRENCY}`);
-    }
-    drainPersonnelRegenQueue();
-  });
-  personnelRegenTaskByPersonId.set(personId, task);
-  task.finally(() => {
-    personnelRegenTaskByPersonId.delete(personId);
-  });
-  return task;
-}
-
-function isRetryableRegenFailure(result) {
-  if (!result || result.success) return false;
-  const errorText = String(result.error || result.reason || '').toLowerCase();
-  return (
-    errorText.includes('timed out') ||
-    errorText.includes('timeout') ||
-    errorText.includes('504') ||
-    errorText.includes('gateway')
-  );
-}
-
-async function runRegenerationWithRequiredSuccess(personId, trigger) {
-  let attempt = 0;
-  let lastResult = null;
-  const maxAttempts = Math.max(1, REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS);
-
-  while (attempt < maxAttempts) {
-    attempt += 1;
-    lastResult = await regenerateCalendarForPerson(personId, { trigger });
-    if (lastResult?.success) {
-      return lastResult;
-    }
-    if (lastResult?.reason === 'no_events' || !isRetryableRegenFailure(lastResult)) {
-      return lastResult;
-    }
-    console.warn(`⚠️ Retrying personnel regeneration for ${personId} after retryable failure (attempt ${attempt}/${maxAttempts})`);
-  }
-
-  return lastResult || { success: false, personId, error: 'Unknown regeneration failure' };
-}
-
-function drainPersonnelRegenQueue() {
-  while (personnelRegenActive < PERSONNEL_REGEN_CONCURRENCY && personnelRegenQueue.length > 0) {
-    const next = personnelRegenQueue.shift();
-    if (!next) break;
-    personnelRegenActive += 1;
-    Promise.resolve()
-      .then(() => runRegenerationWithRequiredSuccess(next.personId, next.trigger))
-      .then(result => next.resolve(result))
-      .catch(error => next.resolve({ success: false, personId: next.personId, error: error?.message || 'Unknown regeneration error' }))
-      .finally(() => {
-        personnelRegenActive = Math.max(0, personnelRegenActive - 1);
-        if (personnelRegenQueue.length > 0) {
-          setImmediate(drainPersonnelRegenQueue);
-        }
-      });
-  }
-}
-
-async function runRegeneration(personId, options = {}) {
-  const { trigger = 'unknown', waitForCompletion = true } = options;
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'personnel_regen_compare',hypothesisId:'H1',location:'index.js:runRegeneration:entry',message:'runRegeneration invoked',data:{personId,trigger,waitForCompletion},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  const isBackgroundTrigger = trigger === 'background_cycle' || trigger === 'bulk_regen';
-  if (isBackgroundTrigger && await wasRecentlyRegenerated(personId)) {
-    return { success: true, personId, reason: 'recently_regenerated_skipped' };
-  }
-  if (waitForCompletion) {
-    return schedulePersonnelRegeneration(personId, trigger);
-  }
-  schedulePersonnelRegeneration(personId, trigger).catch(err => {
-    console.error(`Background regeneration failed for ${personId}:`, err?.message || err);
-  });
-  return { success: true, personId, reason: 'started' };
-}
-
-async function triggerBackgroundRegeneration(personId, reason = 'unknown') {
-  try {
-    if (isNotionCircuitOpen()) {
-      console.log(`⏸️  Skipping background regeneration for ${personId} (${reason}) while Notion circuit is open`);
-      return false;
-    }
-    if (await isRegenRunning(personId)) {
-      console.log(`⏭️  Background regeneration already in progress for ${personId} (${reason})`);
-      return false;
-    }
-    await runRegeneration(personId, { trigger: `background:${reason}`, waitForCompletion: false });
-    return true;
-  } catch (error) {
-    console.error(`Failed to trigger background regeneration for ${personId}:`, error.message);
-    return false;
-  }
 }
 
 let calendarDataPropertyIdCache = null;
@@ -1918,49 +1705,34 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
   return null;
 }
 
-// Helper function to regenerate calendar for a single person
+// Helper function to rebuild and cache a single person's calendar.
 async function regenerateCalendarForPerson(personId, options = {}) {
-  const { trigger = 'unknown' } = options;
-  const lockKey = getRegenLockKey(personId);
-  let lockAcquired = false;
+  const { trigger = 'unknown', clearCache = false } = options;
   const regenStartedAt = Date.now();
 
   try {
     if (isNotionCircuitOpen()) {
       const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
       const reason = `Notion circuit open (${waitMs}ms remaining)`;
-      await writeRegenJob(personId, 'failed', { trigger, error: reason });
       return { success: false, personId, error: reason };
     }
-    console.log(`🔄 Regenerating calendar for ${personId}...`);
-    if (redis && cacheEnabled) {
-      const lockResult = await redis.set(lockKey, '1', { NX: true, EX: REGEN_LOCK_TTL_SECONDS });
-      if (!lockResult) {
-        console.log(`⏭️  Regeneration lock active for ${personId}, skipping duplicate run.`);
-        let job = await readRegenJob(personId);
-        if (!job) {
-          job = await writeRegenJob(personId, 'running', { trigger });
-        }
-        return { success: false, personId, reason: 'already_in_progress', job };
-      }
-      lockAcquired = true;
+    console.log(`🔄 Rebuilding calendar for ${personId}...`);
+    if (clearCache && redis && cacheEnabled) {
+      await redis.del(`calendar:${personId}:ics`);
+      await redis.del(`calendar:${personId}:json`);
     }
 
-    await writeRegenJob(personId, 'running', { trigger });
-    
-    // Keep last-good cache in place until successful rebuild.
-    // Enforce a hard regeneration time budget to prevent indefinite in_progress state.
+    // Enforce a hard rebuild time budget to prevent indefinite requests.
     const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
     const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
     const calendarData = await withTimeout(
       getCalendarDataFromDatabase(personId, { maxRetries: 6 }),
       fetchTimeoutMs,
-      'Regeneration calendar-data fetch timed out'
+      'Personnel calendar-data fetch timed out'
     );
 
     if (!calendarData) {
       console.log(`⚠️  No calendar data found for ${personId}, skipping...`);
-      await writeRegenJob(personId, 'failed', { trigger, error: 'No events found' });
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -1981,7 +1753,6 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     if (!hasAnySourceData) {
       console.warn(`⚠️  No source event data for ${personId}: events=${eventsArray.length}, flights=${topLevelFlights.length}, rehearsals=${topLevelRehearsals.length}, hotels=${topLevelHotels.length}, transport=${topLevelTransport.length}, team=${topLevelTeamCalendar.length}`);
-      await writeRegenJob(personId, 'failed', { trigger, error: 'No events found' });
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -1990,7 +1761,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const person = await withTimeout(
       retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), 6),
       personFetchTimeoutMs,
-      'Regeneration person fetch timed out'
+      'Personnel person fetch timed out'
     );
     const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
     const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
@@ -2791,17 +2562,40 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     });
 
     const icsData = calendar.toString();
-    
-    // Cache the ICS data
-    if (redis && cacheEnabled) {
-      const cacheKey = `calendar:${personId}:ics`;
-      await redis.set(cacheKey, icsData);
-      verboseLog(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, persists until refresh)`);
-    }
-    await markRecentlyRegenerated(personId);
-    await writeRegenJob(personId, 'succeeded', { trigger });
 
-    return { success: true, personId, personName, eventCount: allCalendarEvents.length };
+    const jsonResponse = {
+      personName,
+      totalMainEvents: eventsArray.length,
+      totalCalendarEvents: allCalendarEvents.length,
+      dataSource: 'calendar_data_database',
+      breakdown: {
+        mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
+        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
+        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
+        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
+      },
+      events: allCalendarEvents
+    };
+    const jsonData = JSON.stringify(jsonResponse);
+
+    // Cache both formats.
+    if (redis && cacheEnabled) {
+      await redis.set(`calendar:${personId}:ics`, icsData);
+      await redis.set(`calendar:${personId}:json`, jsonData);
+      verboseLog(`✅ Cached calendar for ${personName} (${allCalendarEvents.length} events, persists until refresh)`);
+    }
+
+    return {
+      success: true,
+      personId,
+      personName,
+      eventCount: allCalendarEvents.length,
+      icsData,
+      jsonData,
+      jsonResponse,
+      allCalendarEvents
+    };
     
   } catch (error) {
     const elapsedMs = Date.now() - regenStartedAt;
@@ -2810,16 +2604,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'personnel_regen_compare',hypothesisId:'H2',location:'index.js:regenerateCalendarForPerson:catch',message:'Personnel regeneration failed',data:{personId,trigger,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-    await writeRegenJob(personId, 'failed', { trigger, error: error.message || 'Unknown regeneration error' });
     return { success: false, personId, error: error.message };
-  } finally {
-    if (lockAcquired && redis && cacheEnabled) {
-      try {
-        await redis.del(lockKey);
-      } catch (lockError) {
-        console.error(`Failed to clear regeneration lock for ${personId}:`, lockError.message);
-      }
-    }
   }
 }
 
@@ -2842,7 +2627,7 @@ async function regenerateAllCalendars() {
 
     const allResults = await mapWithConcurrency(personIds, concurrency, async (personId) => {
       try {
-        return await runRegeneration(personId, { trigger: 'bulk_regen', waitForCompletion: true });
+        return await regenerateCalendarForPerson(personId, { trigger: 'bulk_regen' });
       } catch (error) {
         console.error(`❌ Failed to process ${personId}:`, error.message);
         return { success: false, personId, error: error.message };
@@ -2850,8 +2635,8 @@ async function regenerateAllCalendars() {
     });
 
     const totalSuccess = allResults.filter(r => r.success).length;
-    const totalSkipped = allResults.filter(r => r.reason === 'no_events' || r.reason === 'recently_regenerated_skipped').length;
-    const totalFailed = allResults.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'recently_regenerated_skipped').length;
+    const totalSkipped = allResults.filter(r => r.reason === 'no_events').length;
+    const totalFailed = allResults.filter(r => !r.success && r.reason !== 'no_events').length;
     const totalTime = Math.round((Date.now() - startTime) / 1000);
 
     console.log(`\n✅ Regeneration complete in ${totalTime}s`);
@@ -2884,7 +2669,6 @@ let isBackgroundCycleRunning = false;
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
-  console.log(`   Personnel regeneration worker concurrency=${PERSONNEL_REGEN_CONCURRENCY}`);
   
   setInterval(async () => {
     const cycleId = `bg_${++backgroundCycleSeq}`;
@@ -2929,15 +2713,15 @@ function startBackgroundJob() {
       
       const results = await mapWithConcurrency(personIds, BACKGROUND_REGEN_CONCURRENCY, async (personId) => {
         try {
-          return await runRegeneration(personId, { trigger: 'background_cycle', waitForCompletion: true });
+          return await regenerateCalendarForPerson(personId, { trigger: 'background_cycle' });
         } catch (error) {
           return { success: false, personId, error: error.message };
         }
       });
 
       const totalSuccess = results.filter(r => r.success).length;
-      const totalSkipped = results.filter(r => r.reason === 'no_events' || r.reason === 'recently_regenerated_skipped').length;
-      const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'recently_regenerated_skipped').length;
+      const totalSkipped = results.filter(r => r.reason === 'no_events').length;
+      const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events').length;
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background personnel cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:personIds.length,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
@@ -4854,64 +4638,29 @@ app.get('/regenerate/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Run regeneration synchronously (same style as admin/calendar/regen)
-    const result = await runRegeneration(personId, { trigger: 'manual_regen', waitForCompletion: true });
+    const result = await regenerateCalendarForPerson(personId, {
+      trigger: 'manual_regen',
+      clearCache: true
+    });
     if (result.success) {
       return res.json({
         success: true,
         message: 'Calendar regenerated successfully',
         personId,
         personName: result.personName,
-        eventCount: result.eventCount
+        eventCount: result.eventCount,
+        cache_cleared: true,
+        cached_for_seconds: CACHE_TTL
       });
     }
-
-    const reason = result.reason || 'unknown';
-    const waitIfRunning = req.query.wait !== 'false';
-
-    if (reason === 'already_in_progress' && waitIfRunning && redis && cacheEnabled) {
-      const waited = await waitForRegenToFinish(personId);
-      if (waited.done && waited.job?.state === 'succeeded') {
-        return res.json({
-          success: true,
-          message: 'Calendar regenerated successfully',
-          personId,
-          waitedForExistingRun: true,
-          job: waited.job
-        });
-      }
-      if (waited.done && waited.job?.state === 'failed') {
-        return res.status(500).json({
-          success: false,
-          message: 'Calendar regeneration failed',
-          personId,
-          reason: 'failed',
-          waitedForExistingRun: true,
-          job: waited.job,
-          details: waited.job?.error || null
-        });
-      }
-      return res.status(202).json({
-        success: true,
-        message: 'Calendar regeneration still running',
-        personId,
-        reason: 'already_in_progress',
-        waitedForExistingRun: true,
-        timedOutWaiting: true,
-        job: waited.job || result.job || null
-      });
-    }
-
-    const statusCode = reason === 'already_in_progress' ? 202 : 500;
-    const message = reason === 'already_in_progress'
-      ? 'Calendar regeneration already running'
-      : 'Calendar regeneration failed';
+    const statusCode = result.reason === 'no_events' ? 404 : 500;
     return res.status(statusCode).json({
-      success: reason === 'already_in_progress',
-      message,
+      success: false,
+      message: result.reason === 'no_events'
+        ? 'No events found for this person'
+        : 'Calendar regeneration failed',
       personId,
-      reason,
-      job: result.job || null,
+      reason: result.reason || 'unknown',
       details: result.error || null
     });
   } catch (error) {
@@ -4924,63 +4673,12 @@ app.get('/regenerate/:personId', async (req, res) => {
   }
 });
 
-// Status endpoint to check regeneration progress
 app.get('/regenerate/:personId/status', async (req, res) => {
-  try {
-    let { personId } = req.params;
-    
-    // Convert personId to proper UUID format if needed
-    if (personId.length === 32 && !personId.includes('-')) {
-      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
-    }
-
-    const job = await readRegenJob(personId);
-    if (job) {
-      const messageByState = {
-        running: 'Regeneration in progress',
-        succeeded: 'Regeneration completed',
-        failed: 'Regeneration failed',
-        idle: 'Regeneration idle'
-      };
-      return res.json({
-        success: true,
-        personId,
-        status: job.state,
-        message: messageByState[job.state] || 'Unknown status',
-        job
-      });
-    }
-
-    // If no status found, check if calendar exists in cache
-    const cacheKey = `calendar:${personId}:ics`;
-    if (redis && cacheEnabled) {
-      const cached = await redis.exists(cacheKey);
-      if (cached) {
-        return res.json({
-          success: true,
-          personId: personId,
-          status: 'idle',
-          message: 'No active regeneration. Calendar is cached.',
-          cached: true
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      personId: personId,
-      status: 'idle',
-      message: 'No active regeneration and no recent job record found.',
-      cached: false
-    });
-  } catch (error) {
-    console.error('Status endpoint error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Error checking regeneration status',
-      details: error.message
-    });
-  }
+  res.status(410).json({
+    success: false,
+    error: 'Regeneration status endpoint retired',
+    message: 'Personnel regeneration now runs synchronously. Call /regenerate/:personId directly instead.'
+  });
 });
 
 // Regeneration endpoint - regenerate all calendars
@@ -7652,7 +7350,6 @@ app.get('/calendar/:personId', async (req, res) => {
     // Check Redis cache first (if enabled, unless ?fresh=true is specified)
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:${personId}:${shouldReturnICS ? 'ics' : 'json'}`;
-    let calendarData = null; // Store fetched data to avoid duplicate fetches
     
     if (forceFresh && redis && cacheEnabled) {
       const icsKey = `calendar:${personId}:ics`;
@@ -7684,43 +7381,8 @@ app.get('/calendar/:personId', async (req, res) => {
           `cache_miss:person:${personId}:${shouldReturnICS ? 'ics' : 'json'}`,
           `❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`
         );
-
-        const running = await isRegenRunning(personId);
-        if (!running) {
-          await runRegeneration(personId, {
-            trigger: 'calendar_cache_miss',
-            waitForCompletion: false
-          });
-        } else {
-          logWithDedup(
-            `regen_in_progress:${personId}`,
-            `⏭️  Regeneration already running for ${personId}; not launching duplicate`
-          );
-        }
-
-        if (shouldReturnICS) {
-          res.setHeader('Content-Type', 'text/calendar');
-          return res.status(503).send(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Calendar Feed//EN
-BEGIN:VEVENT
-DTSTART:19900101T000000Z
-DTEND:19900101T000000Z
-SUMMARY:Calendar is being regenerated
-DESCRIPTION:Your calendar is being regenerated. Please try again in a few moments.
-END:VEVENT
-END:VCALENDAR`);
-        }
-        return res.status(503).json({
-          error: 'Calendar cache is empty',
-          message: running
-            ? 'Your calendar is already regenerating in the background. Please try again shortly.'
-            : 'Your calendar is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
-          retryAfter: 120
-        });
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
-        // Continue without cache if Redis fails
       }
     }
     
@@ -7732,915 +7394,26 @@ END:VCALENDAR`);
       });
     }
     
-    // Only reach here if cache is disabled or forceFresh=true, or if quick fetch already succeeded
-    // If we already have calendarData from quick fetch, skip this
-    if (!calendarData) {
-      try {
-        // Set a timeout promise that rejects after 55 seconds (before Railway's 60s limit)
-        const DIRECT_FETCH_TIMEOUT_MS = 55000;
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Notion API query timeout')), DIRECT_FETCH_TIMEOUT_MS);
-        });
-        
-        calendarData = await Promise.race([
-          getCalendarDataFromDatabase(personId, { maxRetries: 6 }),
-          timeoutPromise
-        ]);
-    } catch (error) {
-      if (error.message === 'Notion API query timeout') {
-        console.error(`⏱️  Notion query timeout for ${personId}, triggering background regeneration...`);
-        await triggerBackgroundRegeneration(personId, 'direct_fetch_timeout');
-        
-        if (shouldReturnICS) {
-          res.setHeader('Content-Type', 'text/calendar');
-          return res.status(503).send(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Calendar Feed//EN
-BEGIN:VEVENT
-DTSTART:19900101T000000Z
-DTEND:19900101T000000Z
-SUMMARY:Calendar generation in progress
-DESCRIPTION:Calendar generation is taking longer than expected. Please try again in a few moments.
-END:VEVENT
-END:VCALENDAR`);
-        } else {
-          return res.status(503).json({
-            error: 'Calendar generation timeout',
-            message: 'Calendar generation is taking longer than expected. It is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
-            retryAfter: 120
-          });
-        }
-      }
-      throw error;
-    }
-    }
-    
-    if (!calendarData) {
-      return res.status(404).json({ 
-        error: 'No events found',
-        message: 'No calendar data found in Calendar Data database for this person'
-      });
-    }
-    
-    const events = calendarData;
-    const eventsArray = Array.isArray(events) ? events : events.events || [];
-    const topLevelFlights = events.flights || [];
-    const topLevelRehearsals = events.rehearsals || [];
-    const topLevelHotels = events.hotels || [];
-    const topLevelTransport = events.ground_transport || [];
-    const topLevelTeamCalendar = events.team_calendar || [];
-    const hasAnySourceData =
-      eventsArray.length > 0 ||
-      topLevelFlights.length > 0 ||
-      topLevelRehearsals.length > 0 ||
-      topLevelHotels.length > 0 ||
-      topLevelTransport.length > 0 ||
-      topLevelTeamCalendar.length > 0;
-    if (!hasAnySourceData) {
-      return res.status(404).json({
-        error: 'No events found',
-        message: 'No usable event data found in Calendar Data database for this person'
-      });
-    }
-    
-    // Get person name from Personnel database
-    const person = await notion.pages.retrieve({ page_id: personId });
-    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
-    const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
-    
-    console.log(`Using Calendar Data database for ${personName} (${eventsArray.length} events)`);
-
-    // Process events into calendar format (same logic as before)
-    const allCalendarEvents = [];
-    
-    eventsArray.forEach(event => {
-      let helperDeltaDays = 0;
-      // Add main event (using same logic as before)
-      if (event.event_name && event.event_date) {
-        const mainEventTimeResult = resolveMainEventTimes(event.event_date, event.calltime);
-        const alignmentResult = alignEventTimesToDateHelper(event, mainEventTimeResult.eventTimes);
-        const eventTimes = alignmentResult.eventTimes;
-        helperDeltaDays = alignmentResult.helperDeltaDays || 0;
-        
-        if (eventTimes) {
-          // Build payroll info for description (put at TOP)
-          let payrollInfo = '';
-          
-          // Use direct fields from Calendar Data database
-          const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
-          const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
-          const payTotalRaw = event.pay_total;
-          const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
-          const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
-          const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
-          const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
-
-          if (hasPosition || hasAssignments || hasPayTotal) {
-            if (hasPosition) {
-              payrollInfo += `Position: ${positionValue}\n`;
-            }
-            if (hasAssignments) {
-              payrollInfo += `Assignments: ${assignmentsValue}\n`;
-            }
-            if (hasPayTotal) {
-              const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
-              payrollInfo += `Pay: ${payDisplay}\n`;
-            }
-            payrollInfo += '\n'; // Add spacing after position info
-          }
-
-          // Build calltime info (after payroll, before general info)
-          let calltimeInfo = '';
-          if (event.calltime) {
-            const displayCalltime = alignmentResult.helperClockCorrected
-              ? formatFloatingTimeFromDate(eventTimes.start)
-              : formatCallTime(event.calltime);
-            calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
-          }
-
-          // Build gear checklist info (after calltime, before personnel)
-          let gearChecklistInfo = '';
-          if (event.gear_checklist && event.gear_checklist.trim()) {
-            gearChecklistInfo = `🔧 Gear Checklist: ${event.gear_checklist}\n\n`;
-          }
-
-          // Build event personnel info (after gear checklist, before general info)
-          let eventPersonnelInfo = '';
-          if (event.event_personnel && event.event_personnel.trim()) {
-            eventPersonnelInfo = `👥 Event Personnel:\n${event.event_personnel}\n\n`;
-          }
-
-          // Build Notion URL info (after personnel, before general info)
-          let notionUrlInfo = '';
-          if (event.notion_url && event.notion_url.trim()) {
-            notionUrlInfo = `Notion Link: ${event.notion_url}\n\n`;
-          }
-
-          allCalendarEvents.push({
-            type: 'main_event',
-            title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
-            start: eventTimes.start,
-            end: eventTimes.end,
-            description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''),
-            location: event.venue_address || event.venue || '',
-            band: event.band || '',
-            mainEvent: event.event_name
-        });
-        }
-      }
-      
-      // Add flight events (same logic as before)
-      if (event.flights && Array.isArray(event.flights)) {
-        event.flights.forEach(flight => {
-          // Departure flight
-          if (flight.departure_time && flight.departure_name) {
-            let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
-            if (!departureTimes) {
-              // Fallback to old format
-              departureTimes = {
-                start: flight.departure_time,
-                end: flight.departure_arrival_time || flight.departure_time
-              };
-            }
-            departureTimes = shiftRangeByDays(departureTimes, helperDeltaDays);
-
-            // Generate countdown URL for flight departure
-            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
-            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
-            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
-            const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
-            const countdownUrl = generateFlightCountdownUrl({
-              flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTimeRange,
-              airline: flight.departure_airline || 'N/A',
-              route: route,
-              confirmation: flight.confirmation || 'N/A',
-              departureCode: flight.departure_airport || 'N/A',
-              arrivalCode: flight.return_airport || 'N/A',
-              departureName: flight.departure_airport_name || 'N/A',
-              arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
-            }, 'departure');
-
-            allCalendarEvents.push({
-              type: 'flight_departure',
-              title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
-              start: departureTimes.start,
-              end: departureTimes.end,
-              description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`,
-              location: flight.departure_airport_address || flight.departure_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.departure_airline || '',
-              flightNumber: flight.departure_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: event.event_name
-            });
-          }
-
-          // Return flight
-          if (flight.return_time && flight.return_name) {
-            let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
-            if (!returnTimes) {
-              // Fallback to old format
-              returnTimes = {
-                start: flight.return_time,
-                end: flight.return_arrival_time || flight.return_time
-              };
-            }
-            returnTimes = shiftRangeByDays(returnTimes, helperDeltaDays);
-
-            // Generate countdown URL for flight return
-            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
-            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
-            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
-            const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
-            const countdownUrl = generateFlightCountdownUrl({
-              flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTimeRange,
-              airline: flight.return_airline || 'N/A',
-              route: route,
-              confirmation: flight.confirmation || 'N/A',
-              departureCode: flight.return_airport || 'N/A',
-              arrivalCode: flight.departure_airport || 'N/A',
-              departureName: flight.return_airport_name || 'N/A',
-              arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
-            }, 'return');
-
-            allCalendarEvents.push({
-              type: 'flight_return',
-              title: `✈️ ${flight.return_name || 'Flight Return'}`,
-              start: returnTimes.start,
-              end: returnTimes.end,
-              description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`,
-              location: flight.return_airport_address || flight.return_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.return_airline || '',
-              flightNumber: flight.return_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: event.event_name
-            });
-          }
-
-          // Departure layover flight
-          if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
-            let departureLoTimes = parseUnifiedDateTime(flight.departure_lo_time);
-            if (!departureLoTimes) {
-              departureLoTimes = {
-                start: flight.departure_lo_time,
-                end: flight.departure_lo_time
-              };
-            }
-            departureLoTimes = shiftRangeByDays(departureLoTimes, helperDeltaDays);
-
-            allCalendarEvents.push({
-              type: 'flight_departure_layover',
-              title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`,
-              start: departureLoTimes.start,
-              end: departureLoTimes.end,
-              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}\nFrom: ${flight.departure_lo_from_airport || 'N/A'}\nTo: ${flight.departure_lo_to_airport || 'N/A'}`,
-              location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.departure_airline || '',
-              flightNumber: flight.departure_lo_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: event.event_name
-            });
-          }
-
-          // Return layover flight
-          if (flight.return_lo_time && flight.return_lo_flightnumber) {
-            let returnLoTimes = parseUnifiedDateTime(flight.return_lo_time);
-            if (!returnLoTimes) {
-              returnLoTimes = {
-                start: flight.return_lo_time,
-                end: flight.return_lo_time
-              };
-            }
-            returnLoTimes = shiftRangeByDays(returnLoTimes, helperDeltaDays);
-
-            allCalendarEvents.push({
-              type: 'flight_return_layover',
-              title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`,
-              start: returnLoTimes.start,
-              end: returnLoTimes.end,
-              description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}\nFrom: ${flight.return_lo_from_airport || 'N/A'}\nTo: ${flight.return_lo_to_airport || 'N/A'}`,
-              location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.return_airline || '',
-              flightNumber: flight.return_lo_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: event.event_name
-            });
-          }
-        });
-      }
-
-      // Add rehearsal events (same logic as before)
-      const nestedRehearsals = getNestedRehearsals(event);
-      if (nestedRehearsals.length > 0) {
-        nestedRehearsals.forEach(rehearsal => {
-          if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-            // Use the same parseUnifiedDateTime function as other event types
-            let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
-            rehearsalTimes = shiftRangeByDays(rehearsalTimes, helperDeltaDays);
-
-            // Build location string
-            let location = 'TBD';
-            if (rehearsal.rehearsal_location && rehearsal.rehearsal_address) {
-              location = `${rehearsal.rehearsal_location}, ${rehearsal.rehearsal_address}`;
-            } else if (rehearsal.rehearsal_location) {
-              location = rehearsal.rehearsal_location;
-            } else if (rehearsal.rehearsal_address) {
-              location = rehearsal.rehearsal_address;
-            }
-
-            // Build description with rehearsal info at the top
-            let description = rehearsal.description || `Rehearsal`;
-            if (rehearsal.rehearsal_pay) {
-              description += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
-            }
-            if (rehearsal.rehearsal_band) {
-              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-            }
-
-            allCalendarEvents.push({
-              type: 'rehearsal',
-              title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`,
-              start: rehearsalTimes.start,
-              end: rehearsalTimes.end,
-              description: description,
-              location: location,
-              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
-              mainEvent: event.event_name
-            });
-  }
-});
-      }
-
-      // Add hotel events (same logic as before)
-      if (event.hotels && Array.isArray(event.hotels)) {
-        event.hotels.forEach(hotel => {
-          // Try new dates_booked format first, then fallback to old check_in/check_out
-          let hotelTimes = null;
-          
-          if (hotel.dates_booked) {
-            hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
-          } else if (hotel.check_in && hotel.check_out) {
-            try {
-              const startParsed = parseUnifiedDateTime(hotel.check_in);
-              const endParsed = parseUnifiedDateTime(hotel.check_out);
-              if (startParsed && endParsed) {
-                hotelTimes = { start: startParsed.start, end: endParsed.end };
-              }
-            } catch (e) {
-              console.warn('Unable to parse hotel dates:', hotel.check_in, hotel.check_out);
-              return;
-            }
-          }
-          hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
-
-          if (hotelTimes) {
-            // Format names on reservation - each name on a separate line
-            let namesFormatted = 'N/A';
-            if (hotel.names_on_reservation) {
-              const names = hotel.names_on_reservation.split(',').map(n => n.trim()).filter(n => n);
-              if (names.length > 0) {
-                namesFormatted = '\n' + names.map(name => `${name}`).join('\n');
-              }
-            }
-
-            allCalendarEvents.push({
-              type: 'hotel',
-              title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
-              start: hotelTimes.start,
-              end: hotelTimes.end,
-              description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`,
-              location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
-              url: hotel.hotel_url || '',
-              confirmation: hotel.confirmation || '',
-              hotelName: hotel.hotel_name || '',
-              mainEvent: event.event_name
-            });
-          }
-        });
-      }
-
-      // Add ground transport events (same logic as before)
-      if (event.ground_transport && Array.isArray(event.ground_transport)) {
-        event.ground_transport.forEach(transport => {
-          if (transport.start) {
-            const startParsed = shiftRangeByDays(parseUnifiedDateTime(transport.start), helperDeltaDays);
-            const endParsed = transport.end ? shiftRangeByDays(parseUnifiedDateTime(transport.end), helperDeltaDays) : null;
-            if (!startParsed) {
-              return;
-            }
-
-            const startTime = new Date(startParsed.start);
-            const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime())
-              ? new Date(endParsed.end)
-              : new Date(startTime.getTime() + 30 * 60 * 1000);
-
-            // Format title to replace PICKUP/DROPOFF/MEET UP with proper capitalization
-            let formattedTitle = transport.title || 'Ground Transport';
-            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
-
-            // Build description based on event type using new property structure
-            let description = '';
-            
-            if (transport.description) {
-              const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
-              const passengerMatch = transport.description.match(/Passengers?:\s*([^\n]+)/);
-              const driverContent = driverMatch ? driverMatch[1].trim() : '';
-              const passengerContent = passengerMatch ? passengerMatch[1].trim() : '';
-              const isStructuredDriver = driverContent.startsWith('[');
-              const isStructuredPassenger = passengerContent.startsWith('[');
-              
-              if (driverMatch) {
-                if (isStructuredDriver) {
-                  const drivers = parseStructuredDriverLine('Driver: ' + driverContent);
-                  if (drivers.length > 0) {
-                    description += 'Drivers:\n';
-                    drivers.forEach(({ name, phone }) => {
-                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                } else {
-                  const driverPhones = parseDriverInfoFromDescription(transport.description);
-                  const drivers = driverContent.split(',').map(d => d.trim()).filter(d => d);
-                  if (drivers.length > 0) {
-                    description += 'Drivers:\n';
-                    drivers.forEach(driver => {
-                      const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
-                      const phone = driverPhones[firstName];
-                      description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              }
-              
-              if (passengerMatch) {
-                if (isStructuredPassenger) {
-                  const passengers = parseStructuredPassengerLine('Passengers: ' + passengerContent);
-                  if (passengers.length > 0) {
-                    description += 'Passengers:\n';
-                    passengers.forEach(({ name, phone }) => {
-                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                } else {
-                  const passengerPhones = parsePassengerInfoFromDescription(transport.description);
-                  const passengers = passengerContent.split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
-                  if (passengers.length > 0) {
-                    description += 'Passengers:\n';
-                    passengers.forEach(passenger => {
-                      const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
-                      const phone = passengerPhones[firstName]?.phone;
-                      description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              }
-              
-              if (transport.type === 'ground_transport_meeting') {
-                // Skip Meet Up Info - driver phone is under Drivers
-              } else if (transport.type === 'ground_transport_pickup') {
-                // For pickup events, look for "Pick Up Info" section
-                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (pickupInfoMatch) {
-                  const pickupInfo = pickupInfoMatch[1].trim();
-                  if (pickupInfo) {
-                    description += 'Pick Up Info:\n';
-                    formatTransportInfoLines(pickupInfo).forEach(line => {
-                      description += `• ${line}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              } else if (transport.type === 'ground_transport_dropoff') {
-                // For dropoff events, look for "Drop Off Info" section
-                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (dropoffInfoMatch) {
-                  const dropoffInfo = dropoffInfoMatch[1].trim();
-                  if (dropoffInfo) {
-                    description += 'Drop Off Info:\n';
-                    formatTransportInfoLines(dropoffInfo).forEach(line => {
-                      description += `• ${line}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              }
-              
-              // Add transportation URL if present
-    } else {
-              description = 'Ground transportation details';
-            }
-
-            allCalendarEvents.push({
-              type: transport.type || 'ground_transport',
-              title: `🚙 ${formattedTitle}`,
-              start: startTime,
-              end: endTime,
-              description: description.trim(),
-              location: transport.location || '',
-              url: transport.transportation_url || '',
-              mainEvent: event.event_name
-            });
-
-            // Note: Meetup events are now handled directly by the Notion formula as ground_transport_meeting events
-            // No need to parse Passenger Info for meetup events anymore
-          }
-        });
-      }
+    const result = await regenerateCalendarForPerson(personId, {
+      trigger: forceFresh ? 'calendar_fresh' : 'calendar_cache_miss'
     });
-    
-    // Process top-level arrays (for new data source)
-    // These arrays are shared across all events and should only be processed once
-    if (topLevelFlights.length > 0) {
-      topLevelFlights.forEach(flight => {
-        // Departure flight
-        if (flight.departure_time && flight.departure_name) {
-          let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
-          if (departureTimes) {
-            // Build description
-            let description = `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'} <-- hold for tracking`;
-            
-            // Generate countdown URL for flight departure
-            const departureTimeStart = departureTimes.start instanceof Date ? departureTimes.start.toISOString() : new Date(departureTimes.start).toISOString();
-            const departureTimeEnd = departureTimes.end instanceof Date ? departureTimes.end.toISOString() : new Date(departureTimes.end).toISOString();
-            const departureTimeRange = `${departureTimeStart}/${departureTimeEnd}`;
-            const route = `${flight.departure_airport || 'N/A'}-${flight.return_airport || 'N/A'}`;
-            const countdownUrl = generateFlightCountdownUrl({
-              flightNumber: flight.departure_flightnumber || 'N/A',
-              departureTime: departureTimeRange,
-              airline: flight.departure_airline || 'N/A',
-              route: route,
-              confirmation: flight.confirmation || 'N/A',
-              departureCode: flight.departure_airport || 'N/A',
-              arrivalCode: flight.return_airport || 'N/A',
-              departureName: flight.departure_airport_name || 'N/A',
-              arrivalName: flight.return_airport_name || 'N/A',
-              flight_url: flight.flight_url
-            }, 'departure');
-
-            allCalendarEvents.push({
-              type: 'flight_departure',
-              title: `✈️ ${flight.departure_name || 'Flight Departure'}`,
-              start: departureTimes.start,
-              end: departureTimes.end,
-              description: description,
-              location: flight.departure_airport_address || flight.departure_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.departure_airline || '',
-              flightNumber: flight.departure_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: '' // Top-level flights aren't tied to a specific event
-            });
-          }
-        }
-
-        // Return flight
-        if (flight.return_time && flight.return_name) {
-          let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
-          if (returnTimes) {
-            // Build description
-            let description = `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'} <-- hold for tracking`;
-            
-            // Generate countdown URL for flight return
-            const returnTimeStart = returnTimes.start instanceof Date ? returnTimes.start.toISOString() : new Date(returnTimes.start).toISOString();
-            const returnTimeEnd = returnTimes.end instanceof Date ? returnTimes.end.toISOString() : new Date(returnTimes.end).toISOString();
-            const returnTimeRange = `${returnTimeStart}/${returnTimeEnd}`;
-            const route = `${flight.return_airport || 'N/A'}-${flight.departure_airport || 'N/A'}`;
-            const countdownUrl = generateFlightCountdownUrl({
-              flightNumber: flight.return_flightnumber || 'N/A',
-              departureTime: returnTimeRange,
-              airline: flight.return_airline || 'N/A',
-              route: route,
-              confirmation: flight.confirmation || 'N/A',
-              departureCode: flight.return_airport || 'N/A',
-              arrivalCode: flight.departure_airport || 'N/A',
-              departureName: flight.return_airport_name || 'N/A',
-              arrivalName: flight.departure_airport_name || 'N/A',
-              flight_url: flight.flight_url
-            }, 'return');
-
-            allCalendarEvents.push({
-              type: 'flight_return',
-              title: `✈️ ${flight.return_name || 'Flight Return'}`,
-              start: returnTimes.start,
-              end: returnTimes.end,
-              description: description,
-              location: flight.return_airport_address || flight.return_airport || '',
-              url: flight.flight_url || '',
-              airline: flight.return_airline || '',
-              flightNumber: flight.return_flightnumber || '',
-              confirmation: flight.confirmation || '',
-              mainEvent: '' // Top-level flights aren't tied to a specific event
-            });
-          }
-        }
+    if (!result.success) {
+      const statusCode = result.reason === 'no_events' ? 404 : 500;
+      return res.status(statusCode).json({
+        error: result.reason === 'no_events' ? 'No events found' : 'Error generating calendar',
+        message: result.reason === 'no_events'
+          ? 'No usable event data found in Calendar Data database for this person'
+          : (result.error || 'Unknown calendar generation error')
       });
     }
 
-    if (topLevelRehearsals.length > 0) {
-      topLevelRehearsals.forEach(rehearsal => {
-        if (rehearsal.rehearsal_time && rehearsal.rehearsal_time !== null) {
-          // Use the same parseUnifiedDateTime function as other event types
-          let rehearsalTimes = parseUnifiedDateTime(rehearsal.rehearsal_time);
-          
-          if (rehearsalTimes) {
-            // Use rehearsal_address for location (clean up invisible characters)
-            let location = rehearsal.rehearsal_address ? rehearsal.rehearsal_address.trim().replace(/\u2060/g, '') : 'TBD';
-
-            let description = `Rehearsal`;
-            if (rehearsal.rehearsal_pay) {
-              description += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
-            }
-            if (rehearsal.rehearsal_band) {
-              description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-            }
-
-            allCalendarEvents.push({
-              type: 'rehearsal',
-              title: `🎤 Rehearsal`,
-              start: rehearsalTimes.start,
-              end: rehearsalTimes.end,
-              description: description,
-              location: location,
-              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '',
-              mainEvent: '' // Top-level rehearsals aren't tied to a specific event
-            });
-          }
-        }
-      });
-    }
-
-    if (topLevelHotels.length > 0) {
-      topLevelHotels.forEach(hotel => {
-        let hotelTimes = null;
-        
-        if (hotel.dates_booked) {
-          hotelTimes = parseUnifiedDateTime(hotel.dates_booked);
-        }
-
-        if (hotelTimes) {
-          let namesFormatted = 'N/A';
-          if (hotel.names_on_reservation) {
-            const names = hotel.names_on_reservation.split(',').map(n => n.trim()).filter(n => n);
-            if (names.length > 0) {
-              namesFormatted = '\n' + names.map(name => `${name}`).join('\n');
-            }
-          }
-
-          allCalendarEvents.push({
-            type: 'hotel',
-            title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`,
-            start: hotelTimes.start,
-            end: hotelTimes.end,
-            description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${namesFormatted}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`,
-            location: hotel.hotel_address || hotel.hotel_name || 'Hotel',
-            url: hotel.hotel_url || '',
-            confirmation: hotel.confirmation || '',
-            hotelName: hotel.hotel_name || '',
-            mainEvent: '' // Top-level hotels aren't tied to a specific event
-          });
-        }
-      });
-    }
-
-    if (topLevelTransport.length > 0) {
-      topLevelTransport.forEach(transport => {
-        if (transport.start) {
-          let transportTimes = parseUnifiedDateTime(transport.start);
-          if (transportTimes) {
-            const startTime = new Date(transportTimes.start);
-            const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
-
-            let formattedTitle = transport.title || 'Ground Transport';
-            formattedTitle = formattedTitle.replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
-
-            let description = '';
-            if (transport.description) {
-              const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
-              const passengerMatch = transport.description.match(/Passengers?:\s*([^\n]+)/);
-              const driverContent = driverMatch ? driverMatch[1].trim() : '';
-              const passengerContent = passengerMatch ? passengerMatch[1].trim() : '';
-              const isStructuredDriver = driverContent.startsWith('[');
-              const isStructuredPassenger = passengerContent.startsWith('[');
-              
-              if (driverMatch) {
-                if (isStructuredDriver) {
-                  const drivers = parseStructuredDriverLine('Driver: ' + driverContent);
-                  if (drivers.length > 0) {
-                    description += 'Drivers:\n';
-                    drivers.forEach(({ name, phone }) => {
-                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                } else {
-                  const driverPhones = parseDriverInfoFromDescription(transport.description);
-                  const drivers = driverContent.split(',').map(d => d.trim()).filter(d => d);
-                  if (drivers.length > 0) {
-                    description += 'Drivers:\n';
-                    drivers.forEach(driver => {
-                      const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
-                      const phone = driverPhones[firstName];
-                      description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              }
-              if (passengerMatch) {
-                if (isStructuredPassenger) {
-                  const passengers = parseStructuredPassengerLine('Passengers: ' + passengerContent);
-                  if (passengers.length > 0) {
-                    description += 'Passengers:\n';
-                    passengers.forEach(({ name, phone }) => {
-                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                } else {
-                  const passengerPhones = parsePassengerInfoFromDescription(transport.description);
-                  const passengers = passengerContent.split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
-                  if (passengers.length > 0) {
-                    description += 'Passengers:\n';
-                    passengers.forEach(passenger => {
-                      const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
-                      const phone = passengerPhones[firstName]?.phone;
-                      description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
-                    });
-                    description += '\n';
-                  }
-                }
-              }
-              if (transport.type === 'ground_transport_meeting') {
-                // Skip Meet Up Info - driver phone is under Drivers
-              } else if (transport.type === 'ground_transport_pickup') {
-                const pickupInfoMatch = transport.description.match(/Pick Up Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (pickupInfoMatch) {
-                  const pickupInfo = pickupInfoMatch[1].trim();
-                  if (pickupInfo) {
-                    description += 'Pick Up Info:\n';
-                    formatTransportInfoLines(pickupInfo).forEach(line => { description += `• ${line}\n`; });
-                    description += '\n';
-                  }
-                }
-              } else if (transport.type === 'ground_transport_dropoff') {
-                const dropoffInfoMatch = transport.description.match(/Drop Off Info:\s*([\s\S]*?)(?=Confirmation:|$)/);
-                if (dropoffInfoMatch) {
-                  const dropoffInfo = dropoffInfoMatch[1].trim();
-                  if (dropoffInfo) {
-                    description += 'Drop Off Info:\n';
-                    formatTransportInfoLines(dropoffInfo).forEach(line => { description += `• ${line}\n`; });
-                    description += '\n';
-                  }
-                }
-              }
-            }
-            
-            let eventType = 'ground_transport';
-            if (transport.type === 'ground_transport_pickup') {
-              eventType = 'ground_transport_pickup';
-            } else if (transport.type === 'ground_transport_dropoff') {
-              eventType = 'ground_transport_dropoff';
-            } else if (transport.type === 'ground_transport_meeting') {
-              eventType = 'ground_transport_meeting';
-            }
-
-            allCalendarEvents.push({
-              type: eventType,
-              title: `🚙 ${formattedTitle}`,
-              start: startTime,
-              end: endTime,
-              description: description,
-              location: transport.location || '',
-              url: transport.transportation_url || '',
-              mainEvent: '' // Top-level transport isn't tied to a specific event
-            });
-          }
-        }
-      });
-    }
-
-    if (topLevelTeamCalendar.length > 0) {
-      topLevelTeamCalendar.forEach(teamEvent => {
-        if (teamEvent.date) {
-          let eventTimes = parseUnifiedDateTime(teamEvent.date);
-          if (eventTimes) {
-            // Use ⛔️ emoji for OOO events, 💼 for Meeting events, 📅 for Office and other events
-            const isOOO = teamEvent.title && teamEvent.title.trim().toUpperCase() === 'OOO';
-            const isMeeting = teamEvent.title && teamEvent.title.trim().toUpperCase().includes('MEETING');
-            let emoji;
-            if (isOOO) {
-              emoji = '⛔️';
-            } else if (isMeeting) {
-              emoji = '💼';
-            } else {
-              emoji = '📅';
-            }
-            
-            // For OOO events, add one day to end date to make it inclusive
-            // In iCal format, end date is exclusive, so we need Dec 17 to block through Dec 16
-            let endDate = eventTimes.end;
-            if (isOOO) {
-              endDate = new Date(eventTimes.end);
-              endDate.setDate(endDate.getDate() + 1);
-            }
-            
-            allCalendarEvents.push({
-              type: 'team_calendar',
-              title: `${emoji} ${teamEvent.title || 'Team Event'}`,
-              start: eventTimes.start,
-              end: endDate,
-              description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'),
-              location: teamEvent.address || '',
-              url: teamEvent.notion_link || '',
-              mainEvent: '' // Top-level team calendar events aren't tied to a specific event
-            });
-          }
-        }
-      });
-    }
-
-    
     if (shouldReturnICS) {
-      // Generate ICS calendar with all events
-      const calendar = ical({ 
-        name: `Downbeat iCal (${firstName})`,
-        description: `Professional events calendar for ${personName}`,
-        ttl: 300  // Suggest refresh every 5 minutes
-      });
-
-      allCalendarEvents.forEach(event => {
-        // event.start and event.end are already Date objects for new format
-        // or strings for old format
-        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-          
-        calendar.createEvent({
-          start: startDate,
-          end: endDate,
-          summary: event.title,
-          description: event.description,
-          location: event.location,
-          url: event.url || '',
-          floating: true,  // Create floating timezone events - times stay the same regardless of timezone
-          alarms: getAlarmsForEvent(event.type, event.title)  // Add event-specific alarms
-        });
-      });
-
-      const icsData = calendar.toString();
-      
-      // Cache the ICS data (if enabled)
-      if (redis && cacheEnabled) {
-        try {
-          await redis.set(cacheKey, icsData);
-          verboseLog(`💾 Cached ICS for ${personId} (persistent)`);
-        } catch (cacheError) {
-          console.error('Redis cache write error:', cacheError);
-        }
-      }
-
       res.setHeader('Content-Type', 'text/calendar');
       res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
-      return res.send(icsData);
+      return res.send(result.icsData);
     }
 
-    // Return JSON format with expanded events
-    const jsonResponse = {
-      personName: personName,
-      totalMainEvents: eventsArray.length,
-      totalCalendarEvents: allCalendarEvents.length,
-      dataSource: 'calendar_data_database',
-      breakdown: {
-        mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
-        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
-        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
-        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
-      },
-      events: allCalendarEvents
-    };
-
-    // Cache the JSON data (if enabled)
-    if (redis && cacheEnabled) {
-      try {
-        await redis.set(cacheKey, JSON.stringify(jsonResponse));
-        verboseLog(`💾 Cached JSON for ${personId} (persistent)`);
-      } catch (cacheError) {
-        console.error('Redis cache write error:', cacheError);
-      }
-    }
-
-    res.json(jsonResponse);
+    return res.json(result.jsonResponse);
     
   } catch (error) {
     console.error('Calendar generation error:', error);

@@ -12,7 +12,7 @@
 - **Railway live output attempt:**
   - `GET /calendar/:personId?format=json` returned:
     - `{"error":"Calendar cache is empty","message":"Your calendar is being regenerated..."}`
-  - `GET /regenerate/:personId/status` reported `failed` during this run.
+  - `GET /regenerate/:personId/status` reported `failed` during this historical run before the synchronous regen flow replaced status polling.
   - `GET /debug/parse-test` timed out during this run.
 
 ## Unified Parsing Contract (Implemented)

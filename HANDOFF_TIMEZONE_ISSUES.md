@@ -59,7 +59,7 @@ This is a Node.js/Express app deployed on Railway that generates ICS calendar fe
 - **Deployed on**: Railway (auto-deploys from `origin/main`)
 - **Server version**: `tz-fix-v8-main-event-compat`
 - **Key endpoint**: `/calendar/:personId` (returns ICS or JSON)
-- **Regeneration**: `/regenerate/:personId` triggers background cache rebuild
+- **Regeneration**: `/regenerate/:personId` now performs a direct synchronous rebuild for one person
 
 ---
 
