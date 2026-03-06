@@ -524,6 +524,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 const REGEN_TOTAL_TIMEOUT_MS = 180000; // 3 minutes hard cap per regeneration run
 const REGEN_FETCH_STEP_TIMEOUT_MS = 120000; // allow full retry cycle for slow upstream fetch phases
 const REGEN_PERSON_STEP_TIMEOUT_MS = 30000;
+const REGEN_JOB_TTL_SECONDS = Number(process.env.REGEN_JOB_TTL_SECONDS || 900);
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -542,24 +543,73 @@ function getRemainingMs(deadlineTs) {
   return deadlineTs - Date.now();
 }
 
+function getRegenJobKey(personId) {
+  return `regen:job:${personId}`;
+}
+
+function getRegenLockKey(personId) {
+  return `regenerate:lock:${personId}`;
+}
+
+async function readRegenJob(personId) {
+  if (!redis || !cacheEnabled) return null;
+  const raw = await redis.get(getRegenJobKey(personId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeRegenJob(personId, state, patch = {}) {
+  if (!redis || !cacheEnabled) return null;
+  const nowIso = new Date().toISOString();
+  const existing = await readRegenJob(personId);
+  const next = {
+    personId,
+    state,
+    startedAt: state === 'running' ? (existing?.startedAt || nowIso) : (existing?.startedAt || null),
+    updatedAt: nowIso,
+    finishedAt: (state === 'succeeded' || state === 'failed') ? nowIso : null,
+    attempt: typeof patch.attempt === 'number'
+      ? patch.attempt
+      : (existing?.attempt || 0) + (state === 'running' ? 1 : 0),
+    trigger: patch.trigger || existing?.trigger || 'unknown',
+    error: patch.error || null
+  };
+  await redis.setEx(getRegenJobKey(personId), REGEN_JOB_TTL_SECONDS, JSON.stringify(next));
+  return next;
+}
+
+async function isRegenRunning(personId) {
+  if (!redis || !cacheEnabled) return false;
+  const job = await readRegenJob(personId);
+  return job?.state === 'running';
+}
+
+async function runRegeneration(personId, options = {}) {
+  const { trigger = 'unknown', waitForCompletion = true } = options;
+  if (waitForCompletion) {
+    return regenerateCalendarForPerson(personId, { trigger });
+  }
+  regenerateCalendarForPerson(personId, { trigger }).catch(err => {
+    console.error(`Background regeneration failed for ${personId}:`, err);
+  });
+  return { success: true, personId, reason: 'started' };
+}
+
 async function triggerBackgroundRegeneration(personId, reason = 'unknown') {
   try {
     if (isNotionCircuitOpen()) {
       console.log(`⏸️  Skipping background regeneration for ${personId} (${reason}) while Notion circuit is open`);
       return false;
     }
-    if (redis && cacheEnabled) {
-      const status = await redis.get(`regenerate:status:${personId}`);
-      const hasLock = await redis.exists(`regenerate:lock:${personId}`);
-      if (status === 'in_progress' || hasLock) {
-        console.log(`⏭️  Background regeneration already in progress for ${personId} (${reason})`);
-        return false;
-      }
+    if (await isRegenRunning(personId)) {
+      console.log(`⏭️  Background regeneration already in progress for ${personId} (${reason})`);
+      return false;
     }
-
-    regenerateCalendarForPerson(personId).catch(err => {
-      console.error(`Background regeneration failed for ${personId}:`, err);
-    });
+    await runRegeneration(personId, { trigger: `background:${reason}`, waitForCompletion: false });
     return true;
   } catch (error) {
     console.error(`Failed to trigger background regeneration for ${personId}:`, error.message);
@@ -1713,21 +1763,15 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 
 // Helper function to regenerate calendar for a single person
 async function regenerateCalendarForPerson(personId, options = {}) {
-  const { setStatus = true } = options;
-  const statusKey = `regenerate:status:${personId}`;
-  const statusDetailsKey = `regenerate:status_details:${personId}`;
-  const lockKey = `regenerate:lock:${personId}`;
-  const STATUS_TTL = 300; // 5 minutes
+  const { trigger = 'unknown' } = options;
+  const lockKey = getRegenLockKey(personId);
   let lockAcquired = false;
 
   try {
     if (isNotionCircuitOpen()) {
       const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
       const reason = `Notion circuit open (${waitMs}ms remaining)`;
-      if (setStatus && redis && cacheEnabled) {
-        await redis.setEx(statusKey, STATUS_TTL, 'failed');
-        await redis.setEx(statusDetailsKey, STATUS_TTL, reason);
-      }
+      await writeRegenJob(personId, 'failed', { trigger, error: reason });
       return { success: false, personId, error: reason };
     }
     console.log(`🔄 Regenerating calendar for ${personId}...`);
@@ -1735,18 +1779,16 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const lockResult = await redis.set(lockKey, '1', { NX: true, EX: REGEN_LOCK_TTL_SECONDS });
       if (!lockResult) {
         console.log(`⏭️  Regeneration lock active for ${personId}, skipping duplicate run.`);
-        if (setStatus) {
-          await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
+        let job = await readRegenJob(personId);
+        if (!job) {
+          job = await writeRegenJob(personId, 'running', { trigger });
         }
-        return { success: false, personId, reason: 'already_in_progress' };
+        return { success: false, personId, reason: 'already_in_progress', job };
       }
       lockAcquired = true;
     }
 
-    if (setStatus && redis && cacheEnabled) {
-      await redis.setEx(statusKey, STATUS_TTL, 'in_progress');
-      await redis.del(statusDetailsKey);
-    }
+    await writeRegenJob(personId, 'running', { trigger });
     
     // Keep last-good cache in place until successful rebuild.
     // Enforce a hard regeneration time budget to prevent indefinite in_progress state.
@@ -1760,10 +1802,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
       console.log(`⚠️  No events found for ${personId}, skipping...`);
-      if (setStatus && redis && cacheEnabled) {
-        await redis.setEx(statusKey, STATUS_TTL, 'no_events');
-        await redis.del(statusDetailsKey);
-      }
+      await writeRegenJob(personId, 'failed', { trigger, error: 'No events found' });
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -2588,20 +2627,14 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const cacheKey = `calendar:${personId}:ics`;
       await redis.setEx(cacheKey, CACHE_TTL, icsData);
       console.log(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, TTL: ${CACHE_TTL}s)`);
-      if (setStatus) {
-        await redis.setEx(statusKey, STATUS_TTL, 'completed');
-        await redis.del(statusDetailsKey);
-      }
     }
+    await writeRegenJob(personId, 'succeeded', { trigger });
 
     return { success: true, personId, personName, eventCount: allCalendarEvents.length };
     
   } catch (error) {
     console.error(`❌ Error regenerating calendar for ${personId}:`, error.message);
-    if (setStatus && redis && cacheEnabled) {
-      await redis.setEx(statusKey, STATUS_TTL, 'failed');
-      await redis.setEx(statusDetailsKey, STATUS_TTL, error.message || 'Unknown regeneration error');
-    }
+    await writeRegenJob(personId, 'failed', { trigger, error: error.message || 'Unknown regeneration error' });
     return { success: false, personId, error: error.message };
   } finally {
     if (lockAcquired && redis && cacheEnabled) {
@@ -2633,7 +2666,7 @@ async function regenerateAllCalendars() {
 
     const allResults = await mapWithConcurrency(personIds, concurrency, async (personId) => {
       try {
-        return await regenerateCalendarForPerson(personId);
+        return await runRegeneration(personId, { trigger: 'bulk_regen', waitForCompletion: true });
       } catch (error) {
         console.error(`❌ Failed to process ${personId}:`, error.message);
         return { success: false, personId, error: error.message };
@@ -2694,7 +2727,7 @@ function startBackgroundJob() {
       
       const results = await mapWithConcurrency(personIds, DEFAULT_REGEN_CONCURRENCY, async (personId) => {
         try {
-          return await regenerateCalendarForPerson(personId);
+          return await runRegeneration(personId, { trigger: 'background_cycle', waitForCompletion: true });
         } catch (error) {
           return { success: false, personId, error: error.message };
         }
@@ -4391,7 +4424,7 @@ app.get('/regenerate/:personId', async (req, res) => {
     }
 
     // Run regeneration synchronously (same style as admin/calendar/regen)
-    const result = await regenerateCalendarForPerson(personId, { setStatus: true });
+    const result = await runRegeneration(personId, { trigger: 'manual_regen', waitForCompletion: true });
     if (result.success) {
       return res.json({
         success: true,
@@ -4403,12 +4436,16 @@ app.get('/regenerate/:personId', async (req, res) => {
     }
 
     const reason = result.reason || 'unknown';
-    const statusCode = reason === 'already_in_progress' ? 409 : 500;
+    const statusCode = reason === 'already_in_progress' ? 202 : 500;
+    const message = reason === 'already_in_progress'
+      ? 'Calendar regeneration already running'
+      : 'Calendar regeneration failed';
     return res.status(statusCode).json({
       success: false,
-      message: 'Calendar regeneration failed',
+      message,
       personId,
       reason,
+      job: result.job || null,
       details: result.error || null
     });
   } catch (error) {
@@ -4431,32 +4468,21 @@ app.get('/regenerate/:personId/status', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    if (redis && cacheEnabled) {
-      const status = await redis.get(`regenerate:status:${personId}`);
-      const hasLock = await redis.exists(`regenerate:lock:${personId}`);
-      if (status) {
-        const statusDetails = status === 'failed'
-          ? await redis.get(`regenerate:status_details:${personId}`)
-          : null;
-        return res.json({
-          success: true,
-          personId: personId,
-          status: status,
-          message: status === 'in_progress' ? 'Regeneration in progress' :
-                   status === 'completed' ? 'Regeneration completed' :
-                   status === 'failed' ? 'Regeneration failed' : 'Unknown status',
-          details: statusDetails || undefined
-        });
-      }
-
-      if (hasLock) {
-        return res.json({
-          success: true,
-          personId: personId,
-          status: 'in_progress',
-          message: 'Regeneration in progress'
-        });
-      }
+    const job = await readRegenJob(personId);
+    if (job) {
+      const messageByState = {
+        running: 'Regeneration in progress',
+        succeeded: 'Regeneration completed',
+        failed: 'Regeneration failed',
+        idle: 'Regeneration idle'
+      };
+      return res.json({
+        success: true,
+        personId,
+        status: job.state,
+        message: messageByState[job.state] || 'Unknown status',
+        job
+      });
     }
 
     // If no status found, check if calendar exists in cache
@@ -4467,8 +4493,8 @@ app.get('/regenerate/:personId/status', async (req, res) => {
         return res.json({
           success: true,
           personId: personId,
-          status: 'not_regenerating',
-          message: 'Calendar is cached. No regeneration in progress.',
+          status: 'idle',
+          message: 'No active regeneration. Calendar is cached.',
           cached: true
         });
       }
@@ -4477,8 +4503,9 @@ app.get('/regenerate/:personId/status', async (req, res) => {
     res.json({
       success: true,
       personId: personId,
-      status: 'unknown',
-      message: 'No regeneration status found. Calendar may not be cached.'
+      status: 'idle',
+      message: 'No active regeneration and no recent job record found.',
+      cached: false
     });
   } catch (error) {
     console.error('Status endpoint error:', error);
@@ -7179,66 +7206,20 @@ app.get('/calendar/:personId', async (req, res) => {
           }
         }
         console.log(`❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`);
-        
-        // Try a quick synchronous fetch with 55-second timeout (under Railway's 60s limit)
-        // If Notion responds quickly, serve immediately. If slow, trigger background regeneration.
-        const QUICK_FETCH_TIMEOUT_MS = 55000;
-        console.log(`⏱️  Attempting quick fetch for ${personId} (${QUICK_FETCH_TIMEOUT_MS / 1000}s timeout)...`);
 
-        if (redis && cacheEnabled) {
-          const hasRegenLock = await redis.exists(`regenerate:lock:${personId}`);
-          if (hasRegenLock) {
-            console.log(`⏭️  Regeneration lock exists for ${personId}, skipping duplicate quick fetch`);
-            if (shouldReturnICS) {
-              res.setHeader('Content-Type', 'text/calendar');
-              return res.status(503).send(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Calendar Feed//EN
-BEGIN:VEVENT
-DTSTART:19900101T000000Z
-DTEND:19900101T000000Z
-SUMMARY:Calendar is being regenerated
-DESCRIPTION:Your calendar is already regenerating. Please try again in a few moments.
-END:VEVENT
-END:VCALENDAR`);
-            }
-            return res.status(503).json({
-              error: 'Calendar cache is empty',
-              message: 'Your calendar is already regenerating in the background. Please try again shortly.',
-              retryAfter: 120
-            });
-          }
-        }
-        
-        try {
-          const quickTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Quick fetch timeout')), QUICK_FETCH_TIMEOUT_MS);
+        const running = await isRegenRunning(personId);
+        if (!running) {
+          await runRegeneration(personId, {
+            trigger: 'calendar_cache_miss',
+            waitForCompletion: false
           });
-          
-          // Check if Calendar Data database is configured
-          if (!CALENDAR_DATA_DB) {
-            throw new Error('Calendar Data database not configured');
-          }
-          
-          calendarData = await Promise.race([
-            getCalendarDataFromDatabase(personId),
-            quickTimeoutPromise
-          ]);
-          
-          if (!calendarData || !calendarData.events || calendarData.events.length === 0) {
-            throw new Error('No events found');
-          }
-          
-          // Quick fetch succeeded! Continue with normal processing flow below
-          console.log(`✅ Quick fetch succeeded for ${personId}, processing and caching...`);
-        } catch (quickError) {
-          // Quick fetch failed or timed out - trigger background regeneration
-          console.log(`⏱️  Quick fetch ${quickError.message === 'Quick fetch timeout' ? 'timed out' : 'failed'} for ${personId}, triggering background regeneration...`);
-          await triggerBackgroundRegeneration(personId, `quick_fetch_${quickError.message === 'Quick fetch timeout' ? 'timeout' : 'error'}`);
-          
-          if (shouldReturnICS) {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.status(503).send(`BEGIN:VCALENDAR
+        } else {
+          console.log(`⏭️  Regeneration already running for ${personId}; not launching duplicate`);
+        }
+
+        if (shouldReturnICS) {
+          res.setHeader('Content-Type', 'text/calendar');
+          return res.status(503).send(`BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Calendar Feed//EN
 BEGIN:VEVENT
@@ -7248,18 +7229,14 @@ SUMMARY:Calendar is being regenerated
 DESCRIPTION:Your calendar is being regenerated. Please try again in a few moments.
 END:VEVENT
 END:VCALENDAR`);
-          } else {
-            return res.status(503).json({
-              error: 'Calendar cache is empty',
-              message: 'Your calendar is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
-              retryAfter: 120
-            });
-          }
-          return;
         }
-        
-        // If we get here, quick fetch succeeded - continue with normal processing
-        console.log(`✅ Quick fetch succeeded for ${personId}, continuing with normal flow...`);
+        return res.status(503).json({
+          error: 'Calendar cache is empty',
+          message: running
+            ? 'Your calendar is already regenerating in the background. Please try again shortly.'
+            : 'Your calendar is being regenerated in the background. Regeneration typically takes 1–2 minutes. Please try again shortly.',
+          retryAfter: 120
+        });
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
         // Continue without cache if Redis fails
