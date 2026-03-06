@@ -360,13 +360,18 @@ const NOTION_CIRCUIT_FAILURE_THRESHOLD = Number(process.env.NOTION_CIRCUIT_FAILU
 const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS || 90000);
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
-const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 2);
+const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
+const PERSONNEL_REGEN_CONCURRENCY = Number(process.env.PERSONNEL_REGEN_CONCURRENCY || 1);
 const REGEN_LOCK_TTL_SECONDS = Number(process.env.REGEN_LOCK_TTL_SECONDS || 240);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
 let notionFailureTimestamps = [];
 let notionCircuitOpenUntil = 0;
+let personnelRegenActive = 0;
+const personnelRegenQueue = [];
+const personnelRegenTaskByPersonId = new Map();
+const recentRegenUntilByPersonId = new Map();
 
 function isGatewayTimeoutError(error) {
   const message = String(error?.message || '').toLowerCase();
@@ -562,10 +567,11 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 
-const REGEN_TOTAL_TIMEOUT_MS = 180000; // 3 minutes hard cap per regeneration run
-const REGEN_FETCH_STEP_TIMEOUT_MS = 120000; // allow full retry cycle for slow upstream fetch phases
-const REGEN_PERSON_STEP_TIMEOUT_MS = 30000;
+const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 55000); // hard per-person budget
+const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 45000);
+const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 10000);
 const REGEN_JOB_TTL_SECONDS = Number(process.env.REGEN_JOB_TTL_SECONDS || 900);
+const REGEN_RECENT_SKIP_MS = Number(process.env.REGEN_RECENT_SKIP_MS || (CACHE_TTL * 1000));
 const REGEN_WAIT_TIMEOUT_MS = Number(process.env.REGEN_WAIT_TIMEOUT_MS || 180000);
 const REGEN_WAIT_POLL_MS = Number(process.env.REGEN_WAIT_POLL_MS || 3000);
 
@@ -592,6 +598,41 @@ function getRegenJobKey(personId) {
 
 function getRegenLockKey(personId) {
   return `regenerate:lock:${personId}`;
+}
+
+function getRecentRegenKey(personId) {
+  return `regen:recent:${personId}`;
+}
+
+async function markRecentlyRegenerated(personId) {
+  const ttlSeconds = Math.max(1, Math.ceil(REGEN_RECENT_SKIP_MS / 1000));
+  const untilTs = Date.now() + REGEN_RECENT_SKIP_MS;
+  try {
+    if (redis && cacheEnabled) {
+      await redis.setEx(getRecentRegenKey(personId), ttlSeconds, String(untilTs));
+      return;
+    }
+  } catch (error) {
+    console.warn(`⚠️ Failed to persist recent-regeneration marker for ${personId}: ${error.message}`);
+  }
+  recentRegenUntilByPersonId.set(personId, untilTs);
+}
+
+async function wasRecentlyRegenerated(personId) {
+  const now = Date.now();
+  if (redis && cacheEnabled) {
+    const raw = await redis.get(getRecentRegenKey(personId));
+    if (!raw) return false;
+    const untilTs = Number(raw);
+    return Number.isFinite(untilTs) ? untilTs > now : true;
+  }
+  const untilTs = recentRegenUntilByPersonId.get(personId);
+  if (!untilTs) return false;
+  if (untilTs <= now) {
+    recentRegenUntilByPersonId.delete(personId);
+    return false;
+  }
+  return true;
 }
 
 async function readRegenJob(personId) {
@@ -649,13 +690,57 @@ async function waitForRegenToFinish(personId, options = {}) {
   return { done: false, timedOut: true, job: lastJob };
 }
 
+async function schedulePersonnelRegeneration(personId, trigger) {
+  const existingTask = personnelRegenTaskByPersonId.get(personId);
+  if (existingTask) {
+    return existingTask;
+  }
+  const task = new Promise((resolve) => {
+    personnelRegenQueue.push({ personId, trigger, resolve });
+    if (personnelRegenQueue.length % 25 === 0) {
+      console.warn(`⚠️ Personnel regeneration queue backlog: pending=${personnelRegenQueue.length}, active=${personnelRegenActive}, concurrency=${PERSONNEL_REGEN_CONCURRENCY}`);
+    }
+    drainPersonnelRegenQueue();
+  });
+  personnelRegenTaskByPersonId.set(personId, task);
+  task.finally(() => {
+    personnelRegenTaskByPersonId.delete(personId);
+  });
+  return task;
+}
+
+function drainPersonnelRegenQueue() {
+  while (personnelRegenActive < PERSONNEL_REGEN_CONCURRENCY && personnelRegenQueue.length > 0) {
+    const next = personnelRegenQueue.shift();
+    if (!next) break;
+    personnelRegenActive += 1;
+    Promise.resolve()
+      .then(() => regenerateCalendarForPerson(next.personId, { trigger: next.trigger }))
+      .then(result => next.resolve(result))
+      .catch(error => next.resolve({ success: false, personId: next.personId, error: error?.message || 'Unknown regeneration error' }))
+      .finally(() => {
+        personnelRegenActive = Math.max(0, personnelRegenActive - 1);
+        if (personnelRegenQueue.length > 0) {
+          setImmediate(drainPersonnelRegenQueue);
+        }
+      });
+  }
+}
+
 async function runRegeneration(personId, options = {}) {
   const { trigger = 'unknown', waitForCompletion = true } = options;
-  if (waitForCompletion) {
-    return regenerateCalendarForPerson(personId, { trigger });
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'personnel_regen_compare',hypothesisId:'H1',location:'index.js:runRegeneration:entry',message:'runRegeneration invoked',data:{personId,trigger,waitForCompletion},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+  const isBackgroundTrigger = trigger === 'background_cycle' || trigger === 'bulk_regen';
+  if (isBackgroundTrigger && await wasRecentlyRegenerated(personId)) {
+    return { success: true, personId, reason: 'recently_regenerated_skipped' };
   }
-  regenerateCalendarForPerson(personId, { trigger }).catch(err => {
-    console.error(`Background regeneration failed for ${personId}:`, err);
+  if (waitForCompletion) {
+    return schedulePersonnelRegeneration(personId, trigger);
+  }
+  schedulePersonnelRegeneration(personId, trigger).catch(err => {
+    console.error(`Background regeneration failed for ${personId}:`, err?.message || err);
   });
   return { success: true, personId, reason: 'started' };
 }
@@ -1806,6 +1891,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
   const { trigger = 'unknown' } = options;
   const lockKey = getRegenLockKey(personId);
   let lockAcquired = false;
+  const regenStartedAt = Date.now();
 
   try {
     if (isNotionCircuitOpen()) {
@@ -2668,12 +2754,18 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       await redis.setEx(cacheKey, CACHE_TTL, icsData);
       verboseLog(`✅ Cached ICS for ${personName} (${allCalendarEvents.length} events, TTL: ${CACHE_TTL}s)`);
     }
+    await markRecentlyRegenerated(personId);
     await writeRegenJob(personId, 'succeeded', { trigger });
 
     return { success: true, personId, personName, eventCount: allCalendarEvents.length };
     
   } catch (error) {
+    const elapsedMs = Date.now() - regenStartedAt;
     console.error(`❌ Error regenerating calendar for ${personId}:`, error.message);
+    console.error(`❌ Regen failure details for ${personId}: trigger=${trigger}, elapsedMs=${elapsedMs}`);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'personnel_regen_compare',hypothesisId:'H2',location:'index.js:regenerateCalendarForPerson:catch',message:'Personnel regeneration failed',data:{personId,trigger,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     await writeRegenJob(personId, 'failed', { trigger, error: error.message || 'Unknown regeneration error' });
     return { success: false, personId, error: error.message };
   } finally {
@@ -2714,8 +2806,8 @@ async function regenerateAllCalendars() {
     });
 
     const totalSuccess = allResults.filter(r => r.success).length;
-    const totalSkipped = allResults.filter(r => r.reason === 'no_events').length;
-    const totalFailed = allResults.filter(r => !r.success && r.reason !== 'no_events').length;
+    const totalSkipped = allResults.filter(r => r.reason === 'no_events' || r.reason === 'recently_regenerated_skipped').length;
+    const totalFailed = allResults.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'recently_regenerated_skipped').length;
     const totalTime = Math.round((Date.now() - startTime) / 1000);
 
     console.log(`\n✅ Regeneration complete in ${totalTime}s`);
@@ -2748,6 +2840,7 @@ let isBackgroundCycleRunning = false;
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
+  console.log(`   Personnel regeneration worker concurrency=${PERSONNEL_REGEN_CONCURRENCY}`);
   
   setInterval(async () => {
     const cycleId = `bg_${++backgroundCycleSeq}`;
@@ -2799,11 +2892,18 @@ function startBackgroundJob() {
       });
 
       const totalSuccess = results.filter(r => r.success).length;
-      const totalSkipped = results.filter(r => r.reason === 'no_events').length;
-      const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events').length;
+      const totalSkipped = results.filter(r => r.reason === 'no_events' || r.reason === 'recently_regenerated_skipped').length;
+      const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'recently_regenerated_skipped').length;
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background personnel cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:personIds.length,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
+      const elapsedMs = Date.now() - jobStart;
+      if (totalFailed > 0) {
+        console.warn(`⚠️ Background personnel cycle had failures: failed=${totalFailed}, success=${totalSuccess}, skipped=${totalSkipped}, total=${personIds.length}, elapsedMs=${elapsedMs}`);
+      }
+      if (elapsedMs > 5 * 60 * 1000) {
+        console.warn(`⚠️ Background personnel cycle exceeded interval: elapsedMs=${elapsedMs}, intervalMs=${5 * 60 * 1000}`);
+      }
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
