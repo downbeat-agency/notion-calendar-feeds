@@ -3429,19 +3429,47 @@ async function getTravelCalendarData() {
 // Helper function to process travel events into calendar format
 function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
+  const normalizedGroups = [];
+
+  // Support both schemas:
+  // 1) legacy travel group objects with { flights, hotels, ground_transportation }
+  // 2) event objects with nested travel array [{...}] (as seen in Travel Admin JSON)
+  travelGroupsArray.forEach(item => {
+    if (item && Array.isArray(item.travel)) {
+      const flights = item.travel.map(flight => ({
+        ...flight,
+        notion_url: flight.notion_url || item.notion_url || '',
+        personnel: (flight.personnel && Array.isArray(flight.personnel.personnel_name))
+          ? flight.personnel
+          : (Array.isArray(flight.passengers) ? { personnel_name: flight.passengers } : null),
+        event_name: item.event_name || ''
+      }));
+      normalizedGroups.push({
+        flights,
+        hotels: [],
+        ground_transportation: []
+      });
+      return;
+    }
+    normalizedGroups.push(item);
+  });
 
   // Each element is a travel group with flights, hotels, and ground_transportation
-  travelGroupsArray.forEach(travelGroup => {
+  normalizedGroups.forEach(travelGroup => {
     // Process flights
     if (travelGroup.flights && Array.isArray(travelGroup.flights)) {
       travelGroup.flights.forEach(flight => {
         // Departure flight
-        if (flight.departure_time && flight.departure_arrival_time) {
+        if (flight.departure_time) {
           // Use parseUnifiedDateTime for proper UTC to Pacific conversion
           const depTimes = parseUnifiedDateTime(flight.departure_time);
-          const depEndTimes = parseUnifiedDateTime(flight.departure_arrival_time);
+          const depEndTimes = flight.departure_arrival_time
+            ? parseUnifiedDateTime(flight.departure_arrival_time)
+            : null;
           const depStart = depTimes ? depTimes.start : new Date(flight.departure_time);
-          const depEnd = depEndTimes ? depEndTimes.end : new Date(flight.departure_arrival_time);
+          const depEnd = depEndTimes
+            ? depEndTimes.end
+            : (depTimes ? depTimes.end : new Date(flight.departure_time));
           
           if (!isNaN(depStart.getTime()) && !isNaN(depEnd.getTime())) {
             // Build route string
@@ -3503,12 +3531,16 @@ function processTravelEvents(travelGroupsArray) {
         }
 
         // Return flight
-        if (flight.return_time && flight.return_arrival_time) {
+        if (flight.return_time) {
           // Use parseUnifiedDateTime for proper UTC to Pacific conversion
           const retTimes = parseUnifiedDateTime(flight.return_time);
-          const retEndTimes = parseUnifiedDateTime(flight.return_arrival_time);
+          const retEndTimes = flight.return_arrival_time
+            ? parseUnifiedDateTime(flight.return_arrival_time)
+            : null;
           const retStart = retTimes ? retTimes.start : new Date(flight.return_time);
-          const retEnd = retEndTimes ? retEndTimes.end : new Date(flight.return_arrival_time);
+          const retEnd = retEndTimes
+            ? retEndTimes.end
+            : (retTimes ? retTimes.end : new Date(flight.return_time));
           
           if (!isNaN(retStart.getTime()) && !isNaN(retEnd.getTime())) {
             // Build route string
