@@ -3429,33 +3429,9 @@ async function getTravelCalendarData() {
 // Helper function to process travel events into calendar format
 function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
-  const normalizedGroups = [];
-
-  // Support both schemas:
-  // 1) legacy travel group objects with { flights, hotels, ground_transportation }
-  // 2) event objects with nested travel array [{...}] (as seen in Travel Admin JSON)
-  travelGroupsArray.forEach(item => {
-    if (item && Array.isArray(item.travel)) {
-      const flights = item.travel.map(flight => ({
-        ...flight,
-        notion_url: flight.notion_url || item.notion_url || '',
-        personnel: (flight.personnel && Array.isArray(flight.personnel.personnel_name))
-          ? flight.personnel
-          : (Array.isArray(flight.passengers) ? { personnel_name: flight.passengers } : null),
-        event_name: item.event_name || ''
-      }));
-      normalizedGroups.push({
-        flights,
-        hotels: [],
-        ground_transportation: []
-      });
-      return;
-    }
-    normalizedGroups.push(item);
-  });
-
-  // Each element is a travel group with flights, hotels, and ground_transportation
-  normalizedGroups.forEach(travelGroup => {
+  // Legacy schema only: each element is a travel group with
+  // flights, hotels, and ground_transportation arrays.
+  travelGroupsArray.forEach(travelGroup => {
     // Process flights
     if (travelGroup.flights && Array.isArray(travelGroup.flights)) {
       travelGroup.flights.forEach(flight => {
