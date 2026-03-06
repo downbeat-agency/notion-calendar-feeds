@@ -3608,8 +3608,8 @@ function processTravelEvents(travelGroupsArray) {
               ? `${flight.departure_from} (${flight.departure_from_city})`
               : flight.departure_from || '';
 
-            // URL: use notion_url if available
-            const url = flight.notion_url || '';
+            // Prefer the explicit flight URL from the formula, but keep legacy support.
+            const url = flight.flight_url || flight.notion_url || '';
 
             allCalendarEvents.push({
               start: depStart,
@@ -3681,8 +3681,8 @@ function processTravelEvents(travelGroupsArray) {
               ? `${flight.return_from} (${flight.return_from_city})`
               : flight.return_from || '';
 
-            // URL: use notion_url if available
-            const url = flight.notion_url || '';
+            // Prefer the explicit flight URL from the formula, but keep legacy support.
+            const url = flight.flight_url || flight.notion_url || '';
 
             allCalendarEvents.push({
               start: retStart,
@@ -3701,9 +3701,12 @@ function processTravelEvents(travelGroupsArray) {
     // Process hotels
     if (travelGroup.hotels && Array.isArray(travelGroup.hotels)) {
       travelGroup.hotels.forEach(hotel => {
-        // Use travel group notion_url if hotel doesn't have one
-        if (!hotel.notion_url && travelGroup.notion_url) {
-          hotel.notion_url = travelGroup.notion_url;
+        // Keep backward compatibility with both the new hotel_url and legacy notion_url fields.
+        if (!hotel.hotel_url && hotel.notion_url) {
+          hotel.hotel_url = hotel.notion_url;
+        }
+        if (!hotel.hotel_url && travelGroup.notion_url) {
+          hotel.hotel_url = travelGroup.notion_url;
         }
         // Extract location from title (e.g., "Hotel - North Beach ()" -> "North Beach")
         let locationName = '';
@@ -3760,11 +3763,20 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Booking details section
-            const hasBookingDetails = hotel.confirmation || hotel.name_under_reservation || hotel.hotel_phone;
+            const reservationNames = typeof hotel.names_on_reservation === 'string'
+              ? hotel.names_on_reservation.split(',').map(name => name.trim()).filter(Boolean)
+              : [];
+            const hasBookingDetails = hotel.confirmation || hotel.name_under_reservation || hotel.hotel_phone || reservationNames.length > 0;
             if (hasBookingDetails) {
               description += `\n📋 Booking Details:\n`;
               if (hotel.confirmation) {
                 description += `   Confirmation: ${hotel.confirmation}\n`;
+              }
+              if (reservationNames.length > 0) {
+                description += `   Names on Reservation:\n`;
+                reservationNames.forEach(name => {
+                  description += `   - ${name}\n`;
+                });
               }
               if (hotel.name_under_reservation) {
                 description += `   Reservation: ${hotel.name_under_reservation}\n`;
@@ -3811,8 +3823,8 @@ function processTravelEvents(travelGroupsArray) {
               location = hotel.hotel_name;
             }
 
-            // URL: always use notion_url if available (maps links are in description, not URL field)
-            const url = hotel.notion_url || '';
+            // Prefer the explicit hotel URL from the formula, but keep legacy support.
+            const url = hotel.hotel_url || hotel.notion_url || '';
 
             allCalendarEvents.push({
               start: checkIn,
@@ -3846,8 +3858,20 @@ function processTravelEvents(travelGroupsArray) {
               });
             }
             
-            if (hotel.confirmation) {
-              description += `\n📋 Confirmation: ${hotel.confirmation}\n`;
+            const reservationNames = typeof hotel.names_on_reservation === 'string'
+              ? hotel.names_on_reservation.split(',').map(name => name.trim()).filter(Boolean)
+              : [];
+            if (hotel.confirmation || reservationNames.length > 0) {
+              description += `\n📋 Booking Details:\n`;
+              if (hotel.confirmation) {
+                description += `   Confirmation: ${hotel.confirmation}\n`;
+              }
+              if (reservationNames.length > 0) {
+                description += `   Names on Reservation:\n`;
+                reservationNames.forEach(name => {
+                  description += `   - ${name}\n`;
+                });
+              }
             }
 
             // Location field: combine hotel name and address
@@ -3860,8 +3884,8 @@ function processTravelEvents(travelGroupsArray) {
               location = hotel.hotel_name;
             }
 
-            // URL: always use notion_url if available (maps links are in description, not URL field)
-            const url = hotel.notion_url || '';
+            // Prefer the explicit hotel URL from the formula, but keep legacy support.
+            const url = hotel.hotel_url || hotel.notion_url || '';
 
             allCalendarEvents.push({
               start: checkOut,
@@ -3887,6 +3911,10 @@ function processTravelEvents(travelGroupsArray) {
           const pickupTime = pickupTimes ? pickupTimes.start : new Date(transport.pickup_time);
           if (!isNaN(pickupTime.getTime())) {
             let description = '';
+
+            if (transport.event_name) {
+              description += `🎉 Event: ${transport.event_name}\n`;
+            }
             
             if (transport.transportation_name) {
               description += `🚗 ${transport.transportation_name}\n`;
@@ -3902,6 +3930,24 @@ function processTravelEvents(travelGroupsArray) {
               transport.personnel.personnel_name.forEach(person => {
                 if (person && typeof person === 'string') {
                   description += `${person}\n`;
+                }
+              });
+            }
+
+            if (Array.isArray(transport.drivers) && transport.drivers.length > 0) {
+              description += `\n🚘 Drivers:\n`;
+              transport.drivers.forEach(driver => {
+                if (driver && typeof driver === 'string') {
+                  description += `${driver}\n`;
+                }
+              });
+            }
+
+            if (Array.isArray(transport.passengers) && transport.passengers.length > 0) {
+              description += `\n🧳 Passengers:\n`;
+              transport.passengers.forEach(passenger => {
+                if (passenger && typeof passenger === 'string') {
+                  description += `${passenger}\n`;
                 }
               });
             }
@@ -3923,7 +3969,12 @@ function processTravelEvents(travelGroupsArray) {
             }
 
             const location = transport.pickup_name || transport.pickup_address || '';
-            const url = transport.notion_url || transport.pickup_address_google || transport.pickup_address_apple || '';
+            const url = transport.transportation_url ||
+              transport.url ||
+              transport.notion_url ||
+              transport.pickup_address_google ||
+              transport.pickup_address_apple ||
+              '';
 
             allCalendarEvents.push({
               start: pickupTime,
@@ -3944,6 +3995,10 @@ function processTravelEvents(travelGroupsArray) {
           const dropOffTime = dropOffTimes ? dropOffTimes.start : new Date(transport.drop_off_time);
           if (!isNaN(dropOffTime.getTime())) {
             let description = '';
+
+            if (transport.event_name) {
+              description += `🎉 Event: ${transport.event_name}\n`;
+            }
             
             if (transport.transportation_name) {
               description += `🚗 ${transport.transportation_name} - Drop-off\n`;
@@ -3962,6 +4017,24 @@ function processTravelEvents(travelGroupsArray) {
                 }
               });
             }
+
+            if (Array.isArray(transport.drivers) && transport.drivers.length > 0) {
+              description += `\n🚘 Drivers:\n`;
+              transport.drivers.forEach(driver => {
+                if (driver && typeof driver === 'string') {
+                  description += `${driver}\n`;
+                }
+              });
+            }
+
+            if (Array.isArray(transport.passengers) && transport.passengers.length > 0) {
+              description += `\n🧳 Passengers:\n`;
+              transport.passengers.forEach(passenger => {
+                if (passenger && typeof passenger === 'string') {
+                  description += `${passenger}\n`;
+                }
+              });
+            }
             
             if (transport.confirmation) {
               description += `\n📋 Confirmation: ${transport.confirmation}\n`;
@@ -3972,7 +4045,12 @@ function processTravelEvents(travelGroupsArray) {
             }
 
             const location = transport.drop_off_name || transport.drop_off_address || '';
-            const url = transport.notion_url || '';
+            const url = transport.transportation_url ||
+              transport.url ||
+              transport.notion_url ||
+              transport.drop_off_address_google ||
+              transport.drop_off_address_apple ||
+              '';
 
             allCalendarEvents.push({
               start: dropOffTime,
@@ -8072,33 +8150,59 @@ END:VCALENDAR`);
             
             if (transport.description) {
               const driverMatch = transport.description.match(/Driver:\s*([^\n]+)/);
-              const passengerMatch = transport.description.match(/Passenger:\s*([^\n]+)/);
-              const driverPhones = parseDriverInfoFromDescription(transport.description);
-              const passengerPhones = parsePassengerInfoFromDescription(transport.description);
+              const passengerMatch = transport.description.match(/Passengers?:\s*([^\n]+)/);
+              const driverContent = driverMatch ? driverMatch[1].trim() : '';
+              const passengerContent = passengerMatch ? passengerMatch[1].trim() : '';
+              const isStructuredDriver = driverContent.startsWith('[');
+              const isStructuredPassenger = passengerContent.startsWith('[');
               
               if (driverMatch) {
-                const drivers = driverMatch[1].split(',').map(d => d.trim()).filter(d => d);
-                if (drivers.length > 0) {
-                  description += 'Drivers:\n';
-                  drivers.forEach(driver => {
-                    const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
-                    const phone = driverPhones[firstName];
-                    description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
-                  });
-                  description += '\n';
+                if (isStructuredDriver) {
+                  const drivers = parseStructuredDriverLine('Driver: ' + driverContent);
+                  if (drivers.length > 0) {
+                    description += 'Drivers:\n';
+                    drivers.forEach(({ name, phone }) => {
+                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
+                    });
+                    description += '\n';
+                  }
+                } else {
+                  const driverPhones = parseDriverInfoFromDescription(transport.description);
+                  const drivers = driverContent.split(',').map(d => d.trim()).filter(d => d);
+                  if (drivers.length > 0) {
+                    description += 'Drivers:\n';
+                    drivers.forEach(driver => {
+                      const firstName = driver.split(/\s+/)[0]?.toLowerCase() || '';
+                      const phone = driverPhones[firstName];
+                      description += `- ${driver}${phone ? ` ${phone}` : ''}\n`;
+                    });
+                    description += '\n';
+                  }
                 }
               }
               
               if (passengerMatch) {
-                const passengers = passengerMatch[1].split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
-                if (passengers.length > 0) {
-                  description += 'Passengers:\n';
-                  passengers.forEach(passenger => {
-                    const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
-                    const phone = passengerPhones[firstName]?.phone;
-                    description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
-                  });
-                  description += '\n';
+                if (isStructuredPassenger) {
+                  const passengers = parseStructuredPassengerLine('Passengers: ' + passengerContent);
+                  if (passengers.length > 0) {
+                    description += 'Passengers:\n';
+                    passengers.forEach(({ name, phone }) => {
+                      description += `- ${name}${phone ? ` ${phone}` : ''}\n`;
+                    });
+                    description += '\n';
+                  }
+                } else {
+                  const passengerPhones = parsePassengerInfoFromDescription(transport.description);
+                  const passengers = passengerContent.split(',').map(p => p.trim()).filter(p => p && p !== 'TBD');
+                  if (passengers.length > 0) {
+                    description += 'Passengers:\n';
+                    passengers.forEach(passenger => {
+                      const firstName = passenger.split(/\s+/)[0]?.toLowerCase() || '';
+                      const phone = passengerPhones[firstName]?.phone;
+                      description += `- ${passenger}${phone ? ` ${phone}` : ''}\n`;
+                    });
+                    description += '\n';
+                  }
                 }
               }
               
