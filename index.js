@@ -3455,6 +3455,59 @@ async function getTravelCalendarData() {
     return `"personnel":[${cleaned}]`;
   });
 
+  // Notion formulas can emit literal control characters (newlines/tabs) inside
+  // JSON string values. Escape those so JSON.parse can handle the payload.
+  const escapeControlCharsInJsonStrings = (input) => {
+    let out = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < input.length; i++) {
+      const ch = input[i];
+
+      if (inString) {
+        if (escaped) {
+          out += ch;
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          out += ch;
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          out += ch;
+          inString = false;
+          continue;
+        }
+        if (ch === '\n') {
+          out += '\\n';
+          continue;
+        }
+        if (ch === '\r') {
+          out += '\\r';
+          continue;
+        }
+        if (ch === '\t') {
+          out += '\\t';
+          continue;
+        }
+        out += ch;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+      }
+      out += ch;
+    }
+
+    return out;
+  };
+
+  travelEventsString = escapeControlCharsInJsonStrings(travelEventsString);
+
   try {
     const travelEvents = JSON.parse(travelEventsString);
 
@@ -3674,12 +3727,17 @@ function processTravelEvents(travelGroupsArray) {
         } else {
           title = hotel.title || 'Hotel';
         }
+
+        // Support both legacy check_in/check_out fields and dates_booked range.
+        const bookedRange = hotel.dates_booked ? parseUnifiedDateTime(hotel.dates_booked) : null;
+        const parsedCheckIn = hotel.check_in ? parseUnifiedDateTime(hotel.check_in) : null;
+        const parsedCheckOut = hotel.check_out ? parseUnifiedDateTime(hotel.check_out) : null;
+        const checkInDate = parsedCheckIn ? parsedCheckIn.start : (hotel.check_in ? new Date(hotel.check_in) : (bookedRange ? bookedRange.start : null));
+        const checkOutDate = parsedCheckOut ? parsedCheckOut.start : (hotel.check_out ? new Date(hotel.check_out) : (bookedRange ? bookedRange.end : null));
         
         // Hotel check-in
-        if (hotel.check_in) {
-          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
-          const checkInTimes = parseUnifiedDateTime(hotel.check_in);
-          const checkIn = checkInTimes ? checkInTimes.start : new Date(hotel.check_in);
+        if (checkInDate) {
+          const checkIn = checkInDate;
           if (!isNaN(checkIn.getTime())) {
             let description = '';
             
@@ -3717,9 +3775,8 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             // Dates section
-            if (hotel.check_out) {
-              const checkOutForDesc = parseUnifiedDateTime(hotel.check_out);
-              const checkOutDesc = checkOutForDesc ? checkOutForDesc.start : new Date(hotel.check_out);
+            if (checkOutDate) {
+              const checkOutDesc = checkOutDate;
               if (!isNaN(checkOutDesc.getTime())) {
                 const nights = Math.ceil((checkOutDesc - checkIn) / (1000 * 60 * 60 * 24));
                 description += `\n📅 Dates:\n`;
@@ -3740,8 +3797,9 @@ function processTravelEvents(travelGroupsArray) {
             }
 
             // Use actual check-in and check-out times
-            const checkOutParsed = hotel.check_out ? parseUnifiedDateTime(hotel.check_out) : null;
-            const checkOutDate = checkOutParsed ? checkOutParsed.start : (hotel.check_out ? new Date(hotel.check_out) : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000));
+            const checkOutForEvent = checkOutDate && !isNaN(checkOutDate.getTime())
+              ? checkOutDate
+              : new Date(checkIn.getTime() + 24 * 60 * 60 * 1000);
             
             // Location field: combine hotel name and address
             let location = '';
@@ -3758,7 +3816,7 @@ function processTravelEvents(travelGroupsArray) {
 
             allCalendarEvents.push({
               start: checkIn,
-              end: checkOutDate,
+              end: checkOutForEvent,
               title: title,
               description: description.trim(),
               location: location,
@@ -3769,10 +3827,8 @@ function processTravelEvents(travelGroupsArray) {
         }
 
         // Hotel check-out
-        if (hotel.check_out) {
-          // Use parseUnifiedDateTime for proper UTC to Pacific conversion
-          const checkOutTimes = parseUnifiedDateTime(hotel.check_out);
-          const checkOut = checkOutTimes ? checkOutTimes.start : new Date(hotel.check_out);
+        if (checkOutDate) {
+          const checkOut = checkOutDate;
           if (!isNaN(checkOut.getTime())) {
             let description = '';
             
@@ -3872,7 +3928,7 @@ function processTravelEvents(travelGroupsArray) {
             allCalendarEvents.push({
               start: pickupTime,
               end: new Date(pickupTime.getTime() + 30 * 60 * 1000), // 30 minute event
-              title: transport.transportation_name || `Transportation Pickup: ${transport.pickup_name || 'Pickup'}`,
+              title: transport.transportation_name || transport.title || `Transportation Pickup: ${transport.pickup_name || 'Pickup'}`,
               description: description.trim(),
               location: location,
               url: url,
@@ -3921,7 +3977,9 @@ function processTravelEvents(travelGroupsArray) {
             allCalendarEvents.push({
               start: dropOffTime,
               end: new Date(dropOffTime.getTime() + 30 * 60 * 1000), // 30 minute event
-              title: transport.transportation_name ? `${transport.transportation_name} - Drop-off` : `Transportation Drop-off: ${transport.drop_off_name || 'Drop-off'}`,
+              title: transport.transportation_name
+                ? `${transport.transportation_name} - Drop-off`
+                : (transport.title || `Transportation Drop-off: ${transport.drop_off_name || 'Drop-off'}`),
               description: description.trim(),
               location: location,
               url: url,
