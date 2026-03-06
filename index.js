@@ -561,9 +561,9 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 
-const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 55000); // hard per-person budget
-const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 45000);
-const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 10000);
+const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 60000); // hard per-person budget
+const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 60000);
+const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 60000);
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
