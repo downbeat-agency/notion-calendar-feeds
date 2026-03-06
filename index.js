@@ -570,6 +570,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 55000); // hard per-person budget
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 45000);
 const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 10000);
+const REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS = Number(process.env.REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS || 3);
 const REGEN_JOB_TTL_SECONDS = Number(process.env.REGEN_JOB_TTL_SECONDS || 900);
 const REGEN_RECENT_SKIP_MS = Number(process.env.REGEN_RECENT_SKIP_MS || (CACHE_TTL * 1000));
 const REGEN_WAIT_TIMEOUT_MS = Number(process.env.REGEN_WAIT_TIMEOUT_MS || 180000);
@@ -709,13 +710,44 @@ async function schedulePersonnelRegeneration(personId, trigger) {
   return task;
 }
 
+function isRetryableRegenFailure(result) {
+  if (!result || result.success) return false;
+  const errorText = String(result.error || result.reason || '').toLowerCase();
+  return (
+    errorText.includes('timed out') ||
+    errorText.includes('timeout') ||
+    errorText.includes('504') ||
+    errorText.includes('gateway')
+  );
+}
+
+async function runRegenerationWithRequiredSuccess(personId, trigger) {
+  let attempt = 0;
+  let lastResult = null;
+  const maxAttempts = Math.max(1, REGEN_REQUIRED_SUCCESS_MAX_ATTEMPTS);
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    lastResult = await regenerateCalendarForPerson(personId, { trigger });
+    if (lastResult?.success) {
+      return lastResult;
+    }
+    if (lastResult?.reason === 'no_events' || !isRetryableRegenFailure(lastResult)) {
+      return lastResult;
+    }
+    console.warn(`⚠️ Retrying personnel regeneration for ${personId} after retryable failure (attempt ${attempt}/${maxAttempts})`);
+  }
+
+  return lastResult || { success: false, personId, error: 'Unknown regeneration failure' };
+}
+
 function drainPersonnelRegenQueue() {
   while (personnelRegenActive < PERSONNEL_REGEN_CONCURRENCY && personnelRegenQueue.length > 0) {
     const next = personnelRegenQueue.shift();
     if (!next) break;
     personnelRegenActive += 1;
     Promise.resolve()
-      .then(() => regenerateCalendarForPerson(next.personId, { trigger: next.trigger }))
+      .then(() => runRegenerationWithRequiredSuccess(next.personId, next.trigger))
       .then(result => next.resolve(result))
       .catch(error => next.resolve({ success: false, personId: next.personId, error: error?.message || 'Unknown regeneration error' }))
       .finally(() => {
