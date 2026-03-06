@@ -334,6 +334,7 @@ const NOTION_CIRCUIT_FAILURE_THRESHOLD = Number(process.env.NOTION_CIRCUIT_FAILU
 const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS || 90000);
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
+const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 2);
 const REGEN_LOCK_TTL_SECONDS = Number(process.env.REGEN_LOCK_TTL_SECONDS || 240);
 
 let notionCallQueue = Promise.resolve();
@@ -485,8 +486,16 @@ async function fetchAllDatabasePages(databaseId, options = {}) {
   const results = [];
   let hasMore = true;
   let cursor = undefined;
+  let pageNum = 0;
+
+  if (databaseId === PERSONNEL_DB) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:fetchAllDatabasePages:entry',message:'Personnel pagination query started',data:{databaseId,pageSize,hasFilter:!!filter,hasSorts:!!sorts},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }
 
   while (hasMore) {
+    pageNum += 1;
     const queryParams = {
       database_id: databaseId,
       page_size: pageSize
@@ -499,6 +508,12 @@ async function fetchAllDatabasePages(databaseId, options = {}) {
     results.push(...(response.results || []));
     hasMore = !!response.has_more;
     cursor = response.next_cursor || undefined;
+
+    if (databaseId === PERSONNEL_DB) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:fetchAllDatabasePages:page',message:'Personnel pagination page fetched',data:{pageNum,pageSize,returned:(response.results||[]).length,hasMore,totalAccumulated:results.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    }
   }
 
   return results;
@@ -525,6 +540,8 @@ const REGEN_TOTAL_TIMEOUT_MS = 180000; // 3 minutes hard cap per regeneration ru
 const REGEN_FETCH_STEP_TIMEOUT_MS = 120000; // allow full retry cycle for slow upstream fetch phases
 const REGEN_PERSON_STEP_TIMEOUT_MS = 30000;
 const REGEN_JOB_TTL_SECONDS = Number(process.env.REGEN_JOB_TTL_SECONDS || 900);
+const REGEN_WAIT_TIMEOUT_MS = Number(process.env.REGEN_WAIT_TIMEOUT_MS || 180000);
+const REGEN_WAIT_POLL_MS = Number(process.env.REGEN_WAIT_POLL_MS || 3000);
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -586,6 +603,24 @@ async function isRegenRunning(personId) {
   if (!redis || !cacheEnabled) return false;
   const job = await readRegenJob(personId);
   return job?.state === 'running';
+}
+
+async function waitForRegenToFinish(personId, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || REGEN_WAIT_TIMEOUT_MS);
+  const pollMs = Number(options.pollMs || REGEN_WAIT_POLL_MS);
+  const startTs = Date.now();
+  let lastJob = null;
+
+  while (Date.now() - startTs < timeoutMs) {
+    lastJob = await readRegenJob(personId);
+    if (lastJob?.state === 'succeeded' || lastJob?.state === 'failed') {
+      return { done: true, timedOut: false, job: lastJob };
+    }
+    await sleep(pollMs);
+  }
+
+  lastJob = await readRegenJob(personId);
+  return { done: false, timedOut: true, job: lastJob };
 }
 
 async function runRegeneration(personId, options = {}) {
@@ -2680,22 +2715,47 @@ async function regenerateAllCalendars() {
 }
 
 // Background job to update all people in parallel batches every 5 minutes
+let backgroundCycleSeq = 0;
+let activeBackgroundCycles = 0;
+let isBackgroundCycleRunning = false;
+
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
-  console.log(`   Processing all people with bounded workers (concurrency=${DEFAULT_REGEN_CONCURRENCY}) each cycle`);
+  console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
   
   setInterval(async () => {
+    const cycleId = `bg_${++backgroundCycleSeq}`;
+    let cycleRegistered = false;
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H1',location:'index.js:startBackgroundJob:intervalTick',message:'Background interval tick fired',data:{cycleId,intervalMs:300000,defaultConcurrency:DEFAULT_REGEN_CONCURRENCY,activeBackgroundCycles},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (isNotionCircuitOpen()) {
         const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
         console.warn(`⏸️  Skipping background job while Notion circuit is open (${waitMs}ms remaining)`);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H4',location:'index.js:startBackgroundJob:circuitSkip',message:'Background cycle skipped by Notion circuit',data:{waitMs},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         return;
       }
+      if (isBackgroundCycleRunning || activeBackgroundCycles > 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H5',location:'index.js:startBackgroundJob:overlapDetected',message:'Background cycle overlap detected and skipped',data:{cycleId,activeBackgroundCycles,isBackgroundCycleRunning},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        console.warn('⏭️  Skipping interval tick because previous background cycle is still running');
+        return;
+      }
+      isBackgroundCycleRunning = true;
+      activeBackgroundCycles += 1;
+      cycleRegistered = true;
       const jobStart = Date.now();
       console.log('\n⏰ Background job triggered - fetching all people...');
       
       const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
       const personIds = people.map(page => page.id);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:startBackgroundJob:peopleLoaded',message:'Personnel loaded for background cycle',data:{count:personIds.length,pageSize:100},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       
       if (personIds.length === 0) {
         console.log('⚠️  No personnel found in database');
@@ -2704,7 +2764,7 @@ function startBackgroundJob() {
       
       console.log(`   Found ${personIds.length} total people to update`);
       
-      const results = await mapWithConcurrency(personIds, DEFAULT_REGEN_CONCURRENCY, async (personId) => {
+      const results = await mapWithConcurrency(personIds, BACKGROUND_REGEN_CONCURRENCY, async (personId) => {
         try {
           return await runRegeneration(personId, { trigger: 'background_cycle', waitForCompletion: true });
         } catch (error) {
@@ -2715,6 +2775,9 @@ function startBackgroundJob() {
       const totalSuccess = results.filter(r => r.success).length;
       const totalSkipped = results.filter(r => r.reason === 'no_events').length;
       const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events').length;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background personnel cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:personIds.length,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
@@ -2865,6 +2928,17 @@ function startBackgroundJob() {
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H6',location:'index.js:startBackgroundJob:cycleError',message:'Background cycle threw error',data:{cycleId,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } finally {
+      if (cycleRegistered) {
+        activeBackgroundCycles = Math.max(0, activeBackgroundCycles - 1);
+        isBackgroundCycleRunning = false;
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H5',location:'index.js:startBackgroundJob:cycleFinalize',message:'Background cycle finalized',data:{cycleId,activeBackgroundCycles,isBackgroundCycleRunning},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
     }
   }, 5 * 60 * 1000); // 5 minutes
 }
@@ -4415,12 +4489,47 @@ app.get('/regenerate/:personId', async (req, res) => {
     }
 
     const reason = result.reason || 'unknown';
+    const waitIfRunning = req.query.wait !== 'false';
+
+    if (reason === 'already_in_progress' && waitIfRunning && redis && cacheEnabled) {
+      const waited = await waitForRegenToFinish(personId);
+      if (waited.done && waited.job?.state === 'succeeded') {
+        return res.json({
+          success: true,
+          message: 'Calendar regenerated successfully',
+          personId,
+          waitedForExistingRun: true,
+          job: waited.job
+        });
+      }
+      if (waited.done && waited.job?.state === 'failed') {
+        return res.status(500).json({
+          success: false,
+          message: 'Calendar regeneration failed',
+          personId,
+          reason: 'failed',
+          waitedForExistingRun: true,
+          job: waited.job,
+          details: waited.job?.error || null
+        });
+      }
+      return res.status(202).json({
+        success: true,
+        message: 'Calendar regeneration still running',
+        personId,
+        reason: 'already_in_progress',
+        waitedForExistingRun: true,
+        timedOutWaiting: true,
+        job: waited.job || result.job || null
+      });
+    }
+
     const statusCode = reason === 'already_in_progress' ? 202 : 500;
     const message = reason === 'already_in_progress'
       ? 'Calendar regeneration already running'
       : 'Calendar regeneration failed';
     return res.status(statusCode).json({
-      success: false,
+      success: reason === 'already_in_progress',
       message,
       personId,
       reason,
