@@ -3387,14 +3387,61 @@ async function getTravelCalendarData() {
   // Clean the string - remove any leading/trailing whitespace
   travelEventsString = travelEventsString.trim();
 
-  // Try to extract JSON if there's extra text (look for first [ and last ])
-  if (travelEventsString.includes('[') && travelEventsString.includes(']')) {
-    const firstBracket = travelEventsString.indexOf('[');
-    const lastBracket = travelEventsString.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-      travelEventsString = travelEventsString.substring(firstBracket, lastBracket + 1);
+  // Extract only the first complete top-level JSON container (object/array).
+  // This tolerates Notion formulas that append extra non-JSON text.
+  const extractFirstJsonContainer = (input) => {
+    const startObj = input.indexOf('{');
+    const startArr = input.indexOf('[');
+    if (startObj === -1 && startArr === -1) return input;
+
+    let start = -1;
+    if (startObj === -1) start = startArr;
+    else if (startArr === -1) start = startObj;
+    else start = Math.min(startObj, startArr);
+
+    const openChar = input[start];
+    const closeChar = openChar === '{' ? '}' : ']';
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < input.length; i++) {
+      const ch = input[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (ch === openChar) depth += 1;
+      if (ch === closeChar) {
+        depth -= 1;
+        if (depth === 0) {
+          return input.slice(start, i + 1);
+        }
+      }
     }
-  }
+
+    return input.slice(start);
+  };
+
+  travelEventsString = extractFirstJsonContainer(travelEventsString);
 
   // Fix double commas (common JSON formatting issue)
   travelEventsString = travelEventsString.replace(/,,+/g, ',');
@@ -3410,7 +3457,24 @@ async function getTravelCalendarData() {
 
   try {
     const travelEvents = JSON.parse(travelEventsString);
-    return Array.isArray(travelEvents) ? travelEvents : [];
+
+    // Legacy support: accept either an array of travel groups, or a single
+    // travel group object with flights/hotels/ground_transportation.
+    if (Array.isArray(travelEvents)) {
+      return travelEvents;
+    }
+    if (
+      travelEvents &&
+      typeof travelEvents === 'object' &&
+      (
+        Array.isArray(travelEvents.flights) ||
+        Array.isArray(travelEvents.hotels) ||
+        Array.isArray(travelEvents.ground_transportation)
+      )
+    ) {
+      return [travelEvents];
+    }
+    return [];
   } catch (e) {
     console.error('Error parsing Travel Admin JSON. First 200 chars:', travelEventsString?.substring(0, 200));
     console.error('Full length:', travelEventsString?.length);
