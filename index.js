@@ -687,6 +687,30 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   };
 }
 
+async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
+  if (!CALENDAR_DATA_DB) {
+    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  const queryStart = Date.now();
+  const response = await retryNotionCall(() =>
+    notion.databases.query({
+      database_id: CALENDAR_DATA_DB,
+      page_size: 1,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    }),
+    maxRetries
+  );
+  console.log(`📊 CalendarData single-query timing for ${personId}: ${Date.now() - queryStart}ms`);
+
+  return processCalendarDataResponse(response);
+}
+
 // Helper function to get calendar data from Calendar Data database
 async function getCalendarDataFromDatabase(personId, options = {}) {
   const { maxRetries = 5, allowFallbackQuery = false } = options;
@@ -1726,7 +1750,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
     const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
     const calendarData = await withTimeout(
-      getCalendarDataFromDatabase(personId, { maxRetries: 6 }),
+      getCalendarDataFromDatabaseQueryStyle(personId, 6),
       fetchTimeoutMs,
       'Personnel calendar-data fetch timed out'
     );
