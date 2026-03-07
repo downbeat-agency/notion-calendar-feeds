@@ -892,10 +892,12 @@ function processCalendarDataProperties(calendarData) {
     return normalized;
   });
 
+  const personName = extractPropertyStringFromItem(calendarData.Name) || 'Unknown';
+
   // Transform into the same format as the old system
   // Return events with shared flights, hotels, rehearsals, and transportation
   return {
-    personName: 'Unknown', // Will be updated by the calling function
+    personName,
     events: events.map(event => ({
       event_name: event.event_name,
       event_date: event.event_date,
@@ -1780,15 +1782,8 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       return { success: false, personId, reason: 'no_events' };
     }
     
-    // Get person name from Personnel database
-    const personFetchTimeoutMs = Math.min(REGEN_PERSON_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
-    const person = await withTimeout(
-      retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), 6),
-      personFetchTimeoutMs,
-      'Personnel person fetch timed out'
-    );
-    const personName = person.properties?.['Full Name']?.formula?.string || 'Unknown';
-    const firstName = person.properties?.['First Name']?.formula?.string || personName.split(' ')[0];
+    const personName = calendarData.personName || 'Unknown';
+    const firstName = personName.split(' ')[0];
     
     console.log(`Processing calendar for ${personName} (${calendarData.events.length} events)`);
 
