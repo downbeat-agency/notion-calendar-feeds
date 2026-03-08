@@ -3222,7 +3222,7 @@ function processAdminEvents(eventsArray) {
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_pco || '',
+              url: rehearsal.rehearsal_link || '',
               mainEvent: event.event_name || ''
             });
           }
