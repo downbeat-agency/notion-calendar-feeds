@@ -17,7 +17,8 @@ Each data source can generate multiple calendar events (main events + flights + 
   - `Hotels` - Hotel bookings - **9 fields**
   - `Transportation` - Ground transport - **7 fields**
   - `Team Calendar` - Office days and team events - **5 fields**
-- **Total**: 64 fields across 6 event types
+- `Event Notes Reminders` - Reminder notes - **3 fields**
+- **Total**: 67 fields across 7 event types
 
 ## Event Detection Rules
 
@@ -283,6 +284,28 @@ Each data source can generate multiple calendar events (main events + flights + 
 }
 ```
 
+### 7. **Event Note Reminder Events**
+**Triggers:** Top-level `Event Notes Reminders` field
+
+**Available Fields (3 total):**
+- `description` - Reminder text shown in the calendar description
+- `remind_date` - Reminder timestamp for when the calendar event should appear (supports `@February 10, 2026 9:00 AM`)
+- `notion_link` - Link to Notion page
+
+**Event Notes Reminder Mapping:**
+```javascript
+// Requires: reminder.remind_date
+{
+  type: 'event_note_reminder',
+  title: "🔔 Event Reminder",
+  start: reminder.remind_date,
+  end: reminder.remind_date,
+  description: reminder.description || "",
+  location: "",
+  url: reminder.notion_link || ""
+}
+```
+
 ## Required JSON Structure
 
 ### "Calendar Data" Database Format
@@ -300,7 +323,9 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Transportation": "[{\"title\":\"MEET UP: Band Sprinter ( Wedding)\",\"start\":\"2025-09-20T14:00:00+00:00\",\"end\":\"2025-09-20T14:00:00+00:00\",\"transportation_url\":\"https://www.notion.so/22839e4a65a98008b326f8e0a9f17129\",\"location\":\"149 N Halstead St, Pasadena, CA 91107\",\"description\":\"Driver: [driver_name:Diego De la Rosadriver_phone:(626) 991-4302]\\nPassengers: [passenger_name:Eric Englandpassenger_phone:(555) 123-4567]\\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107\",\"type\":\"ground_transport_meeting\"}]",
   
-  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]"
+  "Team Calendar": "[{\"title\":\"Office\",\"address\":\"123 W Bellevue Dr Ste 4, Pasadena CA 91105\",\"date\":\"2025-09-15T17:30:00+00:00/2025-09-16T01:30:00+00:00\",\"notes\":\"\",\"dcos\":\"Reminder: Submit DCOS report by EOD\",\"notion_link\":\"https://www.notion.so/17839e4a65a980fb8409c4b2231408b9\"}]",
+  
+  "Event Notes Reminders": "[{\"description\":\"Gig Attire!! Futuristic Glam - Think Metallics, Shimmery Fabrics, Neon Props, Sleek Styles, Bonus Points if it glows under black light\",\"remind_date\":\"@February 10, 2026 9:00 AM\",\"notion_link\":\"https://www.notion.so/2fe39e4a65a980e29a0cffb1c37f150d\"}]"
 }
 ```
 
@@ -317,10 +342,11 @@ The database uses separate formula fields for each event type. Each field contai
     "rehearsals": 16,             // Rehearsal events
     "hotels": 7,                  // Hotel bookings
     "groundTransport": 10,        // Ground transportation events (pickup, dropoff, meeting)
-    "teamCalendar": 53            // Office days and team events
+    "teamCalendar": 53,           // Office days and team events
+    "eventReminders": 4           // Event note reminders
   },
   "events": [
-    // Array of all calendar events (main + flights + layovers + rehearsals + hotels + transport + team)
+    // Array of all calendar events (main + flights + layovers + rehearsals + hotels + transport + team + reminders)
   ]
 }
 ```
@@ -336,6 +362,7 @@ The database uses separate formula fields for each event type. Each field contai
 7. **Hotels**: `type: 'hotel'` - One per hotel booking
 8. **Transportation**: `type: 'ground_transport_pickup'|'ground_transport_dropoff'|'ground_transport_meeting'|'ground_transport'` - One per transport event
 9. **Team Calendar**: `type: 'team_calendar'` - One per office day or team event
+10. **Event Note Reminders**: `type: 'event_note_reminder'` - One per reminder note with a `remind_date`
 
 ## Calendar Integration
 

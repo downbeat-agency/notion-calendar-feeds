@@ -225,7 +225,8 @@ function getAlarmsForEvent(eventType, eventTitle = '') {
     'ground_transport': [],                 // NO ALARM
     
     // TEAM CALENDAR: None
-    'team_calendar': []                     // NO ALARM
+    'team_calendar': [],                    // NO ALARM
+    'event_note_reminder': []              // NO ALARM
   };
   
   return alarmConfigs[eventType] || [];
@@ -602,6 +603,7 @@ async function getCalendarDataPropertyIdMap(maxRetries = 5) {
     Hotels: props.Hotels?.id || null,
     Rehearsals: props.Rehearsals?.id || null,
     TeamCalendar: props['Team Calendar']?.id || null,
+    EventNotesReminders: props['Event Notes Reminders']?.id || null,
   };
   return calendarDataPropertyIdCache;
 }
@@ -676,6 +678,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   const hotelsStr = await fetchPagePropertyString(pageId, ids.Hotels, maxRetries);
   const rehearsalsStr = await fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries);
   const teamCalendarStr = await fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries);
+  const eventNotesRemindersStr = await fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries);
 
   return {
     Events: { formula: { string: eventsStr || '[]' } },
@@ -684,6 +687,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
     Hotels: { formula: { string: hotelsStr || '[]' } },
     Rehearsals: { formula: { string: rehearsalsStr || '[]' } },
     'Team Calendar': { formula: { string: teamCalendarStr || '[]' } },
+    'Event Notes Reminders': { formula: { string: eventNotesRemindersStr || '[]' } },
   };
 }
 
@@ -791,7 +795,7 @@ function processCalendarDataProperties(calendarData) {
 
   
   // Parse all the JSON strings with better error handling
-  let events, flights, transportation, hotels, rehearsals, teamCalendar;
+  let events, flights, transportation, hotels, rehearsals, teamCalendar, eventNotesReminders;
   
   const rawFormulaString = calendarData.Events?.formula?.string || '';
   
@@ -835,6 +839,13 @@ function processCalendarDataProperties(calendarData) {
   } catch (e) {
     console.error('Error parsing Team Calendar JSON:', calendarData['Team Calendar']?.formula?.string?.substring(0, 100));
     throw new Error(`Team Calendar JSON parse error: ${e.message}`);
+  }
+
+  try {
+    eventNotesReminders = JSON.parse(calendarData['Event Notes Reminders']?.formula?.string || '[]');
+  } catch (e) {
+    console.error('Error parsing Event Notes Reminders JSON:', calendarData['Event Notes Reminders']?.formula?.string?.substring(0, 100));
+    throw new Error(`Event Notes Reminders JSON parse error: ${e.message}`);
   }
 
   // Normalize Team Calendar keys (handle variations like DCOS vs dcos, Title vs title, etc.)
@@ -892,6 +903,44 @@ function processCalendarDataProperties(calendarData) {
     return normalized;
   });
 
+  eventNotesReminders = eventNotesReminders.map(original => {
+    const normalized = { ...original };
+
+    Object.keys(original || {}).forEach(key => {
+      const normalizedKey = key.toLowerCase().trim();
+      const value = original[key];
+
+      switch (normalizedKey) {
+        case 'description':
+        case 'title':
+          if (!normalized.description && typeof value === 'string') {
+            normalized.description = value;
+          }
+          break;
+        case 'remind_date':
+        case 'reminddate':
+        case 'date':
+          if (!normalized.remind_date && typeof value === 'string') {
+            normalized.remind_date = value;
+          }
+          break;
+        case 'notion_link':
+        case 'notionlink':
+        case 'link':
+          if (!normalized.notion_link && typeof value === 'string') {
+            normalized.notion_link = value;
+          }
+          break;
+        default:
+          break;
+      }
+    });
+
+    normalized.description = normalized.description ?? '';
+
+    return normalized;
+  });
+
   const personName = extractPropertyStringFromItem(calendarData.Name) || 'Unknown';
 
   // Transform into the same format as the old system
@@ -924,7 +973,8 @@ function processCalendarDataProperties(calendarData) {
     rehearsals: rehearsals,
     hotels: hotels,
     ground_transport: transportation,
-    team_calendar: teamCalendar
+    team_calendar: teamCalendar,
+    event_note_reminders: eventNotesReminders
   };
 }
 
@@ -1769,16 +1819,18 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const topLevelHotels = events.hotels || [];
     const topLevelTransport = events.ground_transport || [];
     const topLevelTeamCalendar = events.team_calendar || [];
+    const topLevelEventNoteReminders = events.event_note_reminders || [];
     const hasAnySourceData =
       eventsArray.length > 0 ||
       topLevelFlights.length > 0 ||
       topLevelRehearsals.length > 0 ||
       topLevelHotels.length > 0 ||
       topLevelTransport.length > 0 ||
-      topLevelTeamCalendar.length > 0;
+      topLevelTeamCalendar.length > 0 ||
+      topLevelEventNoteReminders.length > 0;
 
     if (!hasAnySourceData) {
-      console.warn(`⚠️  No source event data for ${personId}: events=${eventsArray.length}, flights=${topLevelFlights.length}, rehearsals=${topLevelRehearsals.length}, hotels=${topLevelHotels.length}, transport=${topLevelTransport.length}, team=${topLevelTeamCalendar.length}`);
+      console.warn(`⚠️  No source event data for ${personId}: events=${eventsArray.length}, flights=${topLevelFlights.length}, rehearsals=${topLevelRehearsals.length}, hotels=${topLevelHotels.length}, transport=${topLevelTransport.length}, team=${topLevelTeamCalendar.length}, reminders=${topLevelEventNoteReminders.length}`);
       return { success: false, personId, reason: 'no_events' };
     }
     
@@ -2557,6 +2609,26 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       });
     }
 
+    if (topLevelEventNoteReminders.length > 0) {
+      topLevelEventNoteReminders.forEach(reminder => {
+        if (reminder.remind_date) {
+          const reminderTimes = parseUnifiedDateTime(reminder.remind_date);
+          if (reminderTimes) {
+            allCalendarEvents.push({
+              type: 'event_note_reminder',
+              title: '🔔 Event Reminder',
+              start: reminderTimes.start,
+              end: reminderTimes.end,
+              description: reminder.description || '',
+              location: '',
+              url: reminder.notion_link || '',
+              mainEvent: ''
+            });
+          }
+        }
+      });
+    }
+
     // Generate ICS calendar
     const calendar = ical({ 
       name: `Downbeat iCal (${firstName})`,
@@ -2592,7 +2664,9 @@ async function regenerateCalendarForPerson(personId, options = {}) {
         flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
         rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
         hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length
+        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length,
+        teamCalendar: allCalendarEvents.filter(e => e.type === 'team_calendar').length,
+        eventReminders: allCalendarEvents.filter(e => e.type === 'event_note_reminder').length
       },
       events: allCalendarEvents
     };
@@ -4458,6 +4532,7 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
         transportation: props.Transportation?.formula?.string || props.Transportation?.rich_text?.[0]?.text?.content || 'No transportation',
         hotels: props.Hotels?.formula?.string || props.Hotels?.rich_text?.[0]?.text?.content || 'No hotels',
         teamCalendar: props['Team Calendar']?.formula?.string || props['Team Calendar']?.rich_text?.[0]?.text?.content || 'No team calendar',
+        eventNotesReminders: props['Event Notes Reminders']?.formula?.string || props['Event Notes Reminders']?.rich_text?.[0]?.text?.content || 'No event notes reminders',
         // Show all available properties for debugging
         allProperties: Object.keys(props)
       };
@@ -4475,9 +4550,11 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
         const transportationArray = JSON.parse(event.transportation || '[]');
         const hotelsArray = JSON.parse(event.hotels || '[]');
         const teamCalendarArray = JSON.parse(event.teamCalendar || '[]');
+        const eventNotesRemindersArray = JSON.parse(event.eventNotesReminders || '[]');
         
         totalActualEvents += eventsArray.length + flightsArray.length + rehearsalsArray.length + 
-                           transportationArray.length + hotelsArray.length + teamCalendarArray.length;
+                           transportationArray.length + hotelsArray.length + teamCalendarArray.length +
+                           eventNotesRemindersArray.length;
         
         // DEBUG: Extract calltime info for specific events
         eventsArray.forEach(evt => {
