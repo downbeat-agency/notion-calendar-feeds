@@ -128,14 +128,6 @@ const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
 const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
-const PERSONNEL_HAS_CALENDAR_FILTER = {
-  property: 'Has Calendar',
-  formula: {
-    checkbox: {
-      equals: true
-    }
-  }
-};
 
 // Cache TTL in seconds (8 minutes for 5-minute background refresh cycle)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 480;
@@ -2646,14 +2638,10 @@ async function regenerateAllCalendars() {
     }
     console.log('🚀 Starting bounded-concurrency calendar regeneration...');
 
-    const people = await fetchAllDatabasePages(PERSONNEL_DB, {
-      pageSize: 100,
-      filter: PERSONNEL_HAS_CALENDAR_FILTER,
-      maxRetries: 5
-    });
+    const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
     const personIds = people.map(page => page.id);
     const concurrency = Math.max(1, DEFAULT_REGEN_CONCURRENCY);
-    console.log(`Found ${personIds.length} personnel with Has Calendar enabled`);
+    console.log(`Found ${personIds.length} people in Personnel database`);
     console.log(`Processing with worker concurrency=${concurrency}`);
 
     const allResults = await mapWithConcurrency(personIds, concurrency, async (personId) => {
@@ -2729,11 +2717,7 @@ function startBackgroundJob() {
       const jobStart = Date.now();
       verboseLog('\n⏰ Background job triggered - fetching all people...');
       
-      const people = await fetchAllDatabasePages(PERSONNEL_DB, {
-        pageSize: 100,
-        filter: PERSONNEL_HAS_CALENDAR_FILTER,
-        maxRetries: 5
-      });
+      const people = await fetchAllDatabasePages(PERSONNEL_DB, { pageSize: 100, maxRetries: 5 });
       const personIds = people.map(page => page.id);
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:startBackgroundJob:peopleLoaded',message:'Personnel loaded for background cycle',data:{count:personIds.length,pageSize:100},timestamp:Date.now()})}).catch(()=>{});
