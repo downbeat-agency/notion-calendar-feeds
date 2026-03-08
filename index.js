@@ -3149,17 +3149,8 @@ function processAdminEvents(eventsArray) {
         
         // Notion URL is in URL field, not in description
 
-        let title = event.event_name;
-        
-        // Add guitar emoji for gigs
-        if (title && (
-          title.toLowerCase().includes('gig') ||
-          title.toLowerCase().includes('show') ||
-          title.toLowerCase().includes('performance') ||
-          title.toLowerCase().includes('concert')
-        )) {
-          title = `🎸 ${title}`;
-        }
+        const rawTitle = typeof event.event_name === 'string' ? event.event_name.trim() : '';
+        const title = rawTitle ? `🎸 ${rawTitle}` : '🎸 Event';
 
         // Build location from venue and venue_address
         let location = '';
