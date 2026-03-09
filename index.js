@@ -917,6 +917,13 @@ function processCalendarDataProperties(calendarData) {
             normalized.description = value;
           }
           break;
+        case 'event_name':
+        case 'eventname':
+        case 'event':
+          if (!normalized.event_name && typeof value === 'string') {
+            normalized.event_name = value;
+          }
+          break;
         case 'remind_date':
         case 'reminddate':
         case 'date':
@@ -2614,12 +2621,13 @@ async function regenerateCalendarForPerson(personId, options = {}) {
         if (reminder.remind_date) {
           const reminderTimes = parseUnifiedDateTime(reminder.remind_date);
           if (reminderTimes) {
+            const reminderDescription = [reminder.event_name, reminder.description].filter(Boolean).join('\n\n');
             allCalendarEvents.push({
               type: 'event_note_reminder',
               title: '🔔 Event Reminder',
               start: reminderTimes.start,
               end: reminderTimes.end,
-              description: reminder.description || '',
+              description: reminderDescription,
               location: '',
               url: reminder.notion_link || '',
               mainEvent: ''
