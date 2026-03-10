@@ -2792,6 +2792,18 @@ async function regenerateAllCalendars() {
 let backgroundCycleSeq = 0;
 let activeBackgroundCycles = 0;
 let isBackgroundCycleRunning = false;
+let activeManualRegens = 0;
+
+async function waitForManualRegensToDrain(context = 'background cycle') {
+  if (activeManualRegens <= 0) {
+    return;
+  }
+
+  console.warn(`⏸️  Deferring ${context} while ${activeManualRegens} manual regen(s) are running`);
+  while (activeManualRegens > 0) {
+    await sleep(1000);
+  }
+}
 
 function startBackgroundJob() {
   console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
@@ -2810,6 +2822,10 @@ function startBackgroundJob() {
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H4',location:'index.js:startBackgroundJob:circuitSkip',message:'Background cycle skipped by Notion circuit',data:{waitMs},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
+        return;
+      }
+      if (activeManualRegens > 0) {
+        console.warn(`⏸️  Skipping background job while ${activeManualRegens} manual regen(s) are running`);
         return;
       }
       if (isBackgroundCycleRunning || activeBackgroundCycles > 0) {
@@ -2840,6 +2856,7 @@ function startBackgroundJob() {
       
       const results = await mapWithConcurrency(personIds, BACKGROUND_REGEN_CONCURRENCY, async (personId) => {
         try {
+          await waitForManualRegensToDrain(`background cycle ${cycleId}`);
           return await regenerateCalendarForPerson(personId, { trigger: 'background_cycle' });
         } catch (error) {
           return { success: false, personId, error: error.message };
@@ -4751,6 +4768,7 @@ app.get('/debug/admin-parse', async (req, res) => {
 
 // Regeneration endpoint - regenerate calendar for a specific person
 app.get('/regenerate/:personId', async (req, res) => {
+  let manualRegenRegistered = false;
   try {
     let { personId } = req.params;
     
@@ -4758,6 +4776,9 @@ app.get('/regenerate/:personId', async (req, res) => {
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
+
+    activeManualRegens += 1;
+    manualRegenRegistered = true;
 
     const result = await regenerateCalendarForPerson(personId, {
       trigger: 'manual_regen',
@@ -4791,6 +4812,10 @@ app.get('/regenerate/:personId', async (req, res) => {
       error: 'Error regenerating calendar',
       details: error.message
     });
+  } finally {
+    if (manualRegenRegistered) {
+      activeManualRegens = Math.max(0, activeManualRegens - 1);
+    }
   }
 });
 
