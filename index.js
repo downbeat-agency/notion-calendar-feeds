@@ -2007,7 +2007,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
     const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
     const calendarData = await withTimeout(
-      getCalendarDataFromDatabaseQueryStyle(personId, 6),
+      getCalendarDataFromDatabase(personId, { maxRetries: 6, allowFallbackQuery: true }),
       fetchTimeoutMs,
       'Personnel calendar-data fetch timed out'
     );
