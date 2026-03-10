@@ -4898,12 +4898,12 @@ app.get('/regenerate/:personId', async (req, res) => {
   }
 });
 
-app.get('/regenerate/calendar-data/:pageId', async (req, res) => {
+app.get('/calendar-data/regenerate/:pageId', async (req, res) => {
   const encodedPageId = encodeURIComponent(req.params.pageId);
-  return res.redirect(307, `/regenerate/calendar-data?id=${encodedPageId}`);
+  return res.redirect(307, `/calendar-data/regenerate?id=${encodedPageId}`);
 });
 
-app.get('/regenerate/calendar-data', async (req, res) => {
+app.get('/calendar-data/regenerate', async (req, res) => {
   let manualRegenRegistered = false;
   try {
     const calendarDataInput = req.query.id || req.query.url || req.query.pageId;

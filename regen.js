@@ -19,7 +19,7 @@ if (!target) {
 async function regen() {
   const baseUrl = BASE_URL.replace(/\/$/, '');
   const url = useCalendarDataRoute
-    ? `${baseUrl}/regenerate/calendar-data?id=${encodeURIComponent(target)}`
+    ? `${baseUrl}/calendar-data/regenerate?id=${encodeURIComponent(target)}`
     : `${baseUrl}/regenerate/${target}`;
   console.log(`Regenerating calendar for ${target}...`);
   try {
