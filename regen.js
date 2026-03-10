@@ -1,20 +1,27 @@
 #!/usr/bin/env node
-// Regenerate calendar for one person. Usage: node regen.js <personId>
-// personId can be 32-char hex or UUID. BASE_URL env overrides (e.g. http://localhost:3000).
+// Regenerate calendar for one person or Calendar Data page.
+// Usage:
+//   node regen.js <personId>
+//   node regen.js --calendar-data <calendarDataPageIdOrUrl>
+// BASE_URL env overrides (e.g. http://localhost:3000).
 
 const BASE_URL = process.env.BASE_URL || 'https://notion-calendar-feeds-production.up.railway.app';
 const args = process.argv.slice(2);
-const personId = args.find(a => !a.startsWith('--')) || '';
+const target = args.find(a => !a.startsWith('--')) || '';
+const useCalendarDataRoute = args.includes('--calendar-data');
 
-if (!personId) {
+if (!target) {
   console.error('Usage: node regen.js <personId>');
+  console.error('   or: node regen.js --calendar-data <calendarDataPageIdOrUrl>');
   process.exit(1);
 }
 
 async function regen() {
   const baseUrl = BASE_URL.replace(/\/$/, '');
-  const url = `${baseUrl}/regenerate/${personId}`;
-  console.log(`Regenerating calendar for ${personId}...`);
+  const url = useCalendarDataRoute
+    ? `${baseUrl}/regenerate/calendar-data?id=${encodeURIComponent(target)}`
+    : `${baseUrl}/regenerate/${target}`;
+  console.log(`Regenerating calendar for ${target}...`);
   try {
     const res = await fetch(url, { method: 'GET' });
     const data = await res.json().catch(() => ({}));

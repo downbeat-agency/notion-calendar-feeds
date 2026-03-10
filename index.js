@@ -691,6 +691,82 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   };
 }
 
+function normalizeNotionPageId(input) {
+  if (!input || typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const directMatch = trimmed.match(/[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+  const rawId = directMatch ? directMatch[0] : null;
+  if (!rawId) return null;
+
+  return rawId.includes('-')
+    ? rawId.toLowerCase()
+    : rawId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5').toLowerCase();
+}
+
+function getPrimaryRelationPageId(propertyValue) {
+  return Array.isArray(propertyValue?.relation) && propertyValue.relation.length > 0
+    ? propertyValue.relation[0].id
+    : null;
+}
+
+function hasInlineCalendarDataFormulaStrings(calendarDataProperties) {
+  const requiredKeys = [
+    'Events',
+    'Flights',
+    'Transportation',
+    'Hotels',
+    'Rehearsals',
+    'Team Calendar',
+    'Event Notes Reminders'
+  ];
+
+  return requiredKeys.every(key => {
+    const formula = calendarDataProperties?.[key]?.formula;
+    return formula?.type === 'string' && typeof formula.string === 'string';
+  });
+}
+
+async function getCalendarDataFromPageIdOrUrl(calendarDataInput, maxRetries = 5) {
+  const pageId = normalizeNotionPageId(calendarDataInput);
+  if (!pageId) {
+    throw new Error('Invalid Calendar Data page ID or URL');
+  }
+
+  const page = await retryNotionCall(
+    () => notion.pages.retrieve({ page_id: pageId }),
+    maxRetries
+  );
+
+  const linkedPersonId = getPrimaryRelationPageId(page?.properties?.Personnel);
+  const pageProperties = page?.properties || {};
+
+  if (hasInlineCalendarDataFormulaStrings(pageProperties)) {
+    try {
+      return {
+        pageId,
+        linkedPersonId,
+        calendarData: processCalendarDataProperties(pageProperties),
+        source: 'page_payload'
+      };
+    } catch (error) {
+      console.warn(`⚠️  Direct Calendar Data payload parse failed for ${pageId}, retrying via property fetch: ${error.message}`);
+    }
+  }
+
+  const leanProperties = await getCalendarDataPagePropertiesLean(pageId, maxRetries);
+  return {
+    pageId,
+    linkedPersonId,
+    calendarData: processCalendarDataProperties({
+      ...pageProperties,
+      ...leanProperties
+    }),
+    source: 'page_properties'
+  };
+}
+
 async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
@@ -1988,7 +2064,7 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 
 // Helper function to rebuild and cache a single person's calendar.
 async function regenerateCalendarForPerson(personId, options = {}) {
-  const { trigger = 'unknown', clearCache = false } = options;
+  const { trigger = 'unknown', clearCache = false, preloadedCalendarData = null } = options;
   const regenStartedAt = Date.now();
 
   try {
@@ -2004,13 +2080,16 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     }
 
     // Enforce a hard rebuild time budget to prevent indefinite requests.
-    const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
-    const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
-    const calendarData = await withTimeout(
-      getCalendarDataFromDatabaseQueryStyle(personId, 6),
-      fetchTimeoutMs,
-      'Personnel calendar-data fetch timed out'
-    );
+    let calendarData = preloadedCalendarData;
+    if (!calendarData) {
+      const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
+      const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
+      calendarData = await withTimeout(
+        getCalendarDataFromDatabaseQueryStyle(personId, 6),
+        fetchTimeoutMs,
+        'Personnel calendar-data fetch timed out'
+      );
+    }
 
     if (!calendarData) {
       console.log(`⚠️  No calendar data found for ${personId}, skipping...`);
@@ -4810,6 +4889,86 @@ app.get('/regenerate/:personId', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error regenerating calendar',
+      details: error.message
+    });
+  } finally {
+    if (manualRegenRegistered) {
+      activeManualRegens = Math.max(0, activeManualRegens - 1);
+    }
+  }
+});
+
+app.get('/regenerate/calendar-data/:pageId', async (req, res) => {
+  const encodedPageId = encodeURIComponent(req.params.pageId);
+  return res.redirect(307, `/regenerate/calendar-data?id=${encodedPageId}`);
+});
+
+app.get('/regenerate/calendar-data', async (req, res) => {
+  let manualRegenRegistered = false;
+  try {
+    const calendarDataInput = req.query.id || req.query.url || req.query.pageId;
+    if (!calendarDataInput || typeof calendarDataInput !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Calendar Data page ID or URL is required',
+        message: 'Provide ?id=<page-id> or ?url=<notion-url>'
+      });
+    }
+
+    activeManualRegens += 1;
+    manualRegenRegistered = true;
+
+    const fetchTimeoutMs = REGEN_FETCH_STEP_TIMEOUT_MS;
+    const { pageId, linkedPersonId, calendarData, source } = await withTimeout(
+      getCalendarDataFromPageIdOrUrl(calendarDataInput, 6),
+      fetchTimeoutMs,
+      'Calendar Data page fetch timed out'
+    );
+
+    if (!linkedPersonId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Calendar Data row is not linked to a Personnel record',
+        calendarDataPageId: pageId
+      });
+    }
+
+    const result = await regenerateCalendarForPerson(linkedPersonId, {
+      trigger: 'manual_regen_calendar_data',
+      clearCache: true,
+      preloadedCalendarData: calendarData
+    });
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        message: 'Calendar regenerated successfully',
+        personId: linkedPersonId,
+        personName: result.personName,
+        eventCount: result.eventCount,
+        calendarDataPageId: pageId,
+        calendarDataSource: source,
+        cache_cleared: true,
+        cached_for_seconds: CACHE_TTL
+      });
+    }
+
+    const statusCode = result.reason === 'no_events' ? 404 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: result.reason === 'no_events'
+        ? 'No events found for this Calendar Data record'
+        : 'Calendar regeneration failed',
+      personId: linkedPersonId,
+      calendarDataPageId: pageId,
+      reason: result.reason || 'unknown',
+      details: result.error || null
+    });
+  } catch (error) {
+    console.error('Calendar Data regeneration endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error regenerating calendar from Calendar Data',
       details: error.message
     });
   } finally {
