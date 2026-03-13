@@ -417,6 +417,23 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const GOOGLE_CALENDAR_TIMEZONE = 'America/Los_Angeles';
+
+function addCalendarTimezoneMetadata(icsData) {
+  if (typeof icsData !== 'string' || icsData.includes('X-WR-TIMEZONE:')) {
+    return icsData;
+  }
+
+  return icsData.replace(
+    /(VERSION:2\.0\r?\n)/,
+    `$1X-WR-TIMEZONE:${GOOGLE_CALENDAR_TIMEZONE}\r\n`
+  );
+}
+
+function serializeCalendar(calendar) {
+  return addCalendarTimezoneMetadata(calendar.toString());
+}
+
 function getRetryAfterMs(error) {
   const rawHeader = error?.headers?.['retry-after']
     || error?.headers?.['Retry-After']
@@ -2765,7 +2782,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       });
     });
 
-    const icsData = calendar.toString();
+    const icsData = serializeCalendar(calendar);
 
     const jsonResponse = {
       personName,
@@ -2989,7 +3006,7 @@ function startBackgroundJob() {
               });
             });
             
-            const icsData = calendar.toString();
+            const icsData = serializeCalendar(calendar);
             await redis.set('calendar:admin:ics', icsData);
             
             // Also cache JSON
@@ -3040,7 +3057,7 @@ function startBackgroundJob() {
               });
             });
             
-            const icsData = calendar.toString();
+            const icsData = serializeCalendar(calendar);
             await redis.set('calendar:travel:ics', icsData);
             
             // Also cache JSON
@@ -3085,7 +3102,7 @@ function startBackgroundJob() {
                 alarms: getAlarmsForEvent(event.type, event.title)
               });
             });
-            const icsData = calendar.toString();
+            const icsData = serializeCalendar(calendar);
             await redis.set('calendar:blockout:ics', icsData);
             const jsonData = JSON.stringify({
               calendar_name: 'Blockout Calendar',
@@ -6902,7 +6919,7 @@ app.get('/admin/calendar', async (req, res) => {
         });
       });
       
-      const icsData = calendar.toString();
+      const icsData = serializeCalendar(calendar);
       
       // Cache the ICS
       if (redis && cacheEnabled) {
@@ -6978,7 +6995,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
       });
     });
     
-    const icsData = calendar.toString();
+    const icsData = serializeCalendar(calendar);
     
     // Generate JSON
     const jsonData = JSON.stringify({
@@ -7188,7 +7205,7 @@ app.get('/travel/calendar', async (req, res) => {
         });
       });
       
-      const icsData = calendar.toString();
+      const icsData = serializeCalendar(calendar);
       
       // Cache the ICS
       if (redis && cacheEnabled) {
@@ -7264,7 +7281,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
       });
     });
     
-    const icsData = calendar.toString();
+    const icsData = serializeCalendar(calendar);
     
     // Generate JSON
     const jsonData = JSON.stringify({
@@ -7474,7 +7491,7 @@ app.get('/blockout/calendar', async (req, res) => {
         });
       });
       
-      const icsData = calendar.toString();
+      const icsData = serializeCalendar(calendar);
       
       // Cache the ICS
       if (redis && cacheEnabled) {
@@ -7550,7 +7567,7 @@ app.get('/blockout/calendar/regen', async (req, res) => {
       });
     });
     
-    const icsData = calendar.toString();
+    const icsData = serializeCalendar(calendar);
     
     // Generate JSON
     const jsonData = JSON.stringify({
