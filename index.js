@@ -362,6 +362,7 @@ const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
+const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 10);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
@@ -920,6 +921,80 @@ async function getCalendarDataFromDatabase(personId, options = {}) {
   console.log(`📊 CalendarData fallback query timing for ${personId}: ${Date.now() - fallbackStart}ms`);
   
   return processCalendarDataResponse(response);
+}
+
+async function regenerateFromCalendarDataPage(calendarDataPage, options = {}) {
+  const { trigger = 'unknown', maxRetries = 5 } = options;
+
+  try {
+    const { pageId, linkedPersonId, calendarData } = await getCalendarDataFromPage(calendarDataPage, maxRetries);
+    if (!linkedPersonId) {
+      console.warn(`⚠️  Calendar Data row ${pageId} is missing a Personnel relation`);
+      return { success: false, pageId, reason: 'missing_personnel_relation' };
+    }
+
+    return await regenerateCalendarForPerson(linkedPersonId, {
+      trigger,
+      preloadedCalendarData: calendarData
+    });
+  } catch (error) {
+    const pageId = calendarDataPage?.id || 'unknown';
+    console.error(`❌ Failed to process Calendar Data row ${pageId}:`, error.message);
+    return { success: false, pageId, error: error.message };
+  }
+}
+
+async function processCalendarDataRowsPaginated(options = {}) {
+  const {
+    trigger = 'unknown',
+    concurrency = 1,
+    maxRetries = 5,
+    pageSize = CALENDAR_DATA_SWEEP_PAGE_SIZE,
+    waitContext = null
+  } = options;
+
+  if (!CALENDAR_DATA_DB) {
+    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  const results = [];
+  let totalRows = 0;
+  let pageCount = 0;
+  let hasMore = true;
+  let cursor = undefined;
+
+  while (hasMore) {
+    pageCount += 1;
+    const batchStart = Date.now();
+    const queryParams = {
+      database_id: CALENDAR_DATA_DB,
+      page_size: pageSize
+    };
+    if (cursor) {
+      queryParams.start_cursor = cursor;
+    }
+
+    const response = await retryNotionCall(() => notion.databases.query(queryParams), maxRetries);
+    const rows = response.results || [];
+    totalRows += rows.length;
+
+    console.log(
+      `📄 Calendar Data batch ${pageCount}: rows=${rows.length}, total=${totalRows}, fetchMs=${Date.now() - batchStart}, hasMore=${!!response.has_more}`
+    );
+
+    const batchResults = await mapWithConcurrency(rows, concurrency, async (calendarDataPage) => {
+      if (waitContext) {
+        await waitForManualRegensToDrain(waitContext);
+      }
+      return regenerateFromCalendarDataPage(calendarDataPage, { trigger, maxRetries });
+    });
+    results.push(...batchResults);
+
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+  }
+
+  return { results, totalRows, pageCount };
 }
 
 // Helper function to process the response after successful query
@@ -2895,28 +2970,13 @@ async function regenerateAllCalendars() {
       return { success: false, error: `Notion circuit open (${waitMs}ms remaining)`, timeSeconds: 0 };
     }
     console.log('🚀 Starting bounded-concurrency calendar regeneration...');
-
-    const calendarDataPages = await fetchAllDatabasePages(CALENDAR_DATA_DB, { pageSize: 100, maxRetries: 5 });
     const concurrency = Math.max(1, DEFAULT_REGEN_CONCURRENCY);
-    console.log(`Found ${calendarDataPages.length} rows in Calendar Data database`);
-    console.log(`Processing with worker concurrency=${concurrency}`);
+    console.log(`Processing Calendar Data with worker concurrency=${concurrency} and pageSize=${CALENDAR_DATA_SWEEP_PAGE_SIZE}`);
 
-    const allResults = await mapWithConcurrency(calendarDataPages, concurrency, async (calendarDataPage) => {
-      try {
-        const { pageId, linkedPersonId, calendarData } = await getCalendarDataFromPage(calendarDataPage, 5);
-        if (!linkedPersonId) {
-          console.warn(`⚠️  Calendar Data row ${pageId} is missing a Personnel relation`);
-          return { success: false, pageId, reason: 'missing_personnel_relation' };
-        }
-        return await regenerateCalendarForPerson(linkedPersonId, {
-          trigger: 'bulk_regen',
-          preloadedCalendarData: calendarData
-        });
-      } catch (error) {
-        const pageId = calendarDataPage?.id || 'unknown';
-        console.error(`❌ Failed to process Calendar Data row ${pageId}:`, error.message);
-        return { success: false, pageId, error: error.message };
-      }
+    const { results: allResults, totalRows, pageCount } = await processCalendarDataRowsPaginated({
+      trigger: 'bulk_regen',
+      concurrency,
+      maxRetries: 5
     });
 
     const totalSuccess = allResults.filter(r => r.success).length;
@@ -2925,12 +2985,12 @@ async function regenerateAllCalendars() {
     const totalTime = Math.round((Date.now() - startTime) / 1000);
 
     console.log(`\n✅ Regeneration complete in ${totalTime}s`);
-    console.log(`   Total: ${calendarDataPages.length}`);
+    console.log(`   Total: ${totalRows} rows across ${pageCount} Calendar Data batches`);
     console.log(`   Success: ${totalSuccess}, Failed: ${totalFailed}, Skipped: ${totalSkipped}`);
     
     return { 
       success: true, 
-      total: calendarDataPages.length, 
+      total: totalRows, 
       concurrency: concurrency,
       successCount: totalSuccess, 
       failCount: totalFailed, 
@@ -2998,45 +3058,33 @@ function startBackgroundJob() {
       cycleRegistered = true;
       const jobStart = Date.now();
       verboseLog('\n⏰ Background job triggered - fetching Calendar Data rows...');
-      
-      const calendarDataPages = await fetchAllDatabasePages(CALENDAR_DATA_DB, { pageSize: 100, maxRetries: 5 });
+      verboseLog(`   Sweeping Calendar Data with pageSize=${CALENDAR_DATA_SWEEP_PAGE_SIZE} and concurrency=${BACKGROUND_REGEN_CONCURRENCY}`);
+
+      const { results, totalRows, pageCount } = await processCalendarDataRowsPaginated({
+        trigger: 'background_cycle',
+        concurrency: BACKGROUND_REGEN_CONCURRENCY,
+        maxRetries: 5,
+        waitContext: `background cycle ${cycleId}`
+      });
+
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:startBackgroundJob:peopleLoaded',message:'Calendar Data rows loaded for background cycle',data:{count:calendarDataPages.length,pageSize:100},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H2',location:'index.js:startBackgroundJob:peopleLoaded',message:'Calendar Data rows loaded for background cycle',data:{count:totalRows,pageSize:CALENDAR_DATA_SWEEP_PAGE_SIZE,pageCount},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       
-      if (calendarDataPages.length === 0) {
+      if (totalRows === 0) {
         console.log('⚠️  No Calendar Data rows found in database');
         return;
       }
-      
-      verboseLog(`   Found ${calendarDataPages.length} total Calendar Data rows to update`);
-      
-      const results = await mapWithConcurrency(calendarDataPages, BACKGROUND_REGEN_CONCURRENCY, async (calendarDataPage) => {
-        try {
-          await waitForManualRegensToDrain(`background cycle ${cycleId}`);
-          const { pageId, linkedPersonId, calendarData } = await getCalendarDataFromPage(calendarDataPage, 5);
-          if (!linkedPersonId) {
-            console.warn(`⚠️  Calendar Data row ${pageId} is missing a Personnel relation`);
-            return { success: false, pageId, reason: 'missing_personnel_relation' };
-          }
-          return await regenerateCalendarForPerson(linkedPersonId, {
-            trigger: 'background_cycle',
-            preloadedCalendarData: calendarData
-          });
-        } catch (error) {
-          return { success: false, pageId: calendarDataPage?.id || 'unknown', error: error.message };
-        }
-      });
 
       const totalSuccess = results.filter(r => r.success).length;
       const totalSkipped = results.filter(r => r.reason === 'no_events' || r.reason === 'missing_personnel_relation').length;
       const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'missing_personnel_relation').length;
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background Calendar Data cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:calendarDataPages.length,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background Calendar Data cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:totalRows,pageCount,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       const elapsedMs = Date.now() - jobStart;
       if (totalFailed > 0) {
-        console.warn(`⚠️ Background Calendar Data cycle had failures: failed=${totalFailed}, success=${totalSuccess}, skipped=${totalSkipped}, total=${calendarDataPages.length}, elapsedMs=${elapsedMs}`);
+        console.warn(`⚠️ Background Calendar Data cycle had failures: failed=${totalFailed}, success=${totalSuccess}, skipped=${totalSkipped}, total=${totalRows}, pageCount=${pageCount}, elapsedMs=${elapsedMs}`);
       }
       if (elapsedMs > 5 * 60 * 1000) {
         console.warn(`⚠️ Background personnel cycle exceeded interval: elapsedMs=${elapsedMs}, intervalMs=${5 * 60 * 1000}`);
