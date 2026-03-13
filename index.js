@@ -418,6 +418,26 @@ function sleep(ms) {
 }
 
 const GOOGLE_CALENDAR_TIMEZONE = 'America/Los_Angeles';
+const GOOGLE_VTIMEZONE_BLOCK = [
+  'BEGIN:VTIMEZONE',
+  `TZID:${GOOGLE_CALENDAR_TIMEZONE}`,
+  `X-LIC-LOCATION:${GOOGLE_CALENDAR_TIMEZONE}`,
+  'BEGIN:DAYLIGHT',
+  'TZOFFSETFROM:-0800',
+  'TZOFFSETTO:-0700',
+  'TZNAME:PDT',
+  'DTSTART:19700308T020000',
+  'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU',
+  'END:DAYLIGHT',
+  'BEGIN:STANDARD',
+  'TZOFFSETFROM:-0700',
+  'TZOFFSETTO:-0800',
+  'TZNAME:PST',
+  'DTSTART:19701101T020000',
+  'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU',
+  'END:STANDARD',
+  'END:VTIMEZONE'
+].join('\r\n');
 
 function addCalendarTimezoneMetadata(icsData) {
   if (typeof icsData !== 'string' || icsData.includes('X-WR-TIMEZONE:')) {
@@ -432,6 +452,27 @@ function addCalendarTimezoneMetadata(icsData) {
 
 function serializeCalendar(calendar) {
   return addCalendarTimezoneMetadata(calendar.toString());
+}
+
+function serializeGoogleCalendar(calendar) {
+  if (!calendar) {
+    return '';
+  }
+
+  let icsData = addCalendarTimezoneMetadata(calendar.toString());
+
+  icsData = icsData
+    .replace(/\r?\nDTSTART:(\d{8}T\d{6})/g, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
+    .replace(/\r?\nDTEND:(\d{8}T\d{6})/g, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
+
+  if (!icsData.includes('BEGIN:VTIMEZONE')) {
+    icsData = icsData.replace(
+      /(X-WR-TIMEZONE:[^\r\n]+\r?\n)/,
+      `$1${GOOGLE_VTIMEZONE_BLOCK}\r\n`
+    );
+  }
+
+  return icsData;
 }
 
 function getRetryAfterMs(error) {
@@ -2093,6 +2134,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     console.log(`🔄 Rebuilding calendar for ${personId}...`);
     if (clearCache && redis && cacheEnabled) {
       await redis.del(`calendar:${personId}:ics`);
+      await redis.del(`calendar:${personId}:google_ics`);
       await redis.del(`calendar:${personId}:json`);
     }
 
@@ -2783,6 +2825,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     });
 
     const icsData = serializeCalendar(calendar);
+    const googleIcsData = serializeGoogleCalendar(calendar);
 
     const jsonResponse = {
       personName,
@@ -2805,6 +2848,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     // Cache both formats.
     if (redis && cacheEnabled) {
       await redis.set(`calendar:${personId}:ics`, icsData);
+      await redis.set(`calendar:${personId}:google_ics`, googleIcsData);
       await redis.set(`calendar:${personId}:json`, jsonData);
       verboseLog(`✅ Cached calendar for ${personName} (${allCalendarEvents.length} events, persists until refresh)`);
     }
@@ -2815,6 +2859,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       personName,
       eventCount: allCalendarEvents.length,
       icsData,
+      googleIcsData,
       jsonData,
       jsonResponse,
       allCalendarEvents
@@ -4580,11 +4625,13 @@ app.get('/cache/clear/:personId', async (req, res) => {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
     
-    // Clear both ICS and JSON cache
+    // Clear all personal calendar cache variants
     const icsKey = `calendar:${personId}:ics`;
+    const googleIcsKey = `calendar:${personId}:google_ics`;
     const jsonKey = `calendar:${personId}:json`;
     
     const icsDeleted = await redis.del(icsKey);
+    const googleIcsDeleted = await redis.del(googleIcsKey);
     const jsonDeleted = await redis.del(jsonKey);
     
     res.json({
@@ -4593,6 +4640,7 @@ app.get('/cache/clear/:personId', async (req, res) => {
       personId: personId,
       cleared: {
         ics: icsDeleted > 0,
+        google_ics: googleIcsDeleted > 0,
         json: jsonDeleted > 0
       }
     });
@@ -6304,6 +6352,7 @@ app.get('/subscribe/:personId', async (req, res) => {
     const personName = req.query.name || null;
     
     const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
+    const googleSubscriptionUrl = `https://${req.get('host')}/calendar/google/${personId}.ics`;
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -6725,7 +6774,7 @@ app.get('/subscribe/:personId', async (req, res) => {
         }
         
         function copyAndOpenGoogle() {
-            const url = '${subscriptionUrl}';
+            const url = '${googleSubscriptionUrl}';
             navigator.clipboard.writeText(url).then(() => {
                 showToast();
                 // Small delay so user sees the toast before opening new tab
@@ -7629,6 +7678,21 @@ app.get('/calendar/blockout', async (req, res) => {
   return res.redirect(301, '/blockout/calendar?format=ics');
 });
 
+app.get('/calendar/google/:personId.ics', async (req, res) => {
+  try {
+    let { personId } = req.params;
+
+    if (personId.length === 32 && !personId.includes('-')) {
+      personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+    }
+
+    return res.redirect(301, `/calendar/${personId}?format=ics&client=google`);
+  } catch (error) {
+    console.error('Google ICS calendar generation error:', error);
+    res.status(500).json({ error: 'Error generating Google calendar' });
+  }
+});
+
 // ICS calendar endpoint (with .ics extension) - serve calendar directly
 app.get('/calendar/:personId.ics', async (req, res) => {
   try {
@@ -7657,6 +7721,8 @@ app.get('/calendar/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     const format = req.query.format;
+    const calendarClient = req.query.client === 'google' ? 'google' : 'default';
+    const isGoogleClient = calendarClient === 'google';
     
     // Auto-detect format from Accept header for calendar subscriptions
     const acceptHeader = req.headers.accept || '';
@@ -7671,16 +7737,19 @@ app.get('/calendar/:personId', async (req, res) => {
 
     // Check Redis cache first (if enabled, unless ?fresh=true is specified)
     const forceFresh = req.query.fresh === 'true';
-    const cacheKey = `calendar:${personId}:${shouldReturnICS ? 'ics' : 'json'}`;
+    const cacheKey = `calendar:${personId}:${shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json'}`;
     
     if (forceFresh && redis && cacheEnabled) {
       const icsKey = `calendar:${personId}:ics`;
+      const googleIcsKey = `calendar:${personId}:google_ics`;
       const jsonKey = `calendar:${personId}:json`;
       await redis.del(icsKey);
+      await redis.del(googleIcsKey);
       await redis.del(jsonKey);
       const icsStillExists = await redis.exists(icsKey);
+      const googleIcsStillExists = await redis.exists(googleIcsKey);
       const jsonStillExists = await redis.exists(jsonKey);
-      if (icsStillExists || jsonStillExists) {
+      if (icsStillExists || googleIcsStillExists || jsonStillExists) {
         console.error(`⚠️  Cache was not fully cleared for ${personId} (?fresh=true)`);
       }
     }
@@ -7689,19 +7758,19 @@ app.get('/calendar/:personId', async (req, res) => {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
-          verboseLog(`✅ Cache HIT for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`);
+          verboseLog(`✅ Cache HIT for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'})`);
           
           if (shouldReturnICS) {
             res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
+            res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
             return res.send(cachedData);
           } else {
             return res.json(JSON.parse(cachedData));
           }
         }
         logWithDedup(
-          `cache_miss:person:${personId}:${shouldReturnICS ? 'ics' : 'json'}`,
-          `❌ Cache MISS for ${personId} (${shouldReturnICS ? 'ICS' : 'JSON'})`
+          `cache_miss:person:${personId}:${shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json'}`,
+          `❌ Cache MISS for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'})`
         );
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
@@ -7731,8 +7800,8 @@ app.get('/calendar/:personId', async (req, res) => {
 
     if (shouldReturnICS) {
       res.setHeader('Content-Type', 'text/calendar');
-      res.setHeader('Content-Disposition', 'attachment; filename="calendar.ics"');
-      return res.send(result.icsData);
+      res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
+      return res.send(isGoogleClient ? result.googleIcsData : result.icsData);
     }
 
     return res.json(result.jsonResponse);
