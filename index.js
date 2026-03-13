@@ -362,7 +362,7 @@ const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
-const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 10);
+const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 5);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
