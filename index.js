@@ -656,6 +656,8 @@ async function getCalendarDataPropertyIdMap(maxRetries = 5) {
   const props = dbInfo?.properties || {};
 
   calendarDataPropertyIdCache = {
+    Name: props.Name?.id || null,
+    Personnel: props.Personnel?.id || null,
     Events: props.Events?.id || null,
     Flights: props.Flights?.id || null,
     Transportation: props.Transportation?.id || null,
@@ -962,6 +964,8 @@ async function processCalendarDataRowsPaginated(options = {}) {
   let pageCount = 0;
   let hasMore = true;
   let cursor = undefined;
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const discoveryPropertyIds = [propertyIds.Name, propertyIds.Personnel].filter(Boolean);
 
   while (hasMore) {
     pageCount += 1;
@@ -970,6 +974,9 @@ async function processCalendarDataRowsPaginated(options = {}) {
       database_id: CALENDAR_DATA_DB,
       page_size: pageSize
     };
+    if (discoveryPropertyIds.length > 0) {
+      queryParams.filter_properties = discoveryPropertyIds;
+    }
     if (cursor) {
       queryParams.start_cursor = cursor;
     }
