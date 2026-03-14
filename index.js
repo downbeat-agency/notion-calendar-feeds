@@ -363,7 +363,7 @@ const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBA
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
 const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 1);
-const BACKGROUND_REFRESH_INTERVAL_MS = Number(process.env.BACKGROUND_REFRESH_INTERVAL_MS || 10 * 60 * 1000);
+const BACKGROUND_REFRESH_COOLDOWN_MS = Number(process.env.BACKGROUND_REFRESH_COOLDOWN_MS || 2 * 60 * 1000);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
@@ -3014,7 +3014,7 @@ async function regenerateAllCalendars() {
   }
 }
 
-// Background job to update all people in parallel batches every 10 minutes
+// Background job to update all people continuously with a cooldown between cycles
 let backgroundCycleSeq = 0;
 let activeBackgroundCycles = 0;
 let isBackgroundCycleRunning = false;
@@ -3032,15 +3032,19 @@ async function waitForManualRegensToDrain(context = 'background cycle') {
 }
 
 function startBackgroundJob() {
-  console.log(`🔄 Starting background calendar refresh job (every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes)`);
+  console.log(`🔄 Starting background calendar refresh job (run to completion, then wait ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes)`);
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
-  
-  setInterval(async () => {
+
+  const scheduleNextCycle = (delayMs) => {
+    setTimeout(runBackgroundCycle, Math.max(0, delayMs));
+  };
+
+  const runBackgroundCycle = async () => {
     const cycleId = `bg_${++backgroundCycleSeq}`;
     let cycleRegistered = false;
     try {
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H1',location:'index.js:startBackgroundJob:intervalTick',message:'Background interval tick fired',data:{cycleId,intervalMs:300000,defaultConcurrency:DEFAULT_REGEN_CONCURRENCY,activeBackgroundCycles},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H1',location:'index.js:startBackgroundJob:intervalTick',message:'Background cycle fired',data:{cycleId,cooldownMs:BACKGROUND_REFRESH_COOLDOWN_MS,defaultConcurrency:DEFAULT_REGEN_CONCURRENCY,activeBackgroundCycles},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       if (isNotionCircuitOpen()) {
         const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
@@ -3058,7 +3062,7 @@ function startBackgroundJob() {
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H5',location:'index.js:startBackgroundJob:overlapDetected',message:'Background cycle overlap detected and skipped',data:{cycleId,activeBackgroundCycles,isBackgroundCycleRunning},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
-        console.warn('⏭️  Skipping interval tick because previous background cycle is still running');
+        console.warn('⏭️  Background cycle request ignored because a previous cycle is still running');
         return;
       }
       isBackgroundCycleRunning = true;
@@ -3094,9 +3098,7 @@ function startBackgroundJob() {
       if (totalFailed > 0) {
         console.warn(`⚠️ Background Calendar Data cycle had failures: failed=${totalFailed}, success=${totalSuccess}, skipped=${totalSkipped}, total=${totalRows}, pageCount=${pageCount}, elapsedMs=${elapsedMs}`);
       }
-      if (elapsedMs > BACKGROUND_REFRESH_INTERVAL_MS) {
-        console.warn(`⚠️ Background personnel cycle exceeded interval: elapsedMs=${elapsedMs}, intervalMs=${BACKGROUND_REFRESH_INTERVAL_MS}`);
-      }
+      console.log(`✅ Background cycle ${cycleId} completed in ${elapsedMs}ms; next cycle in ${BACKGROUND_REFRESH_COOLDOWN_MS}ms`);
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
@@ -3258,8 +3260,11 @@ function startBackgroundJob() {
         fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H5',location:'index.js:startBackgroundJob:cycleFinalize',message:'Background cycle finalized',data:{cycleId,activeBackgroundCycles,isBackgroundCycleRunning},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
       }
+      scheduleNextCycle(BACKGROUND_REFRESH_COOLDOWN_MS);
     }
-  }, BACKGROUND_REFRESH_INTERVAL_MS);
+  };
+
+  scheduleNextCycle(0);
 }
 
 // ============================================
@@ -4397,8 +4402,8 @@ app.get('/', (_req, res) => {
     },
     backgroundJob: {
       status: 'running',
-      interval: `${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes`,
-      description: `Updates all people every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes (paginated, batched parallel)`
+      interval: `runs continuously with ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minute cooldown`,
+      description: `Updates all people after each cycle completes, then waits ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`
     }
   });
 });
@@ -7912,5 +7917,5 @@ startBackgroundJob();
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
-  console.log(`Background job active - updating all people every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes (paginated, batched parallel)`);
+  console.log(`Background job active - updating all people after each cycle completes, then waiting ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`);
 });
