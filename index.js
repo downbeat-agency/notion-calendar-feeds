@@ -3069,6 +3069,7 @@ function startBackgroundJob() {
       activeBackgroundCycles += 1;
       cycleRegistered = true;
       const jobStart = Date.now();
+      let cyclePhase = 'calendar_data_sweep';
       verboseLog('\n⏰ Background job triggered - fetching Calendar Data rows...');
       verboseLog(`   Sweeping Calendar Data with pageSize=${CALENDAR_DATA_SWEEP_PAGE_SIZE} and concurrency=${BACKGROUND_REGEN_CONCURRENCY}`);
 
@@ -3092,6 +3093,9 @@ function startBackgroundJob() {
       const totalSkipped = results.filter(r => r.reason === 'no_events' || r.reason === 'missing_personnel_relation').length;
       const totalFailed = results.filter(r => !r.success && r.reason !== 'no_events' && r.reason !== 'missing_personnel_relation').length;
       // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H2',location:'index.js:startBackgroundJob:afterSweep',message:'Background sweep completed before auxiliary refreshes',data:{cycleId,cyclePhase,totalRows,pageCount,totalSuccess,totalSkipped,totalFailed},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      // #region agent log
       fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'post_fix',hypothesisId:'H3',location:'index.js:startBackgroundJob:cycleSummary',message:'Background Calendar Data cycle summary',data:{concurrency:BACKGROUND_REGEN_CONCURRENCY,total:totalRows,pageCount,totalSuccess,totalSkipped,totalFailed,elapsedMs:Date.now()-jobStart},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       const elapsedMs = Date.now() - jobStart;
@@ -3102,6 +3106,7 @@ function startBackgroundJob() {
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
+        cyclePhase = 'admin_refresh';
         try {
           verboseLog('🔄 Refreshing admin calendar...');
           const adminTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Admin calendar fetch timeout')), ms));
@@ -3153,6 +3158,7 @@ function startBackgroundJob() {
       
       // Also refresh travel calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (TRAVEL_CALENDAR_PAGE_ID && redis && cacheEnabled) {
+        cyclePhase = 'travel_refresh';
         try {
           verboseLog('🔄 Refreshing travel calendar...');
           const travelTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Travel calendar fetch timeout')), ms));
@@ -3204,6 +3210,7 @@ function startBackgroundJob() {
       
       // Also refresh blockout calendar (with 25s timeout to avoid blocking on Notion 504s)
       if (BLOCKOUT_CALENDAR_PAGE_ID && redis && cacheEnabled) {
+        cyclePhase = 'blockout_refresh';
         try {
           verboseLog('🔄 Refreshing blockout calendar...');
           const blockoutTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Blockout calendar fetch timeout')), ms));
@@ -3245,10 +3252,17 @@ function startBackgroundJob() {
       }
       
       const jobTime = Math.round((Date.now() - jobStart) / 1000);
+      cyclePhase = 'final_summary';
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H1',location:'index.js:startBackgroundJob:beforeFinalSummary',message:'About to log final background summary',data:{cycleId,cyclePhase,jobTime,totalSuccess,totalFailed,totalSkipped,totalRows,personIdsType:typeof personIds},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       verboseLog(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar + travel calendar + blockout calendar)`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H2',location:'index.js:startBackgroundJob:catch',message:'Background cycle catch executed',data:{cycleId,cyclePhase,errorName:error?.name||'unknown',errorMessage:error?.message||'unknown',stackTop:error?.stack?.split('\\n')?.[0]||null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H6',location:'index.js:startBackgroundJob:cycleError',message:'Background cycle threw error',data:{cycleId,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
