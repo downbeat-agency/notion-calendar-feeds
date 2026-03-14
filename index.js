@@ -632,6 +632,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 60000); // hard per-person budget
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 60000);
 const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 60000);
+const CALENDAR_FETCH_TIMEOUT_MS = Number(process.env.CALENDAR_FETCH_TIMEOUT_MS || 60000); // max allowed for admin/travel/blockout pulls
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -3111,13 +3112,16 @@ function startBackgroundJob() {
       }
       console.log(`✅ Background cycle ${cycleId} completed in ${elapsedMs}ms; next cycle in ${BACKGROUND_REFRESH_COOLDOWN_MS}ms`);
       
-      // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
+      // Also refresh admin calendar (allow up to 60s for slow Notion reads)
       if (ADMIN_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         cyclePhase = 'admin_refresh';
         try {
           verboseLog('🔄 Refreshing admin calendar...');
-          const adminTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Admin calendar fetch timeout')), ms));
-          const adminEvents = await Promise.race([getAdminCalendarData(), adminTimeout(25000)]);
+          const adminEvents = await withTimeout(
+            getAdminCalendarData(),
+            CALENDAR_FETCH_TIMEOUT_MS,
+            `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+          );
           
           if (adminEvents && adminEvents.length > 0) {
             const allCalendarEvents = processAdminEvents(adminEvents);
@@ -3163,13 +3167,16 @@ function startBackgroundJob() {
         }
       }
       
-      // Also refresh travel calendar (with 25s timeout to avoid blocking on Notion 504s)
+      // Also refresh travel calendar (allow up to 60s for slow Notion reads)
       if (TRAVEL_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         cyclePhase = 'travel_refresh';
         try {
           verboseLog('🔄 Refreshing travel calendar...');
-          const travelTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Travel calendar fetch timeout')), ms));
-          const travelEvents = await Promise.race([getTravelCalendarData(), travelTimeout(25000)]);
+          const travelEvents = await withTimeout(
+            getTravelCalendarData(),
+            CALENDAR_FETCH_TIMEOUT_MS,
+            `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+          );
           
           if (travelEvents && travelEvents.length > 0) {
             const allCalendarEvents = processTravelEvents(travelEvents);
@@ -3215,13 +3222,16 @@ function startBackgroundJob() {
         }
       }
       
-      // Also refresh blockout calendar (with 25s timeout to avoid blocking on Notion 504s)
+      // Also refresh blockout calendar (allow up to 60s for slow Notion reads)
       if (BLOCKOUT_CALENDAR_PAGE_ID && redis && cacheEnabled) {
         cyclePhase = 'blockout_refresh';
         try {
           verboseLog('🔄 Refreshing blockout calendar...');
-          const blockoutTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('Blockout calendar fetch timeout')), ms));
-          const blockoutEvents = await Promise.race([getBlockoutCalendarData(), blockoutTimeout(25000)]);
+          const blockoutEvents = await withTimeout(
+            getBlockoutCalendarData(),
+            CALENDAR_FETCH_TIMEOUT_MS,
+            `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+          );
           if (blockoutEvents && blockoutEvents.length > 0) {
             const allCalendarEvents = processBlockoutEvents(blockoutEvents);
             const calendar = ical({ 
@@ -3268,10 +3278,27 @@ function startBackgroundJob() {
     } catch (error) {
       console.error('❌ Background job error:', error.message);
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H2',location:'index.js:startBackgroundJob:catch',message:'Background cycle catch executed',data:{cycleId,cyclePhase,errorName:error?.name||'unknown',errorMessage:error?.message||'unknown',stackTop:error?.stack?.split('\\n')?.[0]||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H6',location:'index.js:startBackgroundJob:cycleError',message:'Background cycle threw error',data:{cycleId,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      try {
+        const cycleErrorPayload = {
+          sessionId: 'b6a4e3',
+          runId: 'bg_refresh_trace',
+          hypothesisId: 'H6',
+          location: 'index.js:startBackgroundJob:cycleError',
+          message: 'Background cycle threw error',
+          data: {
+            cycleId,
+            error: error?.message || 'unknown'
+          },
+          timestamp: Date.now()
+        };
+        fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b6a4e3' },
+          body: JSON.stringify(cycleErrorPayload)
+        }).catch(() => {});
+      } catch (_telemetryError) {
+        // Never allow telemetry payload construction to crash the background loop.
+      }
       // #endregion
     } finally {
       if (cycleRegistered) {
@@ -6964,7 +6991,11 @@ app.get('/admin/calendar', async (req, res) => {
     // Fetch admin calendar data
     let adminEvents;
     try {
-      adminEvents = await getAdminCalendarData();
+      adminEvents = await withTimeout(
+        getAdminCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      );
       
       if (!adminEvents || adminEvents.length === 0) {
         const noEventsMsg = {
@@ -7124,7 +7155,11 @@ app.get('/admin/calendar/regen', async (req, res) => {
     }
 
     // Fetch fresh data
-    const adminEvents = await getAdminCalendarData();
+    const adminEvents = await withTimeout(
+      getAdminCalendarData(),
+      CALENDAR_FETCH_TIMEOUT_MS,
+      `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    );
     const allCalendarEvents = processAdminEvents(adminEvents);
 
     // Generate and cache ICS
@@ -7246,7 +7281,11 @@ app.get('/travel/calendar', async (req, res) => {
     // Fetch travel calendar data
     let travelEvents;
     try {
-      travelEvents = await getTravelCalendarData();
+      travelEvents = await withTimeout(
+        getTravelCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      );
       
       if (!travelEvents || travelEvents.length === 0) {
         const noEventsMsg = {
@@ -7410,7 +7449,11 @@ app.get('/travel/calendar/regen', async (req, res) => {
     }
 
     // Fetch fresh data
-    const travelEvents = await getTravelCalendarData();
+    const travelEvents = await withTimeout(
+      getTravelCalendarData(),
+      CALENDAR_FETCH_TIMEOUT_MS,
+      `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    );
     const allCalendarEvents = processTravelEvents(travelEvents);
 
     // Generate and cache ICS
@@ -7532,7 +7575,11 @@ app.get('/blockout/calendar', async (req, res) => {
     // Fetch blockout calendar data
     let blockoutEvents;
     try {
-      blockoutEvents = await getBlockoutCalendarData();
+      blockoutEvents = await withTimeout(
+        getBlockoutCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      );
       
       if (!blockoutEvents || blockoutEvents.length === 0) {
         const noEventsMsg = {
@@ -7696,7 +7743,11 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     }
 
     // Fetch fresh data
-    const blockoutEvents = await getBlockoutCalendarData();
+    const blockoutEvents = await withTimeout(
+      getBlockoutCalendarData(),
+      CALENDAR_FETCH_TIMEOUT_MS,
+      `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    );
     const allCalendarEvents = processBlockoutEvents(blockoutEvents);
 
     // Generate and cache ICS
