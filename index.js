@@ -363,6 +363,7 @@ const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBA
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
 const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 1);
+const BACKGROUND_REFRESH_INTERVAL_MS = Number(process.env.BACKGROUND_REFRESH_INTERVAL_MS || 10 * 60 * 1000);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
@@ -3013,7 +3014,7 @@ async function regenerateAllCalendars() {
   }
 }
 
-// Background job to update all people in parallel batches every 5 minutes
+// Background job to update all people in parallel batches every 10 minutes
 let backgroundCycleSeq = 0;
 let activeBackgroundCycles = 0;
 let isBackgroundCycleRunning = false;
@@ -3031,7 +3032,7 @@ async function waitForManualRegensToDrain(context = 'background cycle') {
 }
 
 function startBackgroundJob() {
-  console.log('🔄 Starting background calendar refresh job (every 5 minutes)');
+  console.log(`🔄 Starting background calendar refresh job (every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes)`);
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
   
   setInterval(async () => {
@@ -3093,8 +3094,8 @@ function startBackgroundJob() {
       if (totalFailed > 0) {
         console.warn(`⚠️ Background Calendar Data cycle had failures: failed=${totalFailed}, success=${totalSuccess}, skipped=${totalSkipped}, total=${totalRows}, pageCount=${pageCount}, elapsedMs=${elapsedMs}`);
       }
-      if (elapsedMs > 5 * 60 * 1000) {
-        console.warn(`⚠️ Background personnel cycle exceeded interval: elapsedMs=${elapsedMs}, intervalMs=${5 * 60 * 1000}`);
+      if (elapsedMs > BACKGROUND_REFRESH_INTERVAL_MS) {
+        console.warn(`⚠️ Background personnel cycle exceeded interval: elapsedMs=${elapsedMs}, intervalMs=${BACKGROUND_REFRESH_INTERVAL_MS}`);
       }
       
       // Also refresh admin calendar (with 25s timeout to avoid blocking on Notion 504s)
@@ -3258,7 +3259,7 @@ function startBackgroundJob() {
         // #endregion
       }
     }
-  }, 5 * 60 * 1000); // 5 minutes
+  }, BACKGROUND_REFRESH_INTERVAL_MS);
 }
 
 // ============================================
@@ -4396,8 +4397,8 @@ app.get('/', (_req, res) => {
     },
     backgroundJob: {
       status: 'running',
-      interval: '5 minutes',
-      description: 'Updates all people every 5 minutes (paginated, batched parallel)'
+      interval: `${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes`,
+      description: `Updates all people every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes (paginated, batched parallel)`
     }
   });
 });
@@ -7911,5 +7912,5 @@ startBackgroundJob();
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
-  console.log(`Background job active - updating all people every 5 minutes (paginated, batched parallel)`);
+  console.log(`Background job active - updating all people every ${Math.round(BACKGROUND_REFRESH_INTERVAL_MS / 60000)} minutes (paginated, batched parallel)`);
 });
