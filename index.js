@@ -3260,7 +3260,27 @@ function startBackgroundJob() {
     } catch (error) {
       console.error('❌ Background job error:', error.message);
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b6a4e3'},body:JSON.stringify({sessionId:'b6a4e3',runId:'bg_refresh_trace',hypothesisId:'H6',location:'index.js:startBackgroundJob:cycleError',message:'Background cycle threw error',data:{cycleId,error:error?.message||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      try {
+        const cycleErrorPayload = {
+          sessionId: 'b6a4e3',
+          runId: 'bg_refresh_trace',
+          hypothesisId: 'H6',
+          location: 'index.js:startBackgroundJob:cycleError',
+          message: 'Background cycle threw error',
+          data: {
+            cycleId,
+            error: error?.message || 'unknown'
+          },
+          timestamp: Date.now()
+        };
+        fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b6a4e3' },
+          body: JSON.stringify(cycleErrorPayload)
+        }).catch(() => {});
+      } catch (_telemetryError) {
+        // Never allow telemetry payload construction to crash the background loop.
+      }
       // #endregion
     } finally {
       if (cycleRegistered) {
