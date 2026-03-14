@@ -131,6 +131,10 @@ const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
 
 // Cache TTL in seconds (30 minutes by default)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
+const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
+const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
+const CALENDAR_DATA_INDEX_TTL = Number(process.env.CALENDAR_DATA_INDEX_TTL || 24 * 60 * 60);
+const CALENDAR_DATA_INDEX_BUILD_PAGES_PER_CYCLE = Number(process.env.CALENDAR_DATA_INDEX_BUILD_PAGES_PER_CYCLE || 10);
 const LOG_DEDUP_WINDOW_MS = Number(process.env.LOG_DEDUP_WINDOW_MS || 30000);
 const LOG_VERBOSE = String(process.env.LOG_VERBOSE || 'false').toLowerCase() === 'true';
 const logDedupState = new Map();
@@ -146,6 +150,51 @@ async function setCalendarCache(key, value) {
     return;
   }
   await redis.setEx(key, CACHE_TTL, value);
+}
+
+async function getCachedJson(key) {
+  if (!redis || !cacheEnabled) {
+    return null;
+  }
+
+  const raw = await redis.get(key);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn(`⚠️  Failed to parse cached JSON for ${key}: ${error.message}`);
+    return null;
+  }
+}
+
+async function setCachedJson(key, value, ttlSeconds) {
+  if (!redis || !cacheEnabled) {
+    return;
+  }
+
+  await redis.setEx(key, ttlSeconds, JSON.stringify(value));
+}
+
+function normalizeCalendarDataIndexEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  const deduped = new Map();
+  for (const entry of entries) {
+    if (!entry || typeof entry.pageId !== 'string' || typeof entry.personId !== 'string') {
+      continue;
+    }
+    deduped.set(entry.pageId, {
+      pageId: entry.pageId,
+      personId: entry.personId
+    });
+  }
+
+  return Array.from(deduped.values());
 }
 
 function logWithDedup(key, message, level = 'log') {
@@ -370,7 +419,8 @@ const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBA
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
 const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 1);
-const BACKGROUND_REFRESH_COOLDOWN_MS = Number(process.env.BACKGROUND_REFRESH_COOLDOWN_MS || 2 * 60 * 1000);
+const BACKGROUND_INITIAL_DELAY_MS = Number(process.env.BACKGROUND_INITIAL_DELAY_MS || 5000);
+const BACKGROUND_REFRESH_COOLDOWN_MS = Number(process.env.BACKGROUND_REFRESH_COOLDOWN_MS || 10 * 60 * 1000);
 
 let notionCallQueue = Promise.resolve();
 let notionNextAllowedAt = 0;
@@ -935,24 +985,142 @@ async function getCalendarDataFromDatabase(personId, options = {}) {
 }
 
 async function regenerateFromCalendarDataPage(calendarDataPage, options = {}) {
-  const { trigger = 'unknown', maxRetries = 5 } = options;
+  const { trigger = 'unknown' } = options;
+  const pageId = calendarDataPage?.id || 'unknown';
 
   try {
-    const { pageId, linkedPersonId, calendarData } = await getCalendarDataFromPage(calendarDataPage, maxRetries);
+    const linkedPersonId = getPrimaryRelationPageId(calendarDataPage?.properties?.Personnel);
     if (!linkedPersonId) {
       console.warn(`⚠️  Calendar Data row ${pageId} is missing a Personnel relation`);
       return { success: false, pageId, reason: 'missing_personnel_relation' };
     }
 
-    return await regenerateCalendarForPerson(linkedPersonId, {
-      trigger,
-      preloadedCalendarData: calendarData
-    });
+    const result = await regenerateCalendarForPerson(linkedPersonId, { trigger });
+    return { ...result, pageId };
   } catch (error) {
-    const pageId = calendarDataPage?.id || 'unknown';
     console.error(`❌ Failed to process Calendar Data row ${pageId}:`, error.message);
     return { success: false, pageId, error: error.message };
   }
+}
+
+async function processCalendarDataIndexEntries(entries, options = {}) {
+  const {
+    trigger = 'unknown',
+    concurrency = 1,
+    waitContext = null,
+    source = 'redis_index',
+    pageCount = 0
+  } = options;
+
+  const normalizedEntries = normalizeCalendarDataIndexEntries(entries);
+  const results = await mapWithConcurrency(normalizedEntries, concurrency, async (entry) => {
+    if (waitContext) {
+      await waitForManualRegensToDrain(waitContext);
+    }
+    const result = await regenerateCalendarForPerson(entry.personId, { trigger });
+    return { ...result, pageId: entry.pageId };
+  });
+
+  console.log(
+    `📚 Processed Calendar Data ${source}: rows=${normalizedEntries.length}, pageCount=${pageCount}, concurrency=${concurrency}`
+  );
+
+  return {
+    results,
+    totalRows: normalizedEntries.length,
+    pageCount
+  };
+}
+
+async function extendCalendarDataRowIndex(options = {}) {
+  const {
+    maxRetries = 5,
+    pageSize = CALENDAR_DATA_SWEEP_PAGE_SIZE,
+    pagesPerRun = CALENDAR_DATA_INDEX_BUILD_PAGES_PER_CYCLE
+  } = options;
+
+  if (!redis || !cacheEnabled) {
+    return null;
+  }
+
+  const existingState = await getCachedJson(CALENDAR_DATA_INDEX_STATE_CACHE_KEY);
+  const state = existingState && typeof existingState === 'object'
+    ? existingState
+    : {
+        entries: [],
+        nextCursor: null,
+        pageCount: 0,
+        startedAt: new Date().toISOString()
+      };
+
+  state.entries = normalizeCalendarDataIndexEntries(state.entries);
+
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const discoveryPropertyIds = [propertyIds.Name, propertyIds.Personnel].filter(Boolean);
+
+  let cursor = state.nextCursor || undefined;
+  let hasMore = true;
+  let pagesFetched = 0;
+
+  while (hasMore && pagesFetched < pagesPerRun) {
+    const queryParams = {
+      database_id: CALENDAR_DATA_DB,
+      page_size: pageSize
+    };
+    if (discoveryPropertyIds.length > 0) {
+      queryParams.filter_properties = discoveryPropertyIds;
+    }
+    if (cursor) {
+      queryParams.start_cursor = cursor;
+    }
+
+    const response = await retryNotionCall(() => notion.databases.query(queryParams), maxRetries);
+    const rows = response.results || [];
+    const entries = rows
+      .map((row) => ({
+        pageId: row.id,
+        personId: getPrimaryRelationPageId(row.properties?.Personnel)
+      }))
+      .filter((entry) => entry.personId);
+
+    state.entries.push(...entries);
+    state.entries = normalizeCalendarDataIndexEntries(state.entries);
+    state.pageCount += 1;
+    pagesFetched += 1;
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+
+    console.log(
+      `🧱 Calendar Data index batch ${state.pageCount}: rows=${rows.length}, indexed=${state.entries.length}, hasMore=${hasMore}`
+    );
+  }
+
+  state.nextCursor = hasMore ? (cursor || null) : null;
+  state.updatedAt = new Date().toISOString();
+
+  if (!hasMore) {
+    const completeIndex = {
+      entries: state.entries,
+      pageCount: state.pageCount,
+      generatedAt: state.updatedAt
+    };
+    await setCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY, completeIndex, CALENDAR_DATA_INDEX_TTL);
+    await redis.del(CALENDAR_DATA_INDEX_STATE_CACHE_KEY);
+    return {
+      ...completeIndex,
+      complete: true,
+      source: 'redis_index'
+    };
+  }
+
+  await setCachedJson(CALENDAR_DATA_INDEX_STATE_CACHE_KEY, state, CALENDAR_DATA_INDEX_TTL);
+  return {
+    entries: state.entries,
+    pageCount: state.pageCount,
+    generatedAt: state.updatedAt,
+    complete: false,
+    source: 'redis_index_partial'
+  };
 }
 
 async function processCalendarDataRowsPaginated(options = {}) {
@@ -966,6 +1134,40 @@ async function processCalendarDataRowsPaginated(options = {}) {
 
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  if (redis && cacheEnabled) {
+    const cachedIndex = await getCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY);
+    const cachedEntries = normalizeCalendarDataIndexEntries(cachedIndex?.entries);
+    if (cachedEntries.length > 0) {
+      console.log(`📚 Using cached Calendar Data index with ${cachedEntries.length} rows`);
+      return processCalendarDataIndexEntries(cachedEntries, {
+        trigger,
+        concurrency,
+        waitContext,
+        source: 'redis_index',
+        pageCount: Number(cachedIndex?.pageCount) || 0
+      });
+    }
+
+    try {
+      const builtIndex = await extendCalendarDataRowIndex({ maxRetries, pageSize });
+      const indexedEntries = normalizeCalendarDataIndexEntries(builtIndex?.entries);
+      if (indexedEntries.length > 0) {
+        console.log(
+          `${builtIndex.complete ? '✅' : '🧱'} Calendar Data index ${builtIndex.complete ? 'ready' : 'extended'} with ${indexedEntries.length} rows`
+        );
+        return processCalendarDataIndexEntries(indexedEntries, {
+          trigger,
+          concurrency,
+          waitContext,
+          source: builtIndex.source,
+          pageCount: Number(builtIndex?.pageCount) || 0
+        });
+      }
+    } catch (indexError) {
+      console.warn(`⚠️  Calendar Data Redis index build failed, falling back to live sweep: ${indexError.message}`);
+    }
   }
 
   const results = [];
@@ -3042,6 +3244,7 @@ async function waitForManualRegensToDrain(context = 'background cycle') {
 function startBackgroundJob() {
   console.log(`🔄 Starting background calendar refresh job (run to completion, then wait ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes)`);
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
+  console.log(`   Waiting ${BACKGROUND_INITIAL_DELAY_MS}ms before the first cycle so dependencies can finish connecting`);
 
   const scheduleNextCycle = (delayMs) => {
     setTimeout(runBackgroundCycle, Math.max(0, delayMs));
@@ -3271,9 +3474,9 @@ function startBackgroundJob() {
       const jobTime = Math.round((Date.now() - jobStart) / 1000);
       cyclePhase = 'final_summary';
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H1',location:'index.js:startBackgroundJob:beforeFinalSummary',message:'About to log final background summary',data:{cycleId,cyclePhase,jobTime,totalSuccess,totalFailed,totalSkipped,totalRows,personIdsType:typeof personIds},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/32011d73-236e-46f0-b1c6-d2dcc17478a5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'eea81f'},body:JSON.stringify({sessionId:'eea81f',runId:'bg_cycle_debug',hypothesisId:'H1',location:'index.js:startBackgroundJob:beforeFinalSummary',message:'About to log final background summary',data:{cycleId,cyclePhase,jobTime,totalSuccess,totalFailed,totalSkipped,totalRows},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
-      verboseLog(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${personIds.length} total people + admin calendar + travel calendar + blockout calendar)`);
+      verboseLog(`✅ Background refresh complete in ${jobTime}s: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped (processed ${totalRows} total Calendar Data rows + admin calendar + travel calendar + blockout calendar)`);
       
     } catch (error) {
       console.error('❌ Background job error:', error.message);
@@ -3312,7 +3515,7 @@ function startBackgroundJob() {
     }
   };
 
-  scheduleNextCycle(0);
+  scheduleNextCycle(BACKGROUND_INITIAL_DELAY_MS);
 }
 
 // ============================================
