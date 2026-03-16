@@ -25,9 +25,9 @@ const notionAux = new Client({
 const notion = notionAux;
 
 if (process.env.NOTION_API_KEY2) {
-  console.log('✅ Secondary Notion integration enabled for non-events data');
+  console.log('✅ NOTION_API_KEY2 enabled for Admin, Travel, Blockout + non-events data');
 } else {
-  console.warn('⚠️  NOTION_API_KEY2 not configured; all Notion calls use NOTION_API_KEY');
+  console.warn('⚠️  NOTION_API_KEY2 not configured; Admin/Travel/Blockout fall back to NOTION_API_KEY');
 }
 
 // Redis client setup
@@ -3662,10 +3662,9 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch the page and extract Admin Events property
-  // Note: Using full page retrieve for now - property-specific retrieve may need property ID (UUID)
+  // Fetch the page and extract Admin Events property (uses NOTION_API_KEY2)
   const page = await retryNotionCall(() => 
-    notion.pages.retrieve({ page_id: pageId })
+    notionAux.pages.retrieve({ page_id: pageId })
   );
 
   // Extract Admin Events property
@@ -3897,10 +3896,9 @@ async function getTravelCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch the page and extract Travel Admin property
-  // Note: Using full page retrieve for now - property-specific retrieve may need property ID (UUID)
+  // Fetch the page and extract Travel Admin property (uses NOTION_API_KEY2)
   const page = await retryNotionCall(() => 
-    notion.pages.retrieve({ page_id: pageId })
+    notionAux.pages.retrieve({ page_id: pageId })
   );
 
   // Extract Travel Admin property
@@ -4612,9 +4610,9 @@ async function getBlockoutCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch the page and extract Blockout Admin property
+  // Fetch the page and extract Blockout Admin property (uses NOTION_API_KEY2)
   const page = await retryNotionCall(() => 
-    notion.pages.retrieve({ page_id: pageId })
+    notionAux.pages.retrieve({ page_id: pageId })
   );
 
   // Extract Blockout Admin property
@@ -4711,9 +4709,9 @@ app.get('/debug/blockout', async (req, res) => {
       pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
-    // Fetch the page
+    // Fetch the page (uses NOTION_API_KEY2)
     const page = await retryNotionCall(() => 
-      notion.pages.retrieve({ page_id: pageId })
+      notionAux.pages.retrieve({ page_id: pageId })
     );
 
     // Get all properties to see what's available
