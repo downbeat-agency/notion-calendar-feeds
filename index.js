@@ -13,10 +13,22 @@ import axios from 'axios';
 
 const app = express();
 const port = process.env.PORT || 3000;
-const notion = new Client({ 
+const notionEvents = new Client({
   auth: process.env.NOTION_API_KEY,
   timeoutMs: 90000 // 90 seconds - longer than Railway's 60s timeout to handle slow Notion responses
 });
+const notionAux = new Client({
+  auth: process.env.NOTION_API_KEY2 || process.env.NOTION_API_KEY,
+  timeoutMs: 90000 // 90 seconds - longer than Railway's 60s timeout to handle slow Notion responses
+});
+// Keep existing `notion` references using the auxiliary integration by default.
+const notion = notionAux;
+
+if (process.env.NOTION_API_KEY2) {
+  console.log('✅ Secondary Notion integration enabled for non-events data');
+} else {
+  console.warn('⚠️  NOTION_API_KEY2 not configured; all Notion calls use NOTION_API_KEY');
+}
 
 // Redis client setup
 let redis = null;
@@ -807,11 +819,11 @@ function extractPropertyStringFromItem(item) {
   return '';
 }
 
-async function fetchPagePropertyString(pageId, propertyId, maxRetries = 5) {
+async function fetchPagePropertyString(pageId, propertyId, maxRetries = 5, notionClient = notionAux) {
   if (!propertyId) return '';
 
   const first = await retryNotionCall(
-    () => notion.pages.properties.retrieve({ page_id: pageId, property_id: propertyId }),
+    () => notionClient.pages.properties.retrieve({ page_id: pageId, property_id: propertyId }),
     maxRetries
   );
 
@@ -825,7 +837,7 @@ async function fetchPagePropertyString(pageId, propertyId, maxRetries = 5) {
 
   while (hasMore && cursor) {
     const next = await retryNotionCall(
-      () => notion.pages.properties.retrieve({
+      () => notionClient.pages.properties.retrieve({
         page_id: pageId,
         property_id: propertyId,
         start_cursor: cursor,
@@ -843,13 +855,23 @@ async function fetchPagePropertyString(pageId, propertyId, maxRetries = 5) {
 async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
 
-  const eventsStr = await fetchPagePropertyString(pageId, ids.Events, maxRetries);
-  const flightsStr = await fetchPagePropertyString(pageId, ids.Flights, maxRetries);
-  const transportationStr = await fetchPagePropertyString(pageId, ids.Transportation, maxRetries);
-  const hotelsStr = await fetchPagePropertyString(pageId, ids.Hotels, maxRetries);
-  const rehearsalsStr = await fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries);
-  const teamCalendarStr = await fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries);
-  const eventNotesRemindersStr = await fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries);
+  const [
+    eventsStr,
+    flightsStr,
+    transportationStr,
+    hotelsStr,
+    rehearsalsStr,
+    teamCalendarStr,
+    eventNotesRemindersStr
+  ] = await Promise.all([
+    fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(pageId, ids.Flights, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Transportation, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Hotels, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries, notionAux)
+  ]);
 
   return {
     Events: { formula: { string: eventsStr || '[]' } },
@@ -871,7 +893,10 @@ async function getCalendarDataFromPage(page, maxRetries = 5) {
     throw new Error('Calendar Data page is missing an id');
   }
 
-  if (hasInlineCalendarDataFormulaStrings(pageProperties)) {
+  // If a secondary integration is configured, always fetch lean properties so
+  // Events comes from NOTION_API_KEY and non-events come from NOTION_API_KEY2.
+  const canUseInlinePayload = !process.env.NOTION_API_KEY2;
+  if (canUseInlinePayload && hasInlineCalendarDataFormulaStrings(pageProperties)) {
     try {
       return {
         pageId,
@@ -940,7 +965,7 @@ async function getCalendarDataFromPageIdOrUrl(calendarDataInput, maxRetries = 5)
   }
 
   const page = await retryNotionCall(
-    () => notion.pages.retrieve({ page_id: pageId }),
+    () => notionAux.pages.retrieve({ page_id: pageId }),
     maxRetries
   );
 
@@ -954,13 +979,13 @@ async function getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, maxRe
   }
 
   const page = await retryNotionCall(
-    () => notion.pages.retrieve({ page_id: pageId }),
+    () => notionAux.pages.retrieve({ page_id: pageId }),
     maxRetries
   );
 
   const linkedPersonId = getPrimaryRelationPageId(page?.properties?.Personnel);
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
-  const eventsString = await fetchPagePropertyString(pageId, propertyIds.Events, maxRetries);
+  const eventsString = await fetchPagePropertyString(pageId, propertyIds.Events, maxRetries, notionEvents);
   const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
 
   return {
@@ -985,23 +1010,43 @@ async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
 
-  const queryStart = Date.now();
-  const response = await retryNotionCall(() =>
-    notion.databases.query({
-      database_id: CALENDAR_DATA_DB,
-      page_size: 1,
-      filter: {
-        property: 'Personnel',
-        relation: {
-          contains: personId
-        }
-      }
-    }),
-    maxRetries
-  );
-  console.log(`📊 CalendarData single-query timing for ${personId}: ${Date.now() - queryStart}ms`);
+  const personFetchStart = Date.now();
+  const personPage = await retryNotionCall(() => notionAux.pages.retrieve({ page_id: personId }), maxRetries);
+  const personFetchMs = Date.now() - personFetchStart;
+  const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
 
-  return processCalendarDataResponse(response);
+  if (!calendarDataPageId) {
+    console.warn(`⚠️  No linked Calendar Data row found on Personnel page for ${personId}; falling back to DB query`);
+    const fallbackStart = Date.now();
+    const response = await retryNotionCall(() =>
+      notionAux.databases.query({
+        database_id: CALENDAR_DATA_DB,
+        page_size: 1,
+        filter: {
+          property: 'Personnel',
+          relation: { contains: personId }
+        }
+      }),
+      maxRetries
+    );
+    console.log(`📊 CalendarData full fallback-query timing for ${personId}: ${Date.now() - fallbackStart}ms`);
+    if (!response.results.length) {
+      return null;
+    }
+    const fromPage = await getCalendarDataFromPage(response.results[0], maxRetries);
+    return fromPage?.calendarData || null;
+  }
+
+  const propertiesFetchStart = Date.now();
+  const leanProperties = await getCalendarDataPagePropertiesLean(calendarDataPageId, maxRetries);
+  const propertiesFetchMs = Date.now() - propertiesFetchStart;
+  const personName = extractPersonNameFromPersonnelPage(personPage);
+  const processed = processCalendarDataProperties({
+    Name: { formula: { string: personName } },
+    ...leanProperties
+  });
+  console.log(`📊 CalendarData split-property timings for ${personId}: person=${personFetchMs}ms props=${propertiesFetchMs}ms`);
+  return processed;
 }
 
 function parseJsonFormulaArray(propertyValue, propertyLabel) {
@@ -1026,7 +1071,7 @@ function extractPersonNameFromPersonnelPage(personPage) {
 
 async function getCalendarDataEventsOnlyFromPersonRelationPath(personId, maxRetries = 5) {
   const personFetchStart = Date.now();
-  const personPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), maxRetries);
+  const personPage = await retryNotionCall(() => notionAux.pages.retrieve({ page_id: personId }), maxRetries);
   const personFetchMs = Date.now() - personFetchStart;
 
   const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
@@ -1037,7 +1082,7 @@ async function getCalendarDataEventsOnlyFromPersonRelationPath(personId, maxRetr
 
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
   const eventsFetchStart = Date.now();
-  const eventsString = await fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries);
+  const eventsString = await fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries, notionEvents);
   const eventsFetchMs = Date.now() - eventsFetchStart;
   const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
 
@@ -1060,51 +1105,44 @@ async function getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, maxR
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
 
-  const queryStart = Date.now();
-  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
-  const response = await retryNotionCall(() => {
-    const queryParams = {
-      database_id: CALENDAR_DATA_DB,
-      page_size: 1,
-      filter: {
-        property: 'Personnel',
-        relation: {
-          contains: personId
-        }
-      }
-    };
-    const filterProperties = [
-      propertyIds.Name,
-      propertyIds.Flights,
-      propertyIds.Transportation,
-      propertyIds.Hotels,
-      propertyIds.Rehearsals,
-      propertyIds.TeamCalendar,
-      propertyIds.EventNotesReminders
-    ].filter(Boolean);
-    if (filterProperties.length > 0) {
-      queryParams.filter_properties = filterProperties;
-    }
-    return notion.databases.query(queryParams);
-  }, maxRetries);
-  console.log(`📊 CalendarData non-events query timing for ${personId}: ${Date.now() - queryStart}ms`);
-
-  if (response.results.length === 0) {
+  const personFetchStart = Date.now();
+  const personPage = await retryNotionCall(() => notionAux.pages.retrieve({ page_id: personId }), maxRetries);
+  const personFetchMs = Date.now() - personFetchStart;
+  const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
+  if (!calendarDataPageId) {
+    console.warn(`⚠️  No linked Calendar Data row found on Personnel page for ${personId}`);
     return null;
   }
 
-  const props = response.results[0].properties || {};
-  const personName = extractPropertyStringFromItem(props.Name) || 'Unknown';
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const propertiesFetchStart = Date.now();
+  const [
+    flightsString,
+    transportationString,
+    hotelsString,
+    rehearsalsString,
+    teamCalendarString,
+    eventNotesString
+  ] = await Promise.all([
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Flights, maxRetries, notionAux),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Transportation, maxRetries, notionAux),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Hotels, maxRetries, notionAux),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Rehearsals, maxRetries, notionAux),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.TeamCalendar, maxRetries, notionAux),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.EventNotesReminders, maxRetries, notionAux)
+  ]);
+  const propertiesFetchMs = Date.now() - propertiesFetchStart;
+  console.log(`📊 CalendarData non-events direct timings for ${personId}: person=${personFetchMs}ms props=${propertiesFetchMs}ms`);
 
   return {
-    personName,
+    personName: extractPersonNameFromPersonnelPage(personPage),
     events: [],
-    flights: parseJsonFormulaArray(props.Flights, 'Flights'),
-    rehearsals: parseJsonFormulaArray(props.Rehearsals, 'Rehearsals'),
-    hotels: parseJsonFormulaArray(props.Hotels, 'Hotels'),
-    ground_transport: parseJsonFormulaArray(props.Transportation, 'Transportation'),
-    team_calendar: parseJsonFormulaArray(props['Team Calendar'], 'Team Calendar'),
-    event_note_reminders: parseJsonFormulaArray(props['Event Notes Reminders'], 'Event Notes Reminders')
+    flights: parseJsonFormulaArray({ formula: { string: flightsString || '[]' } }, 'Flights'),
+    rehearsals: parseJsonFormulaArray({ formula: { string: rehearsalsString || '[]' } }, 'Rehearsals'),
+    hotels: parseJsonFormulaArray({ formula: { string: hotelsString || '[]' } }, 'Hotels'),
+    ground_transport: parseJsonFormulaArray({ formula: { string: transportationString || '[]' } }, 'Transportation'),
+    team_calendar: parseJsonFormulaArray({ formula: { string: teamCalendarString || '[]' } }, 'Team Calendar'),
+    event_note_reminders: parseJsonFormulaArray({ formula: { string: eventNotesString || '[]' } }, 'Event Notes Reminders')
   };
 }
 
