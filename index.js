@@ -2688,6 +2688,148 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
   return null;
 }
 
+function normalizeCalendarEventDate(value) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getCalendarEventBreakdown(allCalendarEvents) {
+  return {
+    mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
+    flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
+    rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
+    hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
+    groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length,
+    teamCalendar: allCalendarEvents.filter(e => e.type === 'team_calendar').length,
+    eventReminders: allCalendarEvents.filter(e => e.type === 'event_note_reminder').length
+  };
+}
+
+function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
+  const {
+    totalMainEvents = allCalendarEvents.filter(e => e.type === 'main_event').length,
+    regenMode = REGEN_MODE_FULL,
+    dataSource = 'calendar_data_database'
+  } = options;
+
+  const firstName = (personName || 'Unknown').split(' ')[0] || 'Unknown';
+  const calendar = ical({
+    name: `Downbeat iCal (${firstName})`,
+    description: `Professional events calendar for ${personName || 'Unknown'}`,
+    ttl: 300  // Suggest refresh every 5 minutes
+  });
+
+  allCalendarEvents.forEach(event => {
+    const startDate = normalizeCalendarEventDate(event.start);
+    const endDate = normalizeCalendarEventDate(event.end) || startDate;
+    if (!startDate || !endDate) {
+      return;
+    }
+
+    calendar.createEvent({
+      start: startDate,
+      end: endDate,
+      summary: event.title,
+      description: event.description,
+      location: event.location,
+      url: event.url || '',
+      floating: true,
+      alarms: getAlarmsForEvent(event.type, event.title)
+    });
+  });
+
+  const icsData = serializeCalendar(calendar);
+  const googleIcsData = serializeGoogleCalendar(calendar);
+  const breakdown = getCalendarEventBreakdown(allCalendarEvents);
+  const jsonResponse = {
+    personName,
+    regenMode,
+    totalMainEvents,
+    totalCalendarEvents: allCalendarEvents.length,
+    dataSource,
+    breakdown,
+    events: allCalendarEvents
+  };
+  const jsonData = JSON.stringify(jsonResponse);
+
+  return { icsData, googleIcsData, jsonResponse, jsonData };
+}
+
+function getCalendarEventDedupKey(event) {
+  const startIso = normalizeCalendarEventDate(event?.start)?.toISOString?.() || String(event?.start || '');
+  const endIso = normalizeCalendarEventDate(event?.end)?.toISOString?.() || String(event?.end || '');
+  return [
+    event?.type || '',
+    event?.title || '',
+    startIso,
+    endIso,
+    event?.location || '',
+    event?.url || ''
+  ].join('|');
+}
+
+function dedupeCalendarEvents(allCalendarEvents) {
+  const dedupedMap = new Map();
+  allCalendarEvents.forEach(event => {
+    dedupedMap.set(getCalendarEventDedupKey(event), event);
+  });
+  return Array.from(dedupedMap.values());
+}
+
+async function tryComposeFullCalendarFromSplitCaches(personId) {
+  if (!redis || !cacheEnabled) {
+    return { composed: false, reason: 'cache_unavailable' };
+  }
+
+  const eventsOnlyKey = buildCalendarCacheKey(personId, 'json', REGEN_MODE_EVENTS_ONLY);
+  const nonEventsOnlyKey = buildCalendarCacheKey(personId, 'json', REGEN_MODE_NON_EVENTS_ONLY);
+  const [eventsOnlyJson, nonEventsOnlyJson] = await Promise.all([
+    redis.get(eventsOnlyKey),
+    redis.get(nonEventsOnlyKey)
+  ]);
+
+  if (!eventsOnlyJson || !nonEventsOnlyJson) {
+    return { composed: false, reason: 'missing_split_cache' };
+  }
+
+  let eventsOnly;
+  let nonEventsOnly;
+  try {
+    eventsOnly = JSON.parse(eventsOnlyJson);
+    nonEventsOnly = JSON.parse(nonEventsOnlyJson);
+  } catch (parseError) {
+    return { composed: false, reason: `split_cache_parse_error:${parseError.message}` };
+  }
+
+  const mergedEvents = dedupeCalendarEvents([
+    ...(Array.isArray(eventsOnly?.events) ? eventsOnly.events : []),
+    ...(Array.isArray(nonEventsOnly?.events) ? nonEventsOnly.events : [])
+  ]);
+  const personName = (eventsOnly?.personName && eventsOnly.personName !== 'Unknown')
+    ? eventsOnly.personName
+    : (nonEventsOnly?.personName || 'Unknown');
+  const totalMainEvents = Number.isFinite(eventsOnly?.totalMainEvents)
+    ? eventsOnly.totalMainEvents
+    : mergedEvents.filter(e => e.type === 'main_event').length;
+  const composed = buildCalendarArtifacts(personName, mergedEvents, {
+    totalMainEvents,
+    regenMode: REGEN_MODE_FULL,
+    dataSource: 'split_cache_merge'
+  });
+
+  await Promise.all([
+    setCalendarCache(buildCalendarCacheKey(personId, 'ics', REGEN_MODE_FULL), composed.icsData),
+    setCalendarCache(buildCalendarCacheKey(personId, 'google_ics', REGEN_MODE_FULL), composed.googleIcsData),
+    setCalendarCache(buildCalendarCacheKey(personId, 'json', REGEN_MODE_FULL), composed.jsonData)
+  ]);
+
+  return {
+    composed: true,
+    personName,
+    totalCalendarEvents: mergedEvents.length
+  };
+}
+
 // Helper function to rebuild and cache a single person's calendar.
 async function regenerateCalendarForPerson(personId, options = {}) {
   const {
@@ -2779,7 +2921,6 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     }
     
     const personName = calendarData.personName || 'Unknown';
-    const firstName = personName.split(' ')[0];
     
     console.log(`Processing calendar for ${personName} (${calendarData.events.length} events, mode=${selectedRegenMode})`);
 
@@ -3402,50 +3543,11 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       });
     }
 
-    // Generate ICS calendar
-    const calendar = ical({ 
-      name: `Downbeat iCal (${firstName})`,
-      description: `Professional events calendar for ${personName}`,
-      ttl: 300  // Suggest refresh every 5 minutes
-    });
-
-    allCalendarEvents.forEach(event => {
-      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-        
-      calendar.createEvent({
-        start: startDate,
-        end: endDate,
-        summary: event.title,
-        description: event.description,
-        location: event.location,
-        url: event.url || '',
-        floating: true,
-        alarms: getAlarmsForEvent(event.type, event.title)
-      });
-    });
-
-    const icsData = serializeCalendar(calendar);
-    const googleIcsData = serializeGoogleCalendar(calendar);
-
-    const jsonResponse = {
-      personName,
-      regenMode: selectedRegenMode,
+    const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(personName, allCalendarEvents, {
       totalMainEvents: eventsArray.length,
-      totalCalendarEvents: allCalendarEvents.length,
-      dataSource: 'calendar_data_database',
-      breakdown: {
-        mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
-        flights: allCalendarEvents.filter(e => e.type === 'flight_departure' || e.type === 'flight_return' || e.type === 'flight_departure_layover' || e.type === 'flight_return_layover').length,
-        rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
-        hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-        groundTransport: allCalendarEvents.filter(e => e.type === 'ground_transport_pickup' || e.type === 'ground_transport_dropoff' || e.type === 'ground_transport_meeting' || e.type === 'ground_transport').length,
-        teamCalendar: allCalendarEvents.filter(e => e.type === 'team_calendar').length,
-        eventReminders: allCalendarEvents.filter(e => e.type === 'event_note_reminder').length
-      },
-      events: allCalendarEvents
-    };
-    const jsonData = JSON.stringify(jsonResponse);
+      regenMode: selectedRegenMode,
+      dataSource: 'calendar_data_database'
+    });
 
     // Cache both formats.
     if (redis && cacheEnabled) {
@@ -3453,6 +3555,14 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
       await setCalendarCache(`${cachePrefix}:json`, jsonData);
       verboseLog(`✅ Cached calendar for ${personName} (${allCalendarEvents.length} events, expires in ${CACHE_TTL}s)`);
+      if (splitMode) {
+        const composedResult = await tryComposeFullCalendarFromSplitCaches(personId);
+        if (composedResult.composed) {
+          console.log(`🧩 Composed full calendar cache from split modes for ${personId} (${composedResult.totalCalendarEvents} events)`);
+        } else {
+          verboseLog(`ℹ️  Split cache compose skipped for ${personId}: ${composedResult.reason}`);
+        }
+      }
     }
 
     return {
