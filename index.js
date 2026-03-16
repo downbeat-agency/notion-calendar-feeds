@@ -683,6 +683,13 @@ const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 6000
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 60000);
 const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 60000);
 const CALENDAR_FETCH_TIMEOUT_MS = Number(process.env.CALENDAR_FETCH_TIMEOUT_MS || 60000); // max allowed for admin/travel/blockout pulls
+const MAIN_ONLY_TEST_PERSON_ID = normalizeNotionPageId(
+  process.env.MAIN_ONLY_TEST_PERSON_ID || 'ac294b7c-1907-4977-b5ba-191890a397a3'
+);
+
+function isMainOnlyTestPerson(personId) {
+  return normalizeNotionPageId(personId) === MAIN_ONLY_TEST_PERSON_ID;
+}
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -918,6 +925,60 @@ async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
   console.log(`📊 CalendarData single-query timing for ${personId}: ${Date.now() - queryStart}ms`);
 
   return processCalendarDataResponse(response);
+}
+
+async function getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, maxRetries = 5) {
+  if (!CALENDAR_DATA_DB) {
+    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  const queryStart = Date.now();
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const response = await retryNotionCall(() => {
+    const queryParams = {
+      database_id: CALENDAR_DATA_DB,
+      page_size: 1,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    };
+    const filterProperties = [propertyIds.Name, propertyIds.Events].filter(Boolean);
+    if (filterProperties.length > 0) {
+      queryParams.filter_properties = filterProperties;
+    }
+    return notion.databases.query(queryParams);
+  }, maxRetries);
+  console.log(`📊 CalendarData main-only query timing for ${personId}: ${Date.now() - queryStart}ms`);
+
+  if (response.results.length === 0) {
+    return null;
+  }
+
+  const props = response.results[0].properties || {};
+  const personName = extractPropertyStringFromItem(props.Name) || 'Unknown';
+  const eventsString = props.Events?.formula?.string ?? extractPropertyStringFromItem(props.Events) ?? '[]';
+
+  let events;
+  try {
+    events = JSON.parse(eventsString || '[]');
+  } catch (e) {
+    console.error('Error parsing Events JSON (main-only mode):', eventsString?.substring?.(0, 100) || '');
+    throw new Error(`Events JSON parse error: ${e.message}`);
+  }
+
+  return {
+    personName,
+    events: Array.isArray(events) ? events : [],
+    flights: [],
+    rehearsals: [],
+    hotels: [],
+    ground_transport: [],
+    team_calendar: [],
+    event_note_reminders: []
+  };
 }
 
 // Helper function to get calendar data from Calendar Data database
@@ -1418,6 +1479,31 @@ function processCalendarDataProperties(calendarData) {
     ground_transport: transportation,
     team_calendar: teamCalendar,
     event_note_reminders: eventNotesReminders
+  };
+}
+
+function coerceCalendarDataToMainOnly(calendarData) {
+  if (!calendarData) return calendarData;
+
+  const eventsArray = Array.isArray(calendarData.events) ? calendarData.events : [];
+  const mainOnlyEvents = eventsArray.map(event => ({
+    ...event,
+    flights: [],
+    hotels: [],
+    ground_transport: [],
+    rehearsal: [],
+    rehearsals: []
+  }));
+
+  return {
+    ...calendarData,
+    events: mainOnlyEvents,
+    flights: [],
+    rehearsals: [],
+    hotels: [],
+    ground_transport: [],
+    team_calendar: [],
+    event_note_reminders: []
   };
 }
 
@@ -2426,6 +2512,7 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 async function regenerateCalendarForPerson(personId, options = {}) {
   const { trigger = 'unknown', clearCache = false, preloadedCalendarData = null } = options;
   const regenStartedAt = Date.now();
+  const mainOnlyTestMode = isMainOnlyTestPerson(personId);
 
   try {
     if (isNotionCircuitOpen()) {
@@ -2434,6 +2521,9 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       return { success: false, personId, error: reason };
     }
     console.log(`🔄 Rebuilding calendar for ${personId}...`);
+    if (mainOnlyTestMode) {
+      console.log(`🧪 Main-only test mode enabled for ${personId}`);
+    }
     if (clearCache && redis && cacheEnabled) {
       await redis.del(`calendar:${personId}:ics`);
       await redis.del(`calendar:${personId}:google_ics`);
@@ -2446,10 +2536,16 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
       const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
       calendarData = await withTimeout(
-        getCalendarDataFromDatabaseQueryStyle(personId, 6),
+        mainOnlyTestMode
+          ? getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, 6)
+          : getCalendarDataFromDatabaseQueryStyle(personId, 6),
         fetchTimeoutMs,
         'Personnel calendar-data fetch timed out'
       );
+    }
+
+    if (mainOnlyTestMode && calendarData) {
+      calendarData = coerceCalendarDataToMainOnly(calendarData);
     }
 
     if (!calendarData) {
@@ -3131,6 +3227,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     const jsonResponse = {
       personName,
+      mainOnlyTestMode,
       totalMainEvents: eventsArray.length,
       totalCalendarEvents: allCalendarEvents.length,
       dataSource: 'calendar_data_database',
