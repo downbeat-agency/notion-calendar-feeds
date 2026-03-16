@@ -947,6 +947,39 @@ async function getCalendarDataFromPageIdOrUrl(calendarDataInput, maxRetries = 5)
   return getCalendarDataFromPage(page, maxRetries);
 }
 
+async function getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, maxRetries = 5) {
+  const pageId = normalizeNotionPageId(calendarDataInput);
+  if (!pageId) {
+    throw new Error('Invalid Calendar Data page ID or URL');
+  }
+
+  const page = await retryNotionCall(
+    () => notion.pages.retrieve({ page_id: pageId }),
+    maxRetries
+  );
+
+  const linkedPersonId = getPrimaryRelationPageId(page?.properties?.Personnel);
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const eventsString = await fetchPagePropertyString(pageId, propertyIds.Events, maxRetries);
+  const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
+
+  return {
+    pageId,
+    linkedPersonId,
+    calendarData: {
+      personName: extractPropertyStringFromItem(page?.properties?.Name) || 'Unknown',
+      events: Array.isArray(events) ? events : [],
+      flights: [],
+      rehearsals: [],
+      hotels: [],
+      ground_transport: [],
+      team_calendar: [],
+      event_note_reminders: []
+    },
+    source: 'page_events_property_only'
+  };
+}
+
 async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
@@ -982,42 +1015,36 @@ function parseJsonFormulaArray(propertyValue, propertyLabel) {
   }
 }
 
-async function getCalendarDataEventsOnlyFromDatabaseQueryStyle(personId, maxRetries = 5) {
-  if (!CALENDAR_DATA_DB) {
-    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
-  }
+function extractPersonNameFromPersonnelPage(personPage) {
+  if (!personPage?.properties) return 'Unknown';
+  return (
+    extractPropertyStringFromItem(personPage.properties['Full Name']) ||
+    extractPropertyStringFromItem(personPage.properties.Name) ||
+    'Unknown'
+  );
+}
 
-  const queryStart = Date.now();
-  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
-  const response = await retryNotionCall(() => {
-    const queryParams = {
-      database_id: CALENDAR_DATA_DB,
-      page_size: 1,
-      filter: {
-        property: 'Personnel',
-        relation: {
-          contains: personId
-        }
-      }
-    };
-    const filterProperties = [propertyIds.Name, propertyIds.Events].filter(Boolean);
-    if (filterProperties.length > 0) {
-      queryParams.filter_properties = filterProperties;
-    }
-    return notion.databases.query(queryParams);
-  }, maxRetries);
-  console.log(`📊 CalendarData events-only query timing for ${personId}: ${Date.now() - queryStart}ms`);
+async function getCalendarDataEventsOnlyFromPersonRelationPath(personId, maxRetries = 5) {
+  const personFetchStart = Date.now();
+  const personPage = await retryNotionCall(() => notion.pages.retrieve({ page_id: personId }), maxRetries);
+  const personFetchMs = Date.now() - personFetchStart;
 
-  if (response.results.length === 0) {
+  const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
+  if (!calendarDataPageId) {
+    console.warn(`⚠️  No linked Calendar Data row found on Personnel page for ${personId}`);
     return null;
   }
 
-  const props = response.results[0].properties || {};
-  const personName = extractPropertyStringFromItem(props.Name) || 'Unknown';
-  const events = parseJsonFormulaArray(props.Events, 'Events');
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const eventsFetchStart = Date.now();
+  const eventsString = await fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries);
+  const eventsFetchMs = Date.now() - eventsFetchStart;
+  const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
+
+  console.log(`📊 CalendarData events-only direct timings for ${personId}: person=${personFetchMs}ms eventsProperty=${eventsFetchMs}ms`);
 
   return {
-    personName,
+    personName: extractPersonNameFromPersonnelPage(personPage),
     events: Array.isArray(events) ? events : [],
     flights: [],
     rehearsals: [],
@@ -2665,7 +2692,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
       calendarData = await withTimeout(
         selectedRegenMode === REGEN_MODE_EVENTS_ONLY
-          ? getCalendarDataEventsOnlyFromDatabaseQueryStyle(personId, 6)
+          ? getCalendarDataEventsOnlyFromPersonRelationPath(personId, 6)
           : selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY
             ? getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, 6)
             : getCalendarDataFromDatabaseQueryStyle(personId, 6),
@@ -5579,7 +5606,9 @@ app.get('/calendar-data/regenerate', async (req, res) => {
 
     const fetchTimeoutMs = REGEN_FETCH_STEP_TIMEOUT_MS;
     const { pageId, linkedPersonId, calendarData, source } = await withTimeout(
-      getCalendarDataFromPageIdOrUrl(calendarDataInput, 6),
+      regenMode === REGEN_MODE_EVENTS_ONLY
+        ? getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, 6)
+        : getCalendarDataFromPageIdOrUrl(calendarDataInput, 6),
       fetchTimeoutMs,
       'Calendar Data page fetch timed out'
     );
