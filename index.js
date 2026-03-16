@@ -683,12 +683,56 @@ const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 6000
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 60000);
 const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 60000);
 const CALENDAR_FETCH_TIMEOUT_MS = Number(process.env.CALENDAR_FETCH_TIMEOUT_MS || 60000); // max allowed for admin/travel/blockout pulls
-const MAIN_ONLY_TEST_PERSON_ID = normalizeNotionPageId(
-  process.env.MAIN_ONLY_TEST_PERSON_ID || 'ac294b7c-1907-4977-b5ba-191890a397a3'
+const REGEN_MODE_FULL = 'full';
+const REGEN_MODE_EVENTS_ONLY = 'events_only';
+const REGEN_MODE_NON_EVENTS_ONLY = 'non_events_only';
+const SPLIT_REGEN_TEST_PERSON_ID = normalizeNotionPageId(
+  process.env.SPLIT_REGEN_TEST_PERSON_ID || 'ac294b7c-1907-4977-b5ba-191890a397a3'
 );
 
-function isMainOnlyTestPerson(personId) {
-  return normalizeNotionPageId(personId) === MAIN_ONLY_TEST_PERSON_ID;
+function parseRegenMode(rawMode) {
+  if (rawMode === undefined || rawMode === null || rawMode === '') {
+    return REGEN_MODE_FULL;
+  }
+
+  const value = String(rawMode).trim().toLowerCase();
+  if (value === REGEN_MODE_FULL) return REGEN_MODE_FULL;
+
+  if (
+    value === REGEN_MODE_EVENTS_ONLY ||
+    value === 'events' ||
+    value === 'main' ||
+    value === 'main_only'
+  ) {
+    return REGEN_MODE_EVENTS_ONLY;
+  }
+
+  if (
+    value === REGEN_MODE_NON_EVENTS_ONLY ||
+    value === 'non_events' ||
+    value === 'aux' ||
+    value === 'aux_only' ||
+    value === 'other_properties'
+  ) {
+    return REGEN_MODE_NON_EVENTS_ONLY;
+  }
+
+  return null;
+}
+
+function isSplitRegenTestPerson(personId) {
+  return normalizeNotionPageId(personId) === SPLIT_REGEN_TEST_PERSON_ID;
+}
+
+function isSplitModeAllowedForPerson(personId, regenMode) {
+  return regenMode === REGEN_MODE_FULL || isSplitRegenTestPerson(personId);
+}
+
+function buildCalendarCacheKey(personId, formatKey, regenMode = REGEN_MODE_FULL) {
+  if (regenMode === REGEN_MODE_FULL) {
+    return `calendar:${personId}:${formatKey}`;
+  }
+  return `calendar:${personId}:${regenMode}:${formatKey}`;
 }
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -927,7 +971,18 @@ async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
   return processCalendarDataResponse(response);
 }
 
-async function getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, maxRetries = 5) {
+function parseJsonFormulaArray(propertyValue, propertyLabel) {
+  const raw = propertyValue?.formula?.string ?? extractPropertyStringFromItem(propertyValue) ?? '[]';
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.error(`Error parsing ${propertyLabel} JSON:`, raw?.substring?.(0, 100) || '');
+    throw new Error(`${propertyLabel} JSON parse error: ${e.message}`);
+  }
+}
+
+async function getCalendarDataEventsOnlyFromDatabaseQueryStyle(personId, maxRetries = 5) {
   if (!CALENDAR_DATA_DB) {
     throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
   }
@@ -951,7 +1006,7 @@ async function getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, maxRetrie
     }
     return notion.databases.query(queryParams);
   }, maxRetries);
-  console.log(`📊 CalendarData main-only query timing for ${personId}: ${Date.now() - queryStart}ms`);
+  console.log(`📊 CalendarData events-only query timing for ${personId}: ${Date.now() - queryStart}ms`);
 
   if (response.results.length === 0) {
     return null;
@@ -959,15 +1014,7 @@ async function getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, maxRetrie
 
   const props = response.results[0].properties || {};
   const personName = extractPropertyStringFromItem(props.Name) || 'Unknown';
-  const eventsString = props.Events?.formula?.string ?? extractPropertyStringFromItem(props.Events) ?? '[]';
-
-  let events;
-  try {
-    events = JSON.parse(eventsString || '[]');
-  } catch (e) {
-    console.error('Error parsing Events JSON (main-only mode):', eventsString?.substring?.(0, 100) || '');
-    throw new Error(`Events JSON parse error: ${e.message}`);
-  }
+  const events = parseJsonFormulaArray(props.Events, 'Events');
 
   return {
     personName,
@@ -978,6 +1025,59 @@ async function getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, maxRetrie
     ground_transport: [],
     team_calendar: [],
     event_note_reminders: []
+  };
+}
+
+async function getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, maxRetries = 5) {
+  if (!CALENDAR_DATA_DB) {
+    throw new Error('CALENDAR_DATA_DATABASE_ID not configured');
+  }
+
+  const queryStart = Date.now();
+  const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
+  const response = await retryNotionCall(() => {
+    const queryParams = {
+      database_id: CALENDAR_DATA_DB,
+      page_size: 1,
+      filter: {
+        property: 'Personnel',
+        relation: {
+          contains: personId
+        }
+      }
+    };
+    const filterProperties = [
+      propertyIds.Name,
+      propertyIds.Flights,
+      propertyIds.Transportation,
+      propertyIds.Hotels,
+      propertyIds.Rehearsals,
+      propertyIds.TeamCalendar,
+      propertyIds.EventNotesReminders
+    ].filter(Boolean);
+    if (filterProperties.length > 0) {
+      queryParams.filter_properties = filterProperties;
+    }
+    return notion.databases.query(queryParams);
+  }, maxRetries);
+  console.log(`📊 CalendarData non-events query timing for ${personId}: ${Date.now() - queryStart}ms`);
+
+  if (response.results.length === 0) {
+    return null;
+  }
+
+  const props = response.results[0].properties || {};
+  const personName = extractPropertyStringFromItem(props.Name) || 'Unknown';
+
+  return {
+    personName,
+    events: [],
+    flights: parseJsonFormulaArray(props.Flights, 'Flights'),
+    rehearsals: parseJsonFormulaArray(props.Rehearsals, 'Rehearsals'),
+    hotels: parseJsonFormulaArray(props.Hotels, 'Hotels'),
+    ground_transport: parseJsonFormulaArray(props.Transportation, 'Transportation'),
+    team_calendar: parseJsonFormulaArray(props['Team Calendar'], 'Team Calendar'),
+    event_note_reminders: parseJsonFormulaArray(props['Event Notes Reminders'], 'Event Notes Reminders')
   };
 }
 
@@ -1482,7 +1582,7 @@ function processCalendarDataProperties(calendarData) {
   };
 }
 
-function coerceCalendarDataToMainOnly(calendarData) {
+function coerceCalendarDataToEventsOnly(calendarData) {
   if (!calendarData) return calendarData;
 
   const eventsArray = Array.isArray(calendarData.events) ? calendarData.events : [];
@@ -1504,6 +1604,21 @@ function coerceCalendarDataToMainOnly(calendarData) {
     ground_transport: [],
     team_calendar: [],
     event_note_reminders: []
+  };
+}
+
+function coerceCalendarDataToNonEventsOnly(calendarData) {
+  if (!calendarData) return calendarData;
+
+  return {
+    ...calendarData,
+    events: [],
+    flights: Array.isArray(calendarData.flights) ? calendarData.flights : [],
+    rehearsals: Array.isArray(calendarData.rehearsals) ? calendarData.rehearsals : [],
+    hotels: Array.isArray(calendarData.hotels) ? calendarData.hotels : [],
+    ground_transport: Array.isArray(calendarData.ground_transport) ? calendarData.ground_transport : [],
+    team_calendar: Array.isArray(calendarData.team_calendar) ? calendarData.team_calendar : [],
+    event_note_reminders: Array.isArray(calendarData.event_note_reminders) ? calendarData.event_note_reminders : []
   };
 }
 
@@ -2510,9 +2625,14 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 
 // Helper function to rebuild and cache a single person's calendar.
 async function regenerateCalendarForPerson(personId, options = {}) {
-  const { trigger = 'unknown', clearCache = false, preloadedCalendarData = null } = options;
+  const { trigger = 'unknown', clearCache = false, preloadedCalendarData = null, regenMode = REGEN_MODE_FULL } = options;
   const regenStartedAt = Date.now();
-  const mainOnlyTestMode = isMainOnlyTestPerson(personId);
+  const selectedRegenMode = parseRegenMode(regenMode) || REGEN_MODE_FULL;
+  const splitMode = selectedRegenMode !== REGEN_MODE_FULL;
+  const splitModeAllowed = isSplitModeAllowedForPerson(personId, selectedRegenMode);
+  const cachePrefix = selectedRegenMode === REGEN_MODE_FULL
+    ? `calendar:${personId}`
+    : `calendar:${personId}:${selectedRegenMode}`;
 
   try {
     if (isNotionCircuitOpen()) {
@@ -2520,14 +2640,22 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const reason = `Notion circuit open (${waitMs}ms remaining)`;
       return { success: false, personId, error: reason };
     }
+    if (splitMode && !splitModeAllowed) {
+      return {
+        success: false,
+        personId,
+        reason: 'mode_not_allowed',
+        error: `regen mode "${selectedRegenMode}" is only allowed for test person ${SPLIT_REGEN_TEST_PERSON_ID}`
+      };
+    }
     console.log(`🔄 Rebuilding calendar for ${personId}...`);
-    if (mainOnlyTestMode) {
-      console.log(`🧪 Main-only test mode enabled for ${personId}`);
+    if (splitMode) {
+      console.log(`🧪 Split regen mode "${selectedRegenMode}" enabled for ${personId}`);
     }
     if (clearCache && redis && cacheEnabled) {
-      await redis.del(`calendar:${personId}:ics`);
-      await redis.del(`calendar:${personId}:google_ics`);
-      await redis.del(`calendar:${personId}:json`);
+      await redis.del(`${cachePrefix}:ics`);
+      await redis.del(`${cachePrefix}:google_ics`);
+      await redis.del(`${cachePrefix}:json`);
     }
 
     // Enforce a hard rebuild time budget to prevent indefinite requests.
@@ -2536,16 +2664,20 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
       const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
       calendarData = await withTimeout(
-        mainOnlyTestMode
-          ? getCalendarDataMainOnlyFromDatabaseQueryStyle(personId, 6)
-          : getCalendarDataFromDatabaseQueryStyle(personId, 6),
+        selectedRegenMode === REGEN_MODE_EVENTS_ONLY
+          ? getCalendarDataEventsOnlyFromDatabaseQueryStyle(personId, 6)
+          : selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY
+            ? getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, 6)
+            : getCalendarDataFromDatabaseQueryStyle(personId, 6),
         fetchTimeoutMs,
         'Personnel calendar-data fetch timed out'
       );
     }
 
-    if (mainOnlyTestMode && calendarData) {
-      calendarData = coerceCalendarDataToMainOnly(calendarData);
+    if (selectedRegenMode === REGEN_MODE_EVENTS_ONLY && calendarData) {
+      calendarData = coerceCalendarDataToEventsOnly(calendarData);
+    } else if (selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY && calendarData) {
+      calendarData = coerceCalendarDataToNonEventsOnly(calendarData);
     }
 
     if (!calendarData) {
@@ -2578,7 +2710,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     const personName = calendarData.personName || 'Unknown';
     const firstName = personName.split(' ')[0];
     
-    console.log(`Processing calendar for ${personName} (${calendarData.events.length} events)`);
+    console.log(`Processing calendar for ${personName} (${calendarData.events.length} events, mode=${selectedRegenMode})`);
 
     // Process events into calendar format (duplicated from main endpoint)
     const allCalendarEvents = [];
@@ -3227,7 +3359,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     const jsonResponse = {
       personName,
-      mainOnlyTestMode,
+      regenMode: selectedRegenMode,
       totalMainEvents: eventsArray.length,
       totalCalendarEvents: allCalendarEvents.length,
       dataSource: 'calendar_data_database',
@@ -3246,9 +3378,9 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 
     // Cache both formats.
     if (redis && cacheEnabled) {
-      await setCalendarCache(`calendar:${personId}:ics`, icsData);
-      await setCalendarCache(`calendar:${personId}:google_ics`, googleIcsData);
-      await setCalendarCache(`calendar:${personId}:json`, jsonData);
+      await setCalendarCache(`${cachePrefix}:ics`, icsData);
+      await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
+      await setCalendarCache(`${cachePrefix}:json`, jsonData);
       verboseLog(`✅ Cached calendar for ${personName} (${allCalendarEvents.length} events, expires in ${CACHE_TTL}s)`);
     }
 
@@ -3256,6 +3388,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       success: true,
       personId,
       personName,
+      regenMode: selectedRegenMode,
       eventCount: allCalendarEvents.length,
       icsData,
       googleIcsData,
@@ -5348,18 +5481,36 @@ app.get('/regenerate/:personId', async (req, res) => {
   let manualRegenRegistered = false;
   try {
     let { personId } = req.params;
+    const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    if (!regenMode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid regen mode',
+        message: 'Use mode=full | mode=events_only | mode=non_events_only'
+      });
+    }
     
     // Convert personId to proper UUID format if needed
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
 
+    if (!isSplitModeAllowedForPerson(personId, regenMode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Regen mode not allowed for this person',
+        message: `Split modes are only enabled for test person ${SPLIT_REGEN_TEST_PERSON_ID}`,
+        regenMode
+      });
+    }
+
     activeManualRegens += 1;
     manualRegenRegistered = true;
 
     const result = await regenerateCalendarForPerson(personId, {
-      trigger: 'manual_regen',
-      clearCache: true
+      trigger: `manual_regen:${regenMode}`,
+      clearCache: true,
+      regenMode
     });
     if (result.success) {
       return res.json({
@@ -5367,6 +5518,7 @@ app.get('/regenerate/:personId', async (req, res) => {
         message: 'Calendar regenerated successfully',
         personId,
         personName: result.personName,
+        regen_mode: result.regenMode || regenMode,
         eventCount: result.eventCount,
         cache_cleared: true,
         cached_for_seconds: CACHE_TTL
@@ -5379,6 +5531,7 @@ app.get('/regenerate/:personId', async (req, res) => {
         ? 'No events found for this person'
         : 'Calendar regeneration failed',
       personId,
+      regen_mode: regenMode,
       reason: result.reason || 'unknown',
       details: result.error || null
     });
@@ -5405,6 +5558,14 @@ app.get('/calendar-data/regenerate', async (req, res) => {
   let manualRegenRegistered = false;
   try {
     const calendarDataInput = req.query.id || req.query.url || req.query.pageId;
+    const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    if (!regenMode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid regen mode',
+        message: 'Use mode=full | mode=events_only | mode=non_events_only'
+      });
+    }
     if (!calendarDataInput || typeof calendarDataInput !== 'string') {
       return res.status(400).json({
         success: false,
@@ -5430,11 +5591,22 @@ app.get('/calendar-data/regenerate', async (req, res) => {
         calendarDataPageId: pageId
       });
     }
+    if (!isSplitModeAllowedForPerson(linkedPersonId, regenMode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Regen mode not allowed for this person',
+        message: `Split modes are only enabled for test person ${SPLIT_REGEN_TEST_PERSON_ID}`,
+        calendarDataPageId: pageId,
+        personId: linkedPersonId,
+        regenMode
+      });
+    }
 
     const result = await regenerateCalendarForPerson(linkedPersonId, {
-      trigger: 'manual_regen_calendar_data',
+      trigger: `manual_regen_calendar_data:${regenMode}`,
       clearCache: true,
-      preloadedCalendarData: calendarData
+      preloadedCalendarData: calendarData,
+      regenMode
     });
 
     if (result.success) {
@@ -5443,6 +5615,7 @@ app.get('/calendar-data/regenerate', async (req, res) => {
         message: 'Calendar regenerated successfully',
         personId: linkedPersonId,
         personName: result.personName,
+        regen_mode: result.regenMode || regenMode,
         eventCount: result.eventCount,
         calendarDataPageId: pageId,
         calendarDataSource: source,
@@ -5458,6 +5631,7 @@ app.get('/calendar-data/regenerate', async (req, res) => {
         ? 'No events found for this Calendar Data record'
         : 'Calendar regeneration failed',
       personId: linkedPersonId,
+      regen_mode: regenMode,
       calendarDataPageId: pageId,
       reason: result.reason || 'unknown',
       details: result.error || null
@@ -8180,6 +8354,13 @@ app.get('/calendar/:personId', async (req, res) => {
     const format = req.query.format;
     const calendarClient = req.query.client === 'google' ? 'google' : 'default';
     const isGoogleClient = calendarClient === 'google';
+    const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    if (!regenMode) {
+      return res.status(400).json({
+        error: 'Invalid regen mode',
+        message: 'Use mode=full | mode=events_only | mode=non_events_only'
+      });
+    }
     
     // Auto-detect format from Accept header for calendar subscriptions
     const acceptHeader = req.headers.accept || '';
@@ -8191,15 +8372,23 @@ app.get('/calendar/:personId', async (req, res) => {
     if (personId.length === 32 && !personId.includes('-')) {
       personId = personId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
     }
+    if (!isSplitModeAllowedForPerson(personId, regenMode)) {
+      return res.status(400).json({
+        error: 'Regen mode not allowed for this person',
+        message: `Split modes are only enabled for test person ${SPLIT_REGEN_TEST_PERSON_ID}`,
+        regenMode
+      });
+    }
 
     // Check Redis cache first (if enabled, unless ?fresh=true is specified)
     const forceFresh = req.query.fresh === 'true';
-    const cacheKey = `calendar:${personId}:${shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json'}`;
+    const cacheFormat = shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json';
+    const cacheKey = buildCalendarCacheKey(personId, cacheFormat, regenMode);
     
     if (forceFresh && redis && cacheEnabled) {
-      const icsKey = `calendar:${personId}:ics`;
-      const googleIcsKey = `calendar:${personId}:google_ics`;
-      const jsonKey = `calendar:${personId}:json`;
+      const icsKey = buildCalendarCacheKey(personId, 'ics', regenMode);
+      const googleIcsKey = buildCalendarCacheKey(personId, 'google_ics', regenMode);
+      const jsonKey = buildCalendarCacheKey(personId, 'json', regenMode);
       await redis.del(icsKey);
       await redis.del(googleIcsKey);
       await redis.del(jsonKey);
@@ -8226,8 +8415,8 @@ app.get('/calendar/:personId', async (req, res) => {
           }
         }
         logWithDedup(
-          `cache_miss:person:${personId}:${shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json'}`,
-          `❌ Cache MISS for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'})`
+          `cache_miss:person:${personId}:${regenMode}:${shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json'}`,
+          `❌ Cache MISS for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'}, mode=${regenMode})`
         );
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
@@ -8243,7 +8432,8 @@ app.get('/calendar/:personId', async (req, res) => {
     }
     
     const result = await regenerateCalendarForPerson(personId, {
-      trigger: forceFresh ? 'calendar_fresh' : 'calendar_cache_miss'
+      trigger: forceFresh ? `calendar_fresh:${regenMode}` : `calendar_cache_miss:${regenMode}`,
+      regenMode
     });
     if (!result.success) {
       const statusCode = result.reason === 'no_events' ? 404 : 500;
