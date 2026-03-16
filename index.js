@@ -701,6 +701,9 @@ const REGEN_MODE_NON_EVENTS_ONLY = 'non_events_only';
 const SPLIT_REGEN_TEST_PERSON_ID = normalizeNotionPageId(
   process.env.SPLIT_REGEN_TEST_PERSON_ID || 'ac294b7c-1907-4977-b5ba-191890a397a3'
 );
+const SPLIT_REGEN_TEST_CALENDAR_DATA_PAGE_ID = normalizeNotionPageId(
+  process.env.SPLIT_REGEN_TEST_CALENDAR_DATA_PAGE_ID || '28439e4a-65a9-800f-85bc-e6cf1483ee55'
+);
 
 function parseRegenMode(rawMode) {
   if (rawMode === undefined || rawMode === null || rawMode === '') {
@@ -972,27 +975,20 @@ async function getCalendarDataFromPageIdOrUrl(calendarDataInput, maxRetries = 5)
   return getCalendarDataFromPage(page, maxRetries);
 }
 
-async function getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, maxRetries = 5) {
+async function getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, linkedPersonId = null, maxRetries = 5) {
   const pageId = normalizeNotionPageId(calendarDataInput);
   if (!pageId) {
     throw new Error('Invalid Calendar Data page ID or URL');
   }
-
-  const page = await retryNotionCall(
-    () => notionAux.pages.retrieve({ page_id: pageId }),
-    maxRetries
-  );
-
-  const linkedPersonId = getPrimaryRelationPageId(page?.properties?.Personnel);
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
   const eventsString = await fetchPagePropertyString(pageId, propertyIds.Events, maxRetries, notionEvents);
   const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
 
   return {
     pageId,
-    linkedPersonId,
+    linkedPersonId: normalizeNotionPageId(linkedPersonId || ''),
     calendarData: {
-      personName: extractPropertyStringFromItem(page?.properties?.Name) || 'Unknown',
+      personName: 'Unknown',
       events: Array.isArray(events) ? events : [],
       flights: [],
       rehearsals: [],
@@ -1069,15 +1065,19 @@ function extractPersonNameFromPersonnelPage(personPage) {
   );
 }
 
-async function getCalendarDataEventsOnlyFromPersonRelationPath(personId, maxRetries = 5) {
-  const personFetchStart = Date.now();
-  const personPage = await retryNotionCall(() => notionAux.pages.retrieve({ page_id: personId }), maxRetries);
-  const personFetchMs = Date.now() - personFetchStart;
+function resolveEventsOnlyCalendarDataPageId(personId, explicitCalendarDataPageId = null) {
+  const explicit = normalizeNotionPageId(explicitCalendarDataPageId || '');
+  if (explicit) return explicit;
+  if (isSplitRegenTestPerson(personId)) {
+    return SPLIT_REGEN_TEST_CALENDAR_DATA_PAGE_ID;
+  }
+  return null;
+}
 
-  const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
+async function getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, explicitCalendarDataPageId = null, maxRetries = 5) {
+  const calendarDataPageId = resolveEventsOnlyCalendarDataPageId(personId, explicitCalendarDataPageId);
   if (!calendarDataPageId) {
-    console.warn(`⚠️  No linked Calendar Data row found on Personnel page for ${personId}`);
-    return null;
+    throw new Error('events_only mode requires calendarDataPageId for this person');
   }
 
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
@@ -1086,10 +1086,10 @@ async function getCalendarDataEventsOnlyFromPersonRelationPath(personId, maxRetr
   const eventsFetchMs = Date.now() - eventsFetchStart;
   const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
 
-  console.log(`📊 CalendarData events-only direct timings for ${personId}: person=${personFetchMs}ms eventsProperty=${eventsFetchMs}ms`);
+  console.log(`📊 CalendarData events-only direct timings for ${personId}: eventsProperty=${eventsFetchMs}ms pageId=${calendarDataPageId}`);
 
   return {
-    personName: extractPersonNameFromPersonnelPage(personPage),
+    personName: 'Unknown',
     events: Array.isArray(events) ? events : [],
     flights: [],
     rehearsals: [],
@@ -2690,7 +2690,13 @@ function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
 
 // Helper function to rebuild and cache a single person's calendar.
 async function regenerateCalendarForPerson(personId, options = {}) {
-  const { trigger = 'unknown', clearCache = false, preloadedCalendarData = null, regenMode = REGEN_MODE_FULL } = options;
+  const {
+    trigger = 'unknown',
+    clearCache = false,
+    preloadedCalendarData = null,
+    regenMode = REGEN_MODE_FULL,
+    calendarDataPageId = null
+  } = options;
   const regenStartedAt = Date.now();
   const selectedRegenMode = parseRegenMode(regenMode) || REGEN_MODE_FULL;
   const splitMode = selectedRegenMode !== REGEN_MODE_FULL;
@@ -2730,7 +2736,7 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
       calendarData = await withTimeout(
         selectedRegenMode === REGEN_MODE_EVENTS_ONLY
-          ? getCalendarDataEventsOnlyFromPersonRelationPath(personId, 6)
+          ? getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, calendarDataPageId, 6)
           : selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY
             ? getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, 6)
             : getCalendarDataFromDatabaseQueryStyle(personId, 6),
@@ -5547,6 +5553,9 @@ app.get('/regenerate/:personId', async (req, res) => {
   try {
     let { personId } = req.params;
     const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    const calendarDataPageId = normalizeNotionPageId(
+      req.query.calendarDataPageId ?? req.query.calendar_data_page_id ?? req.query.pageId ?? req.query.id ?? ''
+    );
     if (!regenMode) {
       return res.status(400).json({
         success: false,
@@ -5575,7 +5584,8 @@ app.get('/regenerate/:personId', async (req, res) => {
     const result = await regenerateCalendarForPerson(personId, {
       trigger: `manual_regen:${regenMode}`,
       clearCache: true,
-      regenMode
+      regenMode,
+      calendarDataPageId
     });
     if (result.success) {
       return res.json({
@@ -5624,6 +5634,9 @@ app.get('/calendar-data/regenerate', async (req, res) => {
   try {
     const calendarDataInput = req.query.id || req.query.url || req.query.pageId;
     const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    const explicitPersonId = normalizeNotionPageId(
+      req.query.personId ?? req.query.person ?? req.query.personnelId ?? ''
+    );
     if (!regenMode) {
       return res.status(400).json({
         success: false,
@@ -5645,7 +5658,7 @@ app.get('/calendar-data/regenerate', async (req, res) => {
     const fetchTimeoutMs = REGEN_FETCH_STEP_TIMEOUT_MS;
     const { pageId, linkedPersonId, calendarData, source } = await withTimeout(
       regenMode === REGEN_MODE_EVENTS_ONLY
-        ? getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, 6)
+        ? getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, explicitPersonId, 6)
         : getCalendarDataFromPageIdOrUrl(calendarDataInput, 6),
       fetchTimeoutMs,
       'Calendar Data page fetch timed out'
@@ -5654,8 +5667,13 @@ app.get('/calendar-data/regenerate', async (req, res) => {
     if (!linkedPersonId) {
       return res.status(400).json({
         success: false,
-        error: 'Calendar Data row is not linked to a Personnel record',
-        calendarDataPageId: pageId
+        error: regenMode === REGEN_MODE_EVENTS_ONLY
+          ? 'personId is required for events_only mode on /calendar-data/regenerate'
+          : 'Calendar Data row is not linked to a Personnel record',
+        calendarDataPageId: pageId,
+        message: regenMode === REGEN_MODE_EVENTS_ONLY
+          ? 'Provide ?personId=<person-uuid> so cache keys are known'
+          : undefined
       });
     }
     if (!isSplitModeAllowedForPerson(linkedPersonId, regenMode)) {
@@ -5673,7 +5691,8 @@ app.get('/calendar-data/regenerate', async (req, res) => {
       trigger: `manual_regen_calendar_data:${regenMode}`,
       clearCache: true,
       preloadedCalendarData: calendarData,
-      regenMode
+      regenMode,
+      calendarDataPageId: pageId
     });
 
     if (result.success) {
@@ -8422,6 +8441,9 @@ app.get('/calendar/:personId', async (req, res) => {
     const calendarClient = req.query.client === 'google' ? 'google' : 'default';
     const isGoogleClient = calendarClient === 'google';
     const regenMode = parseRegenMode(req.query.mode ?? req.query.regenMode ?? req.query.regen_mode);
+    const calendarDataPageId = normalizeNotionPageId(
+      req.query.calendarDataPageId ?? req.query.calendar_data_page_id ?? req.query.pageId ?? req.query.id ?? ''
+    );
     if (!regenMode) {
       return res.status(400).json({
         error: 'Invalid regen mode',
@@ -8500,7 +8522,8 @@ app.get('/calendar/:personId', async (req, res) => {
     
     const result = await regenerateCalendarForPerson(personId, {
       trigger: forceFresh ? `calendar_fresh:${regenMode}` : `calendar_cache_miss:${regenMode}`,
-      regenMode
+      regenMode,
+      calendarDataPageId
     });
     if (!result.success) {
       const statusCode = result.reason === 'no_events' ? 404 : 500;
