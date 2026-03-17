@@ -2834,19 +2834,17 @@ function extractAirportCode(name, fallback = '') {
   return fallback;
 }
 
-/** Format date in Pacific for flight Info line: "March 23, 2026 6:00 PM (PDT) → 9:42 PM" */
-function formatFlightTimeRangePacific(start, end) {
+/** Format date/time to match calendar event display. Uses event times as-is (no conversion) so description matches calendar. */
+function formatFlightTimeRange(start, end) {
   if (!start || !end) return '';
   const s = start instanceof Date ? start : new Date(start);
   const e = end instanceof Date ? end : new Date(end);
   if (isNaN(s.getTime()) || isNaN(e.getTime())) return '';
   const tz = isPacificDSTAtUTC(s) ? 'PDT' : 'PST';
-  const pacificS = convertUTCToPacific(s);
-  const pacificE = convertUTCToPacific(e);
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const dateStr = `${monthNames[pacificS.getUTCMonth()]} ${pacificS.getUTCDate()}, ${pacificS.getUTCFullYear()}`;
-  const startTime = formatTimeParts(pacificS.getUTCHours(), String(pacificS.getUTCMinutes()).padStart(2, '0'));
-  const endTime = formatTimeParts(pacificE.getUTCHours(), String(pacificE.getUTCMinutes()).padStart(2, '0'));
+  const dateStr = `${monthNames[s.getUTCMonth()]} ${s.getUTCDate()}, ${s.getUTCFullYear()}`;
+  const startTime = formatTimeParts(s.getUTCHours(), String(s.getUTCMinutes()).padStart(2, '0'));
+  const endTime = formatTimeParts(e.getUTCHours(), String(e.getUTCMinutes()).padStart(2, '0'));
   return `${dateStr} ${startTime} (${tz}) → ${endTime}`;
 }
 
@@ -2861,9 +2859,9 @@ function buildFlightDescription(flight, legType, start, end, personName) {
   const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
-  const infoLine = route ? `${route} | ${formatFlightTimeRangePacific(start, end)}` : formatFlightTimeRangePacific(start, end);
-  let desc = `Airline: ${airline}\nFlight #: ${flightNum}\nConfirmation Number: ${conf}\n`;
-  if (infoLine) desc += `Info: ${infoLine}\n`;
+  const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
+  let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
+  if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
@@ -2879,9 +2877,9 @@ function buildLayoverDescription(flight, legType, start, end, personName) {
   const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
-  const infoLine = route ? `${route} | ${formatFlightTimeRangePacific(start, end)}` : formatFlightTimeRangePacific(start, end);
-  let desc = `Airline: ${airline}\nFlight #: ${flightNum}\nConfirmation Number: ${conf}\n`;
-  if (infoLine) desc += `Info: ${infoLine}\n`;
+  const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
+  let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
+  if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
