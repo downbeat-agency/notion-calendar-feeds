@@ -25,7 +25,8 @@ const notionAux = new Client({
 const notion = notionAux;
 
 if (process.env.NOTION_API_KEY2) {
-  console.log('✅ NOTION_API_KEY2 enabled for Admin, Travel, Blockout + non-events data');
+  console.log('✅ NOTION_API_KEY2 enabled: Admin, Travel, Blockout + personnel non-events (flights, hotels, etc.)');
+  console.log('   Personnel events use NOTION_API_KEY; non-events use NOTION_API_KEY2 (split mode for all)');
 } else {
   console.warn('⚠️  NOTION_API_KEY2 not configured; Admin/Travel/Blockout fall back to NOTION_API_KEY');
 }
@@ -740,7 +741,7 @@ function isSplitRegenTestPerson(personId) {
 }
 
 function isSplitModeAllowedForPerson(personId, regenMode) {
-  return regenMode === REGEN_MODE_FULL || isSplitRegenTestPerson(personId);
+  return true; // Split mode enabled for everyone; NOTION_API_KEY for events, NOTION_API_KEY2 for non-events
 }
 
 function buildCalendarCacheKey(personId, formatKey, regenMode = REGEN_MODE_FULL) {
@@ -890,28 +891,30 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   };
 }
 
-/** Fetch only Events property (for events_only split regen). */
+/** Fetch only Events property (for events_only split regen). Uses NOTION_API_KEY. */
 async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
-  const eventsStr = await fetchPagePropertyString(pageId, ids.Events, maxRetries);
-  const nameStr = await fetchPagePropertyString(pageId, ids.Name, maxRetries);
+  const [eventsStr, nameStr] = await Promise.all([
+    fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux)
+  ]);
   return {
     Events: { formula: { string: eventsStr || '[]' } },
     Name: { formula: { string: nameStr || '' } },
   };
 }
 
-/** Fetch only non-events properties (Flights, Hotels, Rehearsals, etc.) for non_events_only split regen. Includes Name from Calendar Data. */
+/** Fetch only non-events properties (Flights, Hotels, Rehearsals, etc.) for non_events_only split regen. Uses NOTION_API_KEY2. */
 async function getCalendarDataPagePropertiesNonEventsOnly(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
   const [nameStr, flightsStr, transportationStr, hotelsStr, rehearsalsStr, teamCalendarStr, eventNotesRemindersStr] = await Promise.all([
-    fetchPagePropertyString(pageId, ids.Name, maxRetries),
-    fetchPagePropertyString(pageId, ids.Flights, maxRetries),
-    fetchPagePropertyString(pageId, ids.Transportation, maxRetries),
-    fetchPagePropertyString(pageId, ids.Hotels, maxRetries),
-    fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries),
-    fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries),
-    fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries),
+    fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Flights, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Transportation, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Hotels, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries, notionAux),
+    fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries, notionAux),
   ]);
   return {
     Name: { formula: { string: nameStr || '' } },
@@ -1110,6 +1113,29 @@ function resolveEventsOnlyCalendarDataPageId(personId, explicitCalendarDataPageI
     return SPLIT_REGEN_TEST_CALENDAR_DATA_PAGE_ID;
   }
   return null;
+}
+
+/** Resolve Calendar Data page ID for a person. Used for split-mode regen. */
+async function resolveCalendarDataPageIdForPerson(personId, maxRetries = 5) {
+  if (!personId) return null;
+  try {
+    const personPage = await retryNotionCall(() => notionAux.pages.retrieve({ page_id: personId }), maxRetries);
+    const calendarDataPageId = getPrimaryRelationPageId(personPage?.properties?.['Calendar Data']);
+    if (calendarDataPageId) return calendarDataPageId;
+    if (!CALENDAR_DATA_DB) return null;
+    const response = await retryNotionCall(() =>
+      notionAux.databases.query({
+        database_id: CALENDAR_DATA_DB,
+        page_size: 1,
+        filter: { property: 'Personnel', relation: { contains: personId } }
+      }),
+      maxRetries
+    );
+    return response?.results?.[0]?.id || null;
+  } catch (err) {
+    console.warn(`⚠️  Could not resolve Calendar Data page for ${personId}:`, err.message);
+    return null;
+  }
 }
 
 async function getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, explicitCalendarDataPageId = null, maxRetries = 5) {
@@ -3217,96 +3243,106 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       await redis.del(`${cachePrefix}:ics`);
       await redis.del(`${cachePrefix}:google_ics`);
       await redis.del(`${cachePrefix}:json`);
+      await redis.del(`calendar:${personId}:events`);
+      await redis.del(`calendar:${personId}:non_events`);
     }
 
-    // Enforce a hard rebuild time budget to prevent indefinite requests.
-    let calendarData = preloadedCalendarData;
-    if (!calendarData) {
-      const deadlineTs = Date.now() + REGEN_TOTAL_TIMEOUT_MS;
-      const fetchTimeoutMs = Math.min(REGEN_FETCH_STEP_TIMEOUT_MS, getRemainingMs(deadlineTs));
-      calendarData = await withTimeout(
-        selectedRegenMode === REGEN_MODE_EVENTS_ONLY
-          ? getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, calendarDataPageId, 6)
-          : selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY
-            ? getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, 6)
-            : getCalendarDataFromDatabaseQueryStyle(personId, 6),
-        fetchTimeoutMs,
-        'Personnel calendar-data fetch timed out'
-      );
-    }
-
-    if (selectedRegenMode === REGEN_MODE_EVENTS_ONLY && calendarData) {
-      calendarData = coerceCalendarDataToEventsOnly(calendarData);
-    } else if (selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY && calendarData) {
-      calendarData = coerceCalendarDataToNonEventsOnly(calendarData);
-    }
-
-    if (!calendarData) {
-      console.log(`⚠️  No calendar data found for ${personId}, skipping...`);
-      return { success: false, personId, reason: 'no_events' };
-    }
-    
-    const eventsArray = Array.isArray(calendarData) ? calendarData : calendarData.events || [];
-    const topLevelFlights = calendarData.flights || [];
-    const topLevelRehearsals = calendarData.rehearsals || [];
-    const topLevelHotels = calendarData.hotels || [];
-    const topLevelTransport = calendarData.ground_transport || [];
-    const topLevelTeamCalendar = calendarData.team_calendar || [];
-    const topLevelEventNoteReminders = calendarData.event_note_reminders || [];
-    const hasAnySourceData =
-      eventsArray.length > 0 ||
-      topLevelFlights.length > 0 ||
-      topLevelRehearsals.length > 0 ||
-      topLevelHotels.length > 0 ||
-      topLevelTransport.length > 0 ||
-      topLevelTeamCalendar.length > 0 ||
-      topLevelEventNoteReminders.length > 0;
-
-    if (!hasAnySourceData) {
-      console.warn(`⚠️  No source event data for ${personId}: events=${eventsArray.length}, flights=${topLevelFlights.length}, rehearsals=${topLevelRehearsals.length}, hotels=${topLevelHotels.length}, transport=${topLevelTransport.length}, team=${topLevelTeamCalendar.length}, reminders=${topLevelEventNoteReminders.length}`);
-      return { success: false, personId, reason: 'no_events' };
-    }
-    
-    const personName = calendarData.personName || 'Unknown';
-    
-    console.log(`Processing calendar for ${personName} (${calendarData.events?.length ?? 0} events, mode=${selectedRegenMode})`);
-
-    const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
-
-    const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(personName, allCalendarEvents, {
-      totalMainEvents: eventsArray.length,
-      regenMode: selectedRegenMode,
-      dataSource: 'calendar_data_database'
-    });
-
-    // Cache both formats.
-    if (redis && cacheEnabled) {
-      await setCalendarCache(`${cachePrefix}:ics`, icsData);
-      await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
-      await setCalendarCache(`${cachePrefix}:json`, jsonData);
-      verboseLog(`✅ Cached calendar for ${personName} (${allCalendarEvents.length} events, expires in ${CACHE_TTL}s)`);
-      if (splitMode) {
-        const composedResult = await tryComposeFullCalendarFromSplitCaches(personId);
-        if (composedResult.composed) {
-          console.log(`🧩 Composed full calendar cache from split modes for ${personId} (${composedResult.totalCalendarEvents} events)`);
-        } else {
-          verboseLog(`ℹ️  Split cache compose skipped for ${personId}: ${composedResult.reason}`);
+    // Full mode: use split flow (events_only via NOTION_API_KEY + non_events_only via NOTION_API_KEY2)
+    if (selectedRegenMode === REGEN_MODE_FULL) {
+      const resolvedPageId = calendarDataPageId || await resolveCalendarDataPageIdForPerson(personId, 6);
+      if (!resolvedPageId) {
+        console.log(`⚠️  No Calendar Data page found for ${personId}, skipping...`);
+        return { success: false, personId, reason: 'no_events' };
+      }
+      console.log(`🔄 Split regen for ${personId} (events: NOTION_API_KEY, non-events: NOTION_API_KEY2)`);
+      const eventsResult = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'events_only', { trigger });
+      const nonEventsResult = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'non_events_only', { trigger });
+      const bothOk = eventsResult.success && nonEventsResult.success;
+      if (!bothOk) {
+        const err = eventsResult.error || nonEventsResult.error;
+        console.warn(`⚠️  Split regen had failures for ${personId}: events=${eventsResult.success}, non_events=${nonEventsResult.success}, error=${err}`);
+        if (!eventsResult.success && !nonEventsResult.success) {
+          return { success: false, personId, error: err, reason: 'no_events' };
         }
       }
+      if (!redis || !cacheEnabled) {
+        return { success: bothOk, personId, personName: eventsResult.personName || nonEventsResult.personName, regenMode: REGEN_MODE_FULL, eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0) };
+      }
+      const icsData = await redis.get(`calendar:${personId}:ics`);
+      const googleIcsData = await redis.get(`calendar:${personId}:google_ics`);
+      const jsonData = await redis.get(`calendar:${personId}:json`);
+      if (!icsData || !jsonData) {
+        return { success: false, personId, error: 'Split compose did not produce full cache', reason: 'no_events' };
+      }
+      const jsonResponse = JSON.parse(jsonData);
+      const personName = jsonResponse.personName || 'Unknown';
+      const eventCount = jsonResponse.totalCalendarEvents || 0;
+      console.log(`✅ Split regen complete for ${personName} (${eventCount} events)`);
+      return {
+        success: true,
+        personId,
+        personName,
+        regenMode: REGEN_MODE_FULL,
+        eventCount,
+        icsData,
+        googleIcsData: googleIcsData || icsData,
+        jsonData,
+        jsonResponse,
+        allCalendarEvents: jsonResponse.events || []
+      };
     }
 
-    return {
-      success: true,
-      personId,
-      personName,
-      regenMode: selectedRegenMode,
-      eventCount: allCalendarEvents.length,
-      icsData,
-      googleIcsData,
-      jsonData,
-      jsonResponse,
-      allCalendarEvents
-    };
+    // Single split mode (events_only or non_events_only) - used when explicitly requested
+    const resolvedPageId = calendarDataPageId || (selectedRegenMode === REGEN_MODE_EVENTS_ONLY ? await resolveCalendarDataPageIdForPerson(personId, 6) : null);
+    if (selectedRegenMode === REGEN_MODE_EVENTS_ONLY && !resolvedPageId) {
+      console.log(`⚠️  No Calendar Data page found for ${personId} (events_only), skipping...`);
+      return { success: false, personId, reason: 'no_events' };
+    }
+    if (selectedRegenMode === REGEN_MODE_NON_EVENTS_ONLY) {
+      const calendarData = await withTimeout(
+        getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, 6),
+        REGEN_FETCH_STEP_TIMEOUT_MS,
+        'Non-events fetch timed out'
+      );
+      if (!calendarData) {
+        console.log(`⚠️  No calendar data found for ${personId} (non_events_only), skipping...`);
+        return { success: false, personId, reason: 'no_events' };
+      }
+      const eventsArray = calendarData.events || [];
+      const topLevelFlights = calendarData.flights || [];
+      const topLevelRehearsals = calendarData.rehearsals || [];
+      const topLevelHotels = calendarData.hotels || [];
+      const topLevelTransport = calendarData.ground_transport || [];
+      const topLevelTeamCalendar = calendarData.team_calendar || [];
+      const topLevelEventNoteReminders = calendarData.event_note_reminders || [];
+      const hasAnySourceData = eventsArray.length > 0 || topLevelFlights.length > 0 || topLevelRehearsals.length > 0 || topLevelHotels.length > 0 || topLevelTransport.length > 0 || topLevelTeamCalendar.length > 0 || topLevelEventNoteReminders.length > 0;
+      if (!hasAnySourceData) return { success: false, personId, reason: 'no_events' };
+      const personName = calendarData.personName || 'Unknown';
+      const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
+      const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(personName, allCalendarEvents, { totalMainEvents: eventsArray.length, regenMode: selectedRegenMode, dataSource: 'calendar_data_database' });
+      if (redis && cacheEnabled) {
+        await setCalendarCache(`${cachePrefix}:ics`, icsData);
+        await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
+        await setCalendarCache(`${cachePrefix}:json`, jsonData);
+      }
+      return { success: true, personId, personName, regenMode: selectedRegenMode, eventCount: allCalendarEvents.length, icsData, googleIcsData, jsonData, jsonResponse, allCalendarEvents };
+    }
+    if (selectedRegenMode === REGEN_MODE_EVENTS_ONLY) {
+      const result = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'events_only', { trigger });
+      if (!result.success) return { success: false, personId, error: result.error, reason: 'no_events' };
+      const eventsRaw = await redis.get(`calendar:${personId}:events`);
+      const payload = eventsRaw ? JSON.parse(eventsRaw) : { personName: 'Unknown', events: [] };
+      const allCalendarEvents = buildCalendarEventsFromCalendarData({ ...payload, flights: [], rehearsals: [], hotels: [], ground_transport: [], team_calendar: [], event_note_reminders: [] });
+      const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(payload.personName, allCalendarEvents, { totalMainEvents: payload.events?.length || 0, regenMode: selectedRegenMode, dataSource: 'split_events_only' });
+      if (redis && cacheEnabled) {
+        await setCalendarCache(`${cachePrefix}:ics`, icsData);
+        await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
+        await setCalendarCache(`${cachePrefix}:json`, jsonData);
+      }
+      return { success: true, personId, personName: payload.personName, regenMode: selectedRegenMode, eventCount: allCalendarEvents.length, icsData, googleIcsData, jsonData, jsonResponse, allCalendarEvents };
+    }
+
+    return { success: false, personId, error: 'Unreachable', reason: 'no_events' };
     
   } catch (error) {
     const elapsedMs = Date.now() - regenStartedAt;
