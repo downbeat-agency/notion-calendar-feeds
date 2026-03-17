@@ -2821,6 +2821,71 @@ function getTransportEventTimes(transport) {
   return { startTime, endTime };
 }
 
+/** Extract IATA code from airport name, e.g. "(LAX)" or "Los Angeles" -> LAX */
+function extractAirportCode(name, fallback = '') {
+  if (!name || typeof name !== 'string') return fallback;
+  const parenMatch = name.match(/\(([A-Z]{3})\)/i);
+  if (parenMatch) return parenMatch[1].toUpperCase();
+  const lower = name.toLowerCase();
+  const map = { 'los angeles': 'LAX', 'lax': 'LAX', 'cancun': 'CUN', 'cun': 'CUN', 'jfk': 'JFK', 'john f. kennedy': 'JFK', 'phoenix': 'PHX', 'phx': 'PHX', 'denver': 'DEN', 'den': 'DEN', 'san jose del cabo': 'SJD', 'sjd': 'SJD', 'cabo': 'SJD', 'sfo': 'SFO', 'san francisco': 'SFO', 'ord': 'ORD', 'chicago': 'ORD', 'atlanta': 'ATL', 'atl': 'ATL', 'miami': 'MIA', 'mia': 'MIA', 'newark': 'EWR', 'ewr': 'EWR', 'las vegas': 'LAS', 'las': 'LAS', 'san diego': 'SAN', 'san': 'SAN' };
+  for (const [key, code] of Object.entries(map)) {
+    if (lower.includes(key)) return code;
+  }
+  return fallback;
+}
+
+/** Format date in Pacific for flight Info line: "March 23, 2026 6:00 PM (PDT) → 9:42 PM" */
+function formatFlightTimeRangePacific(start, end) {
+  if (!start || !end) return '';
+  const s = start instanceof Date ? start : new Date(start);
+  const e = end instanceof Date ? end : new Date(end);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return '';
+  const tz = isPacificDSTAtUTC(s) ? 'PDT' : 'PST';
+  const pacificS = convertUTCToPacific(s);
+  const pacificE = convertUTCToPacific(e);
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dateStr = `${monthNames[pacificS.getUTCMonth()]} ${pacificS.getUTCDate()}, ${pacificS.getUTCFullYear()}`;
+  const startTime = formatTimeParts(pacificS.getUTCHours(), String(pacificS.getUTCMinutes()).padStart(2, '0'));
+  const endTime = formatTimeParts(pacificE.getUTCHours(), String(pacificE.getUTCMinutes()).padStart(2, '0'));
+  return `${dateStr} ${startTime} (${tz}) → ${endTime}`;
+}
+
+/** Build flight description in user-requested format */
+function buildFlightDescription(flight, legType, start, end, personName) {
+  const isDeparture = legType === 'departure';
+  const airline = isDeparture ? (flight.departure_airline || 'N/A') : (flight.return_airline || 'N/A');
+  const flightNum = isDeparture ? (flight.departure_flightnumber || 'N/A') : (flight.return_flightnumber || 'N/A');
+  const conf = flight.confirmation || 'N/A';
+  const fromName = isDeparture ? (flight.departure_airport_name || flight.departure_airport || '') : (flight.return_airport_name || flight.return_airport || '');
+  const toName = isDeparture ? (flight.return_airport_name || flight.return_airport || '') : (flight.departure_airport_name || flight.departure_airport || '');
+  const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
+  const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
+  const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
+  const infoLine = route ? `${route} | ${formatFlightTimeRangePacific(start, end)}` : formatFlightTimeRangePacific(start, end);
+  let desc = `Airline: ${airline}\nFlight #: ${flightNum}\nConfirmation Number: ${conf}\n`;
+  if (infoLine) desc += `Info: ${infoLine}\n`;
+  if (personName) desc += `Passengers:\n• ${personName}\n`;
+  return desc.trim();
+}
+
+/** Build layover description in same format as flight */
+function buildLayoverDescription(flight, legType, start, end, personName) {
+  const isDepartureLo = legType === 'departure_lo';
+  const airline = isDepartureLo ? (flight.departure_airline || 'N/A') : (flight.return_airline || 'N/A');
+  const flightNum = isDepartureLo ? (flight.departure_lo_flightnumber || 'N/A') : (flight.return_lo_flightnumber || 'N/A');
+  const conf = flight.confirmation || 'N/A';
+  const fromName = isDepartureLo ? (flight.departure_lo_from_airport || '') : (flight.return_lo_from_airport || '');
+  const toName = isDepartureLo ? (flight.departure_lo_to_airport || '') : (flight.return_lo_to_airport || '');
+  const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
+  const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
+  const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
+  const infoLine = route ? `${route} | ${formatFlightTimeRangePacific(start, end)}` : formatFlightTimeRangePacific(start, end);
+  let desc = `Airline: ${airline}\nFlight #: ${flightNum}\nConfirmation Number: ${conf}\n`;
+  if (infoLine) desc += `Info: ${infoLine}\n`;
+  if (personName) desc += `Passengers:\n• ${personName}\n`;
+  return desc.trim();
+}
+
 // Same logic as travel calendar: parse departure and arrival separately when both exist.
 // Use this for personal-calendar flight events so times match the travel calendar.
 function getFlightLegTimes(departureTimeStr, arrivalTimeStr) {
@@ -3081,25 +3146,33 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
         if (!departureTimes) departureTimes = { start: flight.departure_time, end: flight.departure_arrival_time || flight.departure_time };
         departureTimes = shiftRangeByDays(departureTimes, helperDeltaDays);
-        allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'}`, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', airline: flight.departure_airline || '', flightNumber: flight.departure_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
+        const personName = calendarData.personName || '';
+        const desc = buildFlightDescription(flight, 'departure', departureTimes.start, departureTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', airline: flight.departure_airline || '', flightNumber: flight.departure_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
       }
       if (flight.return_time && flight.return_name) {
         let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
         if (!returnTimes) returnTimes = { start: flight.return_time, end: flight.return_arrival_time || flight.return_time };
         returnTimes = shiftRangeByDays(returnTimes, helperDeltaDays);
-        allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'}`, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', airline: flight.return_airline || '', flightNumber: flight.return_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
+        const personName = calendarData.personName || '';
+        const desc = buildFlightDescription(flight, 'return', returnTimes.start, returnTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', airline: flight.return_airline || '', flightNumber: flight.return_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
       }
       if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
         let loTimes = parseUnifiedDateTime(flight.departure_lo_time);
         if (!loTimes) loTimes = { start: flight.departure_lo_time, end: flight.departure_lo_time };
         loTimes = shiftRangeByDays(loTimes, helperDeltaDays);
-        allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}`, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
+        const personName = calendarData.personName || '';
+        const loDesc = buildLayoverDescription(flight, 'departure_lo', loTimes.start, loTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
       }
       if (flight.return_lo_time && flight.return_lo_flightnumber) {
         let loTimes = parseUnifiedDateTime(flight.return_lo_time);
         if (!loTimes) loTimes = { start: flight.return_lo_time, end: flight.return_lo_time };
         loTimes = shiftRangeByDays(loTimes, helperDeltaDays);
-        allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}`, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
+        const personName = calendarData.personName || '';
+        const loDesc = buildLayoverDescription(flight, 'return_lo', loTimes.start, loTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
       }
     });
     (getNestedRehearsals(event) || []).forEach(rehearsal => {
@@ -3135,21 +3208,30 @@ function buildCalendarEventsFromCalendarData(calendarData) {
     });
   });
   topLevelFlights.forEach(flight => {
+    const personName = calendarData.personName || '';
     if (flight.departure_time && flight.departure_name) {
       const departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
-      if (departureTimes) allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: `Airline: ${flight.departure_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_flightnumber || 'N/A'}`, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      if (departureTimes) {
+        const desc = buildFlightDescription(flight, 'departure', departureTimes.start, departureTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      }
     }
     if (flight.return_time && flight.return_name) {
       const returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
-      if (returnTimes) allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: `Airline: ${flight.return_airline || 'N/A'}\nConfirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_flightnumber || 'N/A'}`, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      if (returnTimes) {
+        const desc = buildFlightDescription(flight, 'return', returnTimes.start, returnTimes.end, personName);
+        allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      }
     }
     if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
       const loTimes = parseUnifiedDateTime(flight.departure_lo_time) || { start: flight.departure_lo_time, end: flight.departure_lo_time };
-      allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.departure_lo_flightnumber || 'N/A'}`, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      const loDesc = buildLayoverDescription(flight, 'departure_lo', loTimes.start, loTimes.end, personName);
+      allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
     }
     if (flight.return_lo_time && flight.return_lo_flightnumber) {
       const loTimes = parseUnifiedDateTime(flight.return_lo_time) || { start: flight.return_lo_time, end: flight.return_lo_time };
-      allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: `Confirmation: ${flight.confirmation || 'N/A'}\nFlight #: ${flight.return_lo_flightnumber || 'N/A'}`, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      const loDesc = buildLayoverDescription(flight, 'return_lo', loTimes.start, loTimes.end, personName);
+      allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
     }
   });
   topLevelRehearsals.forEach(rehearsal => {
