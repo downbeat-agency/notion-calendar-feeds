@@ -2848,6 +2848,18 @@ function formatFlightTimeRange(start, end) {
   return `${dateStr} ${startTime} (${tz}) → ${endTime}`;
 }
 
+/** Format suggested airport arrival time (2 hours before departure). */
+function formatSuggestedArrival(start) {
+  if (!start) return '';
+  const s = start instanceof Date ? start : new Date(start);
+  if (isNaN(s.getTime())) return '';
+  const arrival = new Date(s.getTime() - 2 * 60 * 60 * 1000);
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dateStr = `${monthNames[arrival.getUTCMonth()]} ${arrival.getUTCDate()}, ${arrival.getUTCFullYear()}`;
+  const timeStr = formatTimeParts(arrival.getUTCHours(), String(arrival.getUTCMinutes()).padStart(2, '0'));
+  return `${dateStr} ${timeStr} (2 hours before departure)`;
+}
+
 /** Build flight description in user-requested format */
 function buildFlightDescription(flight, legType, start, end, personName) {
   const isDeparture = legType === 'departure';
@@ -2860,8 +2872,10 @@ function buildFlightDescription(flight, legType, start, end, personName) {
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
   const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
+  const suggestedArrival = formatSuggestedArrival(start);
   let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
   if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
+  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
@@ -2878,8 +2892,10 @@ function buildLayoverDescription(flight, legType, start, end, personName) {
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
   const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
+  const suggestedArrival = formatSuggestedArrival(start);
   let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
   if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
+  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
