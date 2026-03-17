@@ -859,6 +859,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
 
   const [
+    nameStr,
     eventsStr,
     flightsStr,
     transportationStr,
@@ -867,6 +868,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
     teamCalendarStr,
     eventNotesRemindersStr
   ] = await Promise.all([
+    fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
     fetchPagePropertyString(pageId, ids.Flights, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Transportation, maxRetries, notionAux),
@@ -877,6 +879,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   ]);
 
   return {
+    Name: { formula: { string: nameStr || '' } },
     Events: { formula: { string: eventsStr || '[]' } },
     Flights: { formula: { string: flightsStr || '[]' } },
     Transportation: { formula: { string: transportationStr || '[]' } },
@@ -1070,7 +1073,8 @@ async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
   const propertiesFetchStart = Date.now();
   const leanProperties = await getCalendarDataPagePropertiesLean(calendarDataPageId, maxRetries);
   const propertiesFetchMs = Date.now() - propertiesFetchStart;
-  const personName = extractPersonNameFromPersonnelPage(personPage);
+  const calendarDataName = (leanProperties.Name?.formula?.string || '').trim();
+  const personName = calendarDataName || extractPersonNameFromPersonnelPage(personPage);
   const processed = processCalendarDataProperties({
     Name: { formula: { string: personName } },
     ...leanProperties
@@ -1116,14 +1120,18 @@ async function getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, expli
 
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
   const eventsFetchStart = Date.now();
-  const eventsString = await fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries, notionEvents);
+  const [eventsString, nameString] = await Promise.all([
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Name, maxRetries, notionAux)
+  ]);
   const eventsFetchMs = Date.now() - eventsFetchStart;
   const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
+  const personName = (nameString || '').trim() || 'Unknown';
 
   console.log(`📊 CalendarData events-only direct timings for ${personId}: eventsProperty=${eventsFetchMs}ms pageId=${calendarDataPageId}`);
 
   return {
-    personName: 'Unknown',
+    personName,
     events: Array.isArray(events) ? events : [],
     flights: [],
     rehearsals: [],
@@ -1151,6 +1159,7 @@ async function getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, maxR
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
   const propertiesFetchStart = Date.now();
   const [
+    nameString,
     flightsString,
     transportationString,
     hotelsString,
@@ -1158,6 +1167,7 @@ async function getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, maxR
     teamCalendarString,
     eventNotesString
   ] = await Promise.all([
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Name, maxRetries, notionAux),
     fetchPagePropertyString(calendarDataPageId, propertyIds.Flights, maxRetries, notionAux),
     fetchPagePropertyString(calendarDataPageId, propertyIds.Transportation, maxRetries, notionAux),
     fetchPagePropertyString(calendarDataPageId, propertyIds.Hotels, maxRetries, notionAux),
@@ -1168,8 +1178,11 @@ async function getCalendarDataNonEventsOnlyFromDatabaseQueryStyle(personId, maxR
   const propertiesFetchMs = Date.now() - propertiesFetchStart;
   console.log(`📊 CalendarData non-events direct timings for ${personId}: person=${personFetchMs}ms props=${propertiesFetchMs}ms`);
 
+  const calendarDataName = (nameString || '').trim();
+  const personName = calendarDataName || extractPersonNameFromPersonnelPage(personPage);
+
   return {
-    personName: extractPersonNameFromPersonnelPage(personPage),
+    personName,
     events: [],
     flights: parseJsonFormulaArray({ formula: { string: flightsString || '[]' } }, 'Flights'),
     rehearsals: parseJsonFormulaArray({ formula: { string: rehearsalsString || '[]' } }, 'Rehearsals'),
