@@ -2834,6 +2834,12 @@ function extractAirportCode(name, fallback = '') {
   return fallback;
 }
 
+/** Sanitize time strings in event_personnel so calendar clients don't parse and convert them. Replaces colon with Unicode ratio (∶) to break time parsing while looking identical. */
+function sanitizePersonnelTimesAsText(personnelStr) {
+  if (!personnelStr || typeof personnelStr !== 'string') return personnelStr;
+  return personnelStr.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (_, h, m, p) => `${h}∶${m} ${p}`);
+}
+
 /** Format time only (no date, no timezone). Always shows minutes (e.g. 5:00 PM, 10:24 AM). */
 function formatTimeOnly(date) {
   if (!date) return '';
@@ -3154,7 +3160,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
         }
         let gearChecklistInfo = event.gear_checklist?.trim() ? `🔧 Gear Checklist: ${event.gear_checklist}\n\n` : '';
-        let eventPersonnelInfo = event.event_personnel?.trim() ? `👥 Event Personnel:\n${event.event_personnel}\n\n` : '';
+        const personnelText = sanitizePersonnelTimesAsText(event.event_personnel?.trim() || '');
+        let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
         let notionUrlInfo = event.notion_url?.trim() ? `Notion Link: ${event.notion_url}\n\n` : '';
         allCalendarEvents.push({ type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
@@ -3936,8 +3943,7 @@ function processAdminEvents(eventsArray) {
         // Personnel (handle both string and array formats)
         if (event.event_personnel) {
           if (typeof event.event_personnel === 'string') {
-            // Split by newlines if it's a string
-            description += `\n👥 Personnel:\n${event.event_personnel}\n`;
+            description += `\n👥 Personnel:\n${sanitizePersonnelTimesAsText(event.event_personnel)}\n`;
           } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
             description += `\n👥 Personnel:\n`;
             event.event_personnel.forEach(person => {
