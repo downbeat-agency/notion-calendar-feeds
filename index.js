@@ -2834,10 +2834,11 @@ function extractAirportCode(name, fallback = '') {
   return fallback;
 }
 
-/** Sanitize time strings in event_personnel so calendar clients don't parse and convert them. Replaces colon with Unicode ratio (∶) to break time parsing while looking identical. */
+/** Sanitize time strings in event_personnel so calendar clients don't parse and convert them. Uses Unicode ratio (∶) + zero-width non-joiner to break time parsing while looking identical. */
+const ZWNJ = '\u200C'; // Zero-width non-joiner - breaks time parsing
 function sanitizePersonnelTimesAsText(personnelStr) {
   if (!personnelStr || typeof personnelStr !== 'string') return personnelStr;
-  return personnelStr.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (_, h, m, p) => `${h}∶${m} ${p}`);
+  return personnelStr.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (_, h, m, p) => `${h}${ZWNJ}∶${m} ${p}`);
 }
 
 /** Format time only (no date, no timezone). Always shows minutes (e.g. 5:00 PM, 10:24 AM). */
