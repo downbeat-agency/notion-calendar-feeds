@@ -2853,8 +2853,7 @@ function formatSuggestedArrival(start) {
   const s = start instanceof Date ? start : new Date(start);
   if (isNaN(s.getTime())) return '';
   const arrival = new Date(s.getTime() - 2 * 60 * 60 * 1000);
-  const timeStr = formatTimeOnly(arrival);
-  return `${timeStr} (2 hours before departure)`;
+  return formatTimeOnly(arrival);
 }
 
 /** Build flight description in user-requested format */
