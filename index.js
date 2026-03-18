@@ -2834,48 +2834,49 @@ function extractAirportCode(name, fallback = '') {
   return fallback;
 }
 
-/** Format date/time to match calendar event display. Uses event times as-is (no conversion) so description matches calendar. */
-function formatFlightTimeRange(start, end) {
-  if (!start || !end) return '';
-  const s = start instanceof Date ? start : new Date(start);
-  const e = end instanceof Date ? end : new Date(end);
-  if (isNaN(s.getTime()) || isNaN(e.getTime())) return '';
-  const tz = isPacificDSTAtUTC(s) ? 'PDT' : 'PST';
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const dateStr = `${monthNames[s.getUTCMonth()]} ${s.getUTCDate()}, ${s.getUTCFullYear()}`;
-  const startTime = formatTimeParts(s.getUTCHours(), String(s.getUTCMinutes()).padStart(2, '0'));
-  const endTime = formatTimeParts(e.getUTCHours(), String(e.getUTCMinutes()).padStart(2, '0'));
-  return `${dateStr} ${startTime} (${tz}) → ${endTime}`;
+/** Format time only (no date, no timezone). Always shows minutes (e.g. 5:00 PM, 10:24 AM). */
+function formatTimeOnly(date) {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '';
+  let h = d.getUTCHours();
+  const m = String(d.getUTCMinutes()).padStart(2, '0');
+  const period = h >= 12 ? 'PM' : 'AM';
+  if (h === 0) h = 12;
+  else if (h > 12) h -= 12;
+  return `${h}:${m} ${period}`;
 }
 
-/** Format suggested airport arrival time (2 hours before departure). */
+/** Format suggested airport arrival time (2 hours before departure). Time only. */
 function formatSuggestedArrival(start) {
   if (!start) return '';
   const s = start instanceof Date ? start : new Date(start);
   if (isNaN(s.getTime())) return '';
   const arrival = new Date(s.getTime() - 2 * 60 * 60 * 1000);
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const dateStr = `${monthNames[arrival.getUTCMonth()]} ${arrival.getUTCDate()}, ${arrival.getUTCFullYear()}`;
-  const timeStr = formatTimeParts(arrival.getUTCHours(), String(arrival.getUTCMinutes()).padStart(2, '0'));
-  return `${dateStr} ${timeStr} (2 hours before departure)`;
+  const timeStr = formatTimeOnly(arrival);
+  return `${timeStr} (2 hours before departure)`;
 }
 
 /** Build flight description in user-requested format */
 function buildFlightDescription(flight, legType, start, end, personName) {
   const isDeparture = legType === 'departure';
   const airline = isDeparture ? (flight.departure_airline || 'N/A') : (flight.return_airline || 'N/A');
-  const flightNum = isDeparture ? (flight.departure_flightnumber || 'N/A') : (flight.return_flightnumber || 'N/A');
+  const rawFlightNum = isDeparture ? (flight.departure_flightnumber || 'N/A') : (flight.return_flightnumber || 'N/A');
+  const flightNum = String(rawFlightNum).replace(/\s/g, '');
   const conf = flight.confirmation || 'N/A';
   const fromName = isDeparture ? (flight.departure_airport_name || flight.departure_airport || '') : (flight.return_airport_name || flight.return_airport || '');
   const toName = isDeparture ? (flight.return_airport_name || flight.return_airport || '') : (flight.departure_airport_name || flight.departure_airport || '');
   const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
-  const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
   const suggestedArrival = formatSuggestedArrival(start);
+  const departureTime = formatTimeOnly(start);
+  const arrivalTime = formatTimeOnly(end);
   let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
-  if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
-  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n\n`;
+  if (route) desc += `Flight Information: ${route}\n`;
+  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n`;
+  if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
+  if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
@@ -2884,18 +2885,22 @@ function buildFlightDescription(flight, legType, start, end, personName) {
 function buildLayoverDescription(flight, legType, start, end, personName) {
   const isDepartureLo = legType === 'departure_lo';
   const airline = isDepartureLo ? (flight.departure_airline || 'N/A') : (flight.return_airline || 'N/A');
-  const flightNum = isDepartureLo ? (flight.departure_lo_flightnumber || 'N/A') : (flight.return_lo_flightnumber || 'N/A');
+  const rawFlightNum = isDepartureLo ? (flight.departure_lo_flightnumber || 'N/A') : (flight.return_lo_flightnumber || 'N/A');
+  const flightNum = String(rawFlightNum).replace(/\s/g, '');
   const conf = flight.confirmation || 'N/A';
   const fromName = isDepartureLo ? (flight.departure_lo_from_airport || '') : (flight.return_lo_from_airport || '');
   const toName = isDepartureLo ? (flight.departure_lo_to_airport || '') : (flight.return_lo_to_airport || '');
   const fromCode = extractAirportCode(fromName, fromName ? fromName.substring(0, 3).toUpperCase() : '');
   const toCode = extractAirportCode(toName, toName ? toName.substring(0, 3).toUpperCase() : '');
   const route = fromCode && toCode ? `${fromCode} → ${toCode}` : '';
-  const infoLine = route ? `${route} | ${formatFlightTimeRange(start, end)}` : formatFlightTimeRange(start, end);
   const suggestedArrival = formatSuggestedArrival(start);
+  const departureTime = formatTimeOnly(start);
+  const arrivalTime = formatTimeOnly(end);
   let desc = `Airline: ${airline}\n\nFlight #: ${flightNum}\n\nConfirmation Number: ${conf}\n\n`;
-  if (infoLine) desc += `Flight Information:\n${infoLine}\n\n`;
-  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n\n`;
+  if (route) desc += `Flight Information: ${route}\n`;
+  if (suggestedArrival) desc += `Suggested Airport Arrival: ${suggestedArrival}\n`;
+  if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
+  if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   return desc.trim();
 }
