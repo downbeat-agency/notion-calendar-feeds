@@ -422,6 +422,32 @@ function formatFloatingTimeFromDate(date) {
   );
 }
 
+/** Format event_personnel for display. Uses each person's individual call_time, never the master call time for everyone. */
+function formatEventPersonnel(eventPersonnel) {
+  if (!eventPersonnel) return '';
+  if (typeof eventPersonnel === 'string') {
+    return eventPersonnel.trim();
+  }
+  if (Array.isArray(eventPersonnel) && eventPersonnel.length > 0) {
+    return eventPersonnel.map((person) => {
+      if (typeof person === 'string') return person;
+      if (person && typeof person === 'object') {
+        const name = person.name ?? person.Name ?? person.personnel_name ?? '';
+        const role = person.role ?? person.Role ?? person.position ?? '';
+        const emoji = person.emoji ?? person.icon ?? person.Emoji ?? '';
+        const callTime = person.call_time ?? person.calltime;
+        const timeStr = callTime ? formatCallTime(callTime) : '';
+        const parts = [name, role].filter(Boolean);
+        if (emoji) parts.push(emoji);
+        if (timeStr) parts.push(timeStr);
+        return parts.join(' | ');
+      }
+      return String(person);
+    }).join('\n');
+  }
+  return '';
+}
+
 const NOTION_RATE_LIMIT_RPS = Number(process.env.NOTION_RATE_LIMIT_RPS || 3);
 const NOTION_MIN_INTERVAL_MS = Math.max(1, Math.floor(1000 / NOTION_RATE_LIMIT_RPS));
 const NOTION_MAX_RETRY_BUDGET_MS = Number(process.env.NOTION_MAX_RETRY_BUDGET_MS || 120000);
@@ -3071,7 +3097,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
         }
         let gearChecklistInfo = event.gear_checklist?.trim() ? `🔧 Gear Checklist: ${event.gear_checklist}\n\n` : '';
-        let eventPersonnelInfo = event.event_personnel?.trim() ? `👥 Event Personnel:\n${event.event_personnel}\n\n` : '';
+        const formattedPersonnel = formatEventPersonnel(event.event_personnel);
+        let eventPersonnelInfo = formattedPersonnel ? `👥 Event Personnel:\n${formattedPersonnel}\n\n` : '';
         let notionUrlInfo = event.notion_url?.trim() ? `Notion Link: ${event.notion_url}\n\n` : '';
         allCalendarEvents.push({ type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
@@ -3833,16 +3860,11 @@ function processAdminEvents(eventsArray) {
           description += `🎸 Gear: ${event.gear}\n`;
         }
         
-        // Personnel (handle both string and array formats)
+        // Personnel (use per-person call times, never master call time for everyone)
         if (event.event_personnel) {
-          if (typeof event.event_personnel === 'string') {
-            // Split by newlines if it's a string
-            description += `\n👥 Personnel:\n${event.event_personnel}\n`;
-          } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
-            description += `\n👥 Personnel:\n`;
-            event.event_personnel.forEach(person => {
-              description += `  • ${person}\n`;
-            });
+          const formattedPersonnel = formatEventPersonnel(event.event_personnel);
+          if (formattedPersonnel) {
+            description += `\n👥 Personnel:\n${formattedPersonnel}\n`;
           }
         }
         
