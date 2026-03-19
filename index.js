@@ -2841,6 +2841,32 @@ function sanitizePersonnelTimesAsText(personnelStr) {
   return personnelStr.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (_, h, m, p) => `${h}${ZWNJ}∶${m} ${p}`);
 }
 
+/** Convert Event Personnel times from UTC (as output by Notion formula/rollup) to Pacific for display. */
+function convertPersonnelTimesUTCToPacific(personnelStr, eventDate) {
+  if (!personnelStr || typeof personnelStr !== 'string' || !eventDate) return personnelStr;
+  const d = eventDate instanceof Date ? eventDate : new Date(eventDate);
+  if (isNaN(d.getTime())) return personnelStr;
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+  const date = d.getUTCDate();
+
+  return personnelStr.split('\n').map(line => {
+    const match = line.match(/\|\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*$/i);
+    if (!match) return line;
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2] || '0', 10);
+    const period = match[3].toUpperCase();
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+
+    const utcDate = new Date(Date.UTC(year, month, date, hours, minutes, 0));
+    const offsetHours = isPacificDSTAtUTC(utcDate) ? 7 : 8;
+    const pacificDate = new Date(utcDate.getTime() - offsetHours * 60 * 60 * 1000);
+    const displayTime = formatTimeOnly(pacificDate);
+    return line.replace(/\|\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*$/i, `| ${displayTime}`);
+  }).join('\n');
+}
+
 /** Format time only (no date, no timezone). Always shows minutes (e.g. 5:00 PM, 10:24 AM). */
 function formatTimeOnly(date) {
   if (!date) return '';
@@ -3161,7 +3187,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
         }
         let gearChecklistInfo = event.gear_checklist?.trim() ? `🔧 Gear Checklist: ${event.gear_checklist}\n\n` : '';
-        const personnelText = sanitizePersonnelTimesAsText(event.event_personnel?.trim() || '');
+        const personnelConverted = convertPersonnelTimesUTCToPacific(event.event_personnel?.trim() || '', eventTimes.start);
+        const personnelText = sanitizePersonnelTimesAsText(personnelConverted);
         let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
         let notionUrlInfo = event.notion_url?.trim() ? `Notion Link: ${event.notion_url}\n\n` : '';
         allCalendarEvents.push({ type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
@@ -3944,7 +3971,8 @@ function processAdminEvents(eventsArray) {
         // Personnel (handle both string and array formats)
         if (event.event_personnel) {
           if (typeof event.event_personnel === 'string') {
-            description += `\n👥 Personnel:\n${sanitizePersonnelTimesAsText(event.event_personnel)}\n`;
+            const personnelConverted = convertPersonnelTimesUTCToPacific(event.event_personnel, eventTimes.start);
+            description += `\n👥 Personnel:\n${sanitizePersonnelTimesAsText(personnelConverted)}\n`;
           } else if (Array.isArray(event.event_personnel) && event.event_personnel.length > 0) {
             description += `\n👥 Personnel:\n`;
             event.event_personnel.forEach(person => {
