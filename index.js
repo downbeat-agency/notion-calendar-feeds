@@ -2749,6 +2749,11 @@ function buildTransportDescription(transport) {
       }
     }
 
+    const notionUrl = transport.transportation_url || transport.notion_url;
+    if (notionUrl && typeof notionUrl === 'string' && notionUrl.trim()) {
+      description += `\nNotion Link: ${notionUrl.trim()}`;
+    }
+
     return description.trim() || 'Ground transportation details';
   }
 
@@ -2792,6 +2797,11 @@ function buildTransportDescription(transport) {
 
     if (confirmation) {
       description += `Confirmation: ${confirmation}\n`;
+    }
+
+    const notionUrl = transport.transportation_url || transport.notion_url;
+    if (notionUrl && typeof notionUrl === 'string' && notionUrl.trim()) {
+      description += `\nNotion Link: ${notionUrl.trim()}`;
     }
 
     return description.trim() || 'Ground transportation details';
