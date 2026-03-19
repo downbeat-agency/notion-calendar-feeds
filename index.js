@@ -2841,7 +2841,10 @@ function sanitizePersonnelTimesAsText(personnelStr) {
   return personnelStr.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (_, h, m, p) => `${h}${ZWNJ}∶${m} ${p}`);
 }
 
-/** Convert Event Personnel times from UTC (as output by Notion formula/rollup) to Pacific for display. */
+/** Convert Event Personnel times from UTC to Pacific only when needed. Notion formula output varies:
+ * - Some events (e.g. Cancun): times are UTC → must convert
+ * - Others (e.g. LA): times are already Pacific → must not convert
+ * Heuristic: convert only when the UTC→Pacific result is closer to the event start than the original. */
 function convertPersonnelTimesUTCToPacific(personnelStr, eventDate) {
   if (!personnelStr || typeof personnelStr !== 'string' || !eventDate) return personnelStr;
   const d = eventDate instanceof Date ? eventDate : new Date(eventDate);
@@ -2849,6 +2852,13 @@ function convertPersonnelTimesUTCToPacific(personnelStr, eventDate) {
   const year = d.getUTCFullYear();
   const month = d.getUTCMonth();
   const date = d.getUTCDate();
+  const eventStartMins = d.getUTCHours() * 60 + d.getUTCMinutes();
+
+  function timeToMinutes(h24, m) { return h24 * 60 + m; }
+  function minsDistance(a, b) {
+    let d = Math.abs(a - b);
+    return Math.min(d, 24 * 60 - d); // wrap at midnight
+  }
 
   return personnelStr.split('\n').map(line => {
     const match = line.match(/\|\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*$/i);
@@ -2859,10 +2869,15 @@ function convertPersonnelTimesUTCToPacific(personnelStr, eventDate) {
     if (period === 'PM' && hours !== 12) hours += 12;
     if (period === 'AM' && hours === 12) hours = 0;
 
+    const originalMins = timeToMinutes(hours, minutes);
     const utcDate = new Date(Date.UTC(year, month, date, hours, minutes, 0));
     const offsetHours = isPacificDSTAtUTC(utcDate) ? 7 : 8;
     const pacificDate = new Date(utcDate.getTime() - offsetHours * 60 * 60 * 1000);
-    const displayTime = formatTimeOnly(pacificDate);
+    const convertedMins = timeToMinutes(pacificDate.getUTCHours(), pacificDate.getUTCMinutes());
+
+    const distOriginal = minsDistance(originalMins, eventStartMins);
+    const distConverted = minsDistance(convertedMins, eventStartMins);
+    const displayTime = distConverted < distOriginal ? formatTimeOnly(pacificDate) : `${hours % 12 || 12}:${String(minutes).padStart(2, '0')} ${period}`;
     return line.replace(/\|\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*$/i, `| ${displayTime}`);
   }).join('\n');
 }
