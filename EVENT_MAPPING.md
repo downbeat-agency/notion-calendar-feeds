@@ -250,7 +250,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 // Requires: transport.start
 {
   type: transport.type || 'ground_transport',  // "ground_transport_meeting"
-  title: "🚙 " + (transport.title || "Ground Transport"),  // "🚙 MEET UP: Band Sprinter ( Wedding)"
+  title: "🚗/🚙 " + (transport.title || "Ground Transport"),  // Meet Up: 🚗 (red car), Pickup/Dropoff: 🚙 (blue car)
   start: transport.start,                  // "2025-09-20T14:00:00+00:00"
   end: transport.end || transport.start,   // "2025-09-20T14:00:00+00:00"
   description: "Driver: Diego De la Rosa\nPassenger: Eric England,Diego De la Rosa,Gabriel Rudner,Michael Czaja,Joakim Toftgaard,Michael Campagna,Jacquelyn Foster\nMeet Up Info: Meetup Location: Sierra Madre Villa,149 N Halstead St, Pasadena, CA 91107,\nDriver Info:\nDiego - (626) 991-4302,\nMeetup Notes: Make sure you bring a coffee for Diego\n\nNotion Link: https://www.notion.so/22839e4a65a98008b326f8e0a9f17129",
@@ -369,7 +369,7 @@ The database uses separate formula fields for each event type. Each field contai
 - **Endpoint**: `GET /calendar/:personId` - Uses "Calendar Data" database
 - **ICS Format**: `GET /calendar/:personId?format=ics` - All events in calendar format
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
-- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚙 for transport, 📅 for team calendar) for easy identification
+- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification
 - **Descriptions**: Include confirmation numbers, flight details, call times, Notion links, etc.
 - **Links**: Events link back to Notion via URL fields (notion_url, flight_url, hotel_url, transportation_url, notion_link)
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")
