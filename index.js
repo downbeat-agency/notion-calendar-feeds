@@ -431,7 +431,7 @@ const NOTION_CIRCUIT_COOLDOWN_MS = Number(process.env.NOTION_CIRCUIT_COOLDOWN_MS
 const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBACK || 'false').toLowerCase() === 'true';
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
-const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 1);
+const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 25);
 const BACKGROUND_INITIAL_DELAY_MS = Number(process.env.BACKGROUND_INITIAL_DELAY_MS || 5000);
 const BACKGROUND_REFRESH_COOLDOWN_MS = Number(process.env.BACKGROUND_REFRESH_COOLDOWN_MS || 10 * 60 * 1000);
 
@@ -7073,6 +7073,28 @@ app.get('/subscribe/:personId', async (req, res) => {
     if (isCalendarApp) {
       // Redirect calendar apps directly to the calendar feed
       return res.redirect(302, `/calendar/${personId}`);
+    }
+    
+    // Pre-warm cache when a browser visits the subscribe page: if cache is empty,
+    // start regenerating in the background so the calendar is ready by the time
+    // they click "Subscribe" (avoids first-time subscription timeouts).
+    if (CALENDAR_DATA_DB && redis && cacheEnabled) {
+      try {
+        const icsKey = buildCalendarCacheKey(personId, 'ics', REGEN_MODE_FULL);
+        const cached = await redis.get(icsKey);
+        if (!cached) {
+          verboseLog(`🔥 Pre-warming calendar cache for ${personId} (subscribe page visit)`);
+          regenerateCalendarForPerson(personId, {
+            trigger: 'subscribe_prewarm',
+            regenMode: REGEN_MODE_FULL
+          }).catch((err) => {
+            console.warn(`Subscribe pre-warm failed for ${personId}:`, err?.message);
+          });
+        }
+      } catch (prewarmErr) {
+        // Don't fail the page; pre-warm is best-effort
+        verboseLog(`Pre-warm check failed for ${personId}:`, prewarmErr?.message);
+      }
     }
     
     // For web browsers, show a subscription page with instructions
