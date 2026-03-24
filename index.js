@@ -511,15 +511,18 @@ const GOOGLE_VTIMEZONE_BLOCK = [
   'END:VTIMEZONE'
 ].join('\r\n');
 
+// Viewer-local: omit X-WR-TIMEZONE so clients interpret floating times as viewer's local timezone.
+// Set VIEWER_LOCAL_TIMES=false to revert to Pacific-anchored behavior (X-WR-TIMEZONE + TZID).
 function addCalendarTimezoneMetadata(icsData) {
-  if (typeof icsData !== 'string' || icsData.includes('X-WR-TIMEZONE:')) {
-    return icsData;
+  if (typeof icsData !== 'string') return icsData;
+  if (process.env.VIEWER_LOCAL_TIMES === 'false') {
+    if (icsData.includes('X-WR-TIMEZONE:')) return icsData;
+    return icsData.replace(
+      /(VERSION:2\.0\r?\n)/,
+      `$1X-WR-TIMEZONE:${GOOGLE_CALENDAR_TIMEZONE}\r\n`
+    );
   }
-
-  return icsData.replace(
-    /(VERSION:2\.0\r?\n)/,
-    `$1X-WR-TIMEZONE:${GOOGLE_CALENDAR_TIMEZONE}\r\n`
-  );
+  return icsData;
 }
 
 function serializeCalendar(calendar) {
@@ -527,23 +530,20 @@ function serializeCalendar(calendar) {
 }
 
 function serializeGoogleCalendar(calendar) {
-  if (!calendar) {
-    return '';
-  }
-
+  if (!calendar) return '';
   let icsData = addCalendarTimezoneMetadata(calendar.toString());
-
-  icsData = icsData
-    .replace(/\r?\nDTSTART:(\d{8}T\d{6})/g, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
-    .replace(/\r?\nDTEND:(\d{8}T\d{6})/g, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
-
-  if (!icsData.includes('BEGIN:VTIMEZONE')) {
-    icsData = icsData.replace(
-      /(X-WR-TIMEZONE:[^\r\n]+\r?\n)/,
-      `$1${GOOGLE_VTIMEZONE_BLOCK}\r\n`
-    );
+  // Viewer-local: omit TZID and VTIMEZONE so times float to viewer's timezone.
+  if (process.env.VIEWER_LOCAL_TIMES === 'false') {
+    icsData = icsData
+      .replace(/\r?\nDTSTART:(\d{8}T\d{6})/g, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
+      .replace(/\r?\nDTEND:(\d{8}T\d{6})/g, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
+    if (!icsData.includes('BEGIN:VTIMEZONE')) {
+      icsData = icsData.replace(
+        /(X-WR-TIMEZONE:[^\r\n]+\r?\n)/,
+        `$1${GOOGLE_VTIMEZONE_BLOCK}\r\n`
+      );
+    }
   }
-
   return icsData;
 }
 
