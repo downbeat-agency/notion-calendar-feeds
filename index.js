@@ -246,13 +246,20 @@ function generateFlightCountdownUrl(flightData, direction = 'departure') {
   return `${baseUrl}/flight-countdown-modern.html?${params.toString()}`;
 }
 
+// Set true to emit VALARM on personnel/blockout calendar events again.
+const CALENDAR_ICS_ALARMS_ENABLED = false;
+
 // Helper function to get appropriate alarms for each event type
 function getAlarmsForEvent(eventType, eventTitle = '') {
+  if (!CALENDAR_ICS_ALARMS_ENABLED) {
+    return [];
+  }
+
   // Skip alarms for OOO events
   if (eventTitle && eventTitle.includes('⛔️') && eventTitle.toUpperCase().includes('OOO')) {
     return [];
   }
-  
+
   const alarmConfigs = {
     // FLIGHTS: 3 hours before
     'flight_departure': [
