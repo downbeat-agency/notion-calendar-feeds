@@ -2665,6 +2665,18 @@ function extractTransportInfoValue(rawDescription, transportType) {
   );
 }
 
+/** Calendar title prefix: pickup 🚙, meet up 🚕, drop off 🚗 */
+function groundTransportTitleEmoji(transport, title) {
+  const t = transport?.type;
+  if (t === 'ground_transport_dropoff') return '🚗';
+  if (t === 'ground_transport_meeting') return '🚕';
+  if (t === 'ground_transport_pickup') return '🚙';
+  if (title.startsWith('Dropoff')) return '🚗';
+  if (title.startsWith('Meet Up')) return '🚕';
+  if (title.startsWith('Pickup')) return '🚙';
+  return '🚙';
+}
+
 function buildTransportDescription(transport) {
   const rawDescription = transport?.description;
   if (!rawDescription) {
@@ -3287,7 +3299,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           const startTime = new Date(startParsed.start);
           const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime()) ? new Date(endParsed.end) : new Date(startTime.getTime() + 30 * 60 * 1000);
           const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
-          const transportEmoji = (transport.type === 'ground_transport_meeting' || title.startsWith('Meet Up')) ? '🚗' : '🚙';
+          const transportEmoji = groundTransportTitleEmoji(transport, title);
           allCalendarEvents.push({ type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
         }
       }
@@ -3346,7 +3358,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const { startTime, endTime } = transportEventTimes;
         const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
         const eventType = transport.type === 'ground_transport_pickup' ? 'ground_transport_pickup' : transport.type === 'ground_transport_dropoff' ? 'ground_transport_dropoff' : transport.type === 'ground_transport_meeting' ? 'ground_transport_meeting' : 'ground_transport';
-        const transportEmoji = (transport.type === 'ground_transport_meeting' || title.startsWith('Meet Up')) ? '🚗' : '🚙';
+        const transportEmoji = groundTransportTitleEmoji(transport, title);
         allCalendarEvents.push({ type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
       }
     }
@@ -4657,7 +4669,7 @@ function processTravelEvents(travelGroupsArray) {
             }
             
             if (transport.transportation_name) {
-              description += `🚗 ${transport.transportation_name}\n`;
+              description += `🚙 ${transport.transportation_name}\n`;
             }
             
             if (transport.pickup_name) {
