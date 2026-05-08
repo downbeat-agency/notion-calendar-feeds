@@ -2665,6 +2665,15 @@ function extractTransportInfoValue(rawDescription, transportType) {
   );
 }
 
+function getGroundTransportEmoji(transport, title) {
+  const t = transport?.type;
+  const normalizedTitle = typeof title === 'string' ? title : '';
+  if (t === 'ground_transport_meeting' || normalizedTitle.startsWith('Meet Up')) return '🚕';
+  if (t === 'ground_transport_pickup' || normalizedTitle.startsWith('Pickup:')) return '🚙';
+  if (t === 'ground_transport_dropoff' || normalizedTitle.startsWith('Dropoff:')) return '🚗';
+  return '🚙';
+}
+
 function buildTransportDescription(transport) {
   const rawDescription = transport?.description;
   if (!rawDescription) {
@@ -3203,10 +3212,25 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
         const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
         const payTotalRaw = event.pay_total;
-        const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
+        const payTotalStr = (payTotalRaw ?? '').toString().trim();
+        const payTotalNumeric = (() => {
+          if (payTotalRaw === null || payTotalRaw === undefined) return null;
+          if (typeof payTotalRaw === 'number') return Number.isFinite(payTotalRaw) ? payTotalRaw : null;
+          if (typeof payTotalRaw === 'string') {
+            const cleaned = payTotalRaw.replace(/\$/g, '').replace(/,/g, '').trim();
+            if (!cleaned) return null;
+            const n = Number(cleaned);
+            return Number.isFinite(n) ? n : null;
+          }
+          return null;
+        })();
         const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
         const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
-        const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
+        const hasPayTotal =
+          payTotalRaw !== null &&
+          payTotalRaw !== undefined &&
+          payTotalStr !== '' &&
+          !(typeof payTotalNumeric === 'number' && payTotalNumeric <= 0);
         if (hasPosition || hasAssignments || hasPayTotal) {
           if (hasPosition) payrollInfo += `Position: ${positionValue}\n`;
           if (hasAssignments) payrollInfo += `Assignments: ${assignmentsValue}\n`;
@@ -3287,7 +3311,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           const startTime = new Date(startParsed.start);
           const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime()) ? new Date(endParsed.end) : new Date(startTime.getTime() + 30 * 60 * 1000);
           const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
-          const transportEmoji = (transport.type === 'ground_transport_meeting' || title.startsWith('Meet Up')) ? '🚗' : '🚙';
+          const transportEmoji = getGroundTransportEmoji(transport, title);
           allCalendarEvents.push({ type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
         }
       }
@@ -3346,7 +3370,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const { startTime, endTime } = transportEventTimes;
         const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
         const eventType = transport.type === 'ground_transport_pickup' ? 'ground_transport_pickup' : transport.type === 'ground_transport_dropoff' ? 'ground_transport_dropoff' : transport.type === 'ground_transport_meeting' ? 'ground_transport_meeting' : 'ground_transport';
-        const transportEmoji = (transport.type === 'ground_transport_meeting' || title.startsWith('Meet Up')) ? '🚗' : '🚙';
+        const transportEmoji = getGroundTransportEmoji(transport, title);
         allCalendarEvents.push({ type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
       }
     }
@@ -3970,10 +3994,25 @@ function processAdminEvents(eventsArray) {
         const positionValue = typeof event.position === 'string' ? event.position.trim() : event.position;
         const assignmentsValue = typeof event.assignments === 'string' ? event.assignments.trim() : event.assignments;
         const payTotalRaw = event.pay_total;
-        const payTotalStr = payTotalRaw === 0 ? '0' : (payTotalRaw ?? '').toString().trim();
+        const payTotalStr = (payTotalRaw ?? '').toString().trim();
+        const payTotalNumeric = (() => {
+          if (payTotalRaw === null || payTotalRaw === undefined) return null;
+          if (typeof payTotalRaw === 'number') return Number.isFinite(payTotalRaw) ? payTotalRaw : null;
+          if (typeof payTotalRaw === 'string') {
+            const cleaned = payTotalRaw.replace(/\$/g, '').replace(/,/g, '').trim();
+            if (!cleaned) return null;
+            const n = Number(cleaned);
+            return Number.isFinite(n) ? n : null;
+          }
+          return null;
+        })();
         const hasPosition = positionValue !== undefined && positionValue !== null && `${positionValue}`.trim() !== '';
         const hasAssignments = assignmentsValue !== undefined && assignmentsValue !== null && `${assignmentsValue}`.trim() !== '';
-        const hasPayTotal = payTotalRaw !== null && payTotalRaw !== undefined && payTotalStr !== '';
+        const hasPayTotal =
+          payTotalRaw !== null &&
+          payTotalRaw !== undefined &&
+          payTotalStr !== '' &&
+          !(typeof payTotalNumeric === 'number' && payTotalNumeric <= 0);
 
         if (hasPosition || hasAssignments || hasPayTotal) {
           if (hasPosition) {
@@ -5386,11 +5425,16 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
     // Return structured data for inspection
     const events = response.results.map(page => {
       const props = page.properties;
+      const eventsProp = props.Events;
       return {
         id: page.id,
+        last_edited_time: page.last_edited_time,
+        created_time: page.created_time,
+        archived: page.archived,
         name: props.Name?.title?.[0]?.text?.content || 'No name',
         personnel: props.Personnel?.relation || [],
         url: props.URL?.url || 'No URL',
+        eventsFormulaType: eventsProp?.type === 'formula' ? (eventsProp.formula?.type || 'formula') : eventsProp?.type,
         // Show the key event properties we need
         events: props.Events?.formula?.string || props.Events?.rich_text?.[0]?.text?.content || 'No events',
         flights: props.Flights?.formula?.string || props.Flights?.rich_text?.[0]?.text?.content || 'No flights',
