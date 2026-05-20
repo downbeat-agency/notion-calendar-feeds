@@ -2665,6 +2665,14 @@ function extractTransportInfoValue(rawDescription, transportType) {
   );
 }
 
+function normalizeTransportTitle(rawTitle) {
+  return (rawTitle || 'Ground Transport')
+    .replace('PASSENGER', 'Passenger')
+    .replace('PICKUP:', 'Pickup:')
+    .replace('DROPOFF:', 'Dropoff:')
+    .replace('MEET UP:', 'Meet Up:');
+}
+
 function getGroundTransportEmoji(transport, title) {
   const t = transport?.type;
   const normalizedTitle = typeof title === 'string' ? title : '';
@@ -3310,7 +3318,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         if (startParsed) {
           const startTime = new Date(startParsed.start);
           const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime()) ? new Date(endParsed.end) : new Date(startTime.getTime() + 30 * 60 * 1000);
-          const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
+          const title = normalizeTransportTitle(transport.title);
           const transportEmoji = getGroundTransportEmoji(transport, title);
           allCalendarEvents.push({ type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
         }
@@ -3368,7 +3376,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       const transportEventTimes = getTransportEventTimes(transport);
       if (transportEventTimes) {
         const { startTime, endTime } = transportEventTimes;
-        const title = (transport.title || 'Ground Transport').replace('PICKUP:', 'Pickup:').replace('DROPOFF:', 'Dropoff:').replace('MEET UP:', 'Meet Up:');
+        const title = normalizeTransportTitle(transport.title);
         const eventType = transport.type === 'ground_transport_pickup' ? 'ground_transport_pickup' : transport.type === 'ground_transport_dropoff' ? 'ground_transport_dropoff' : transport.type === 'ground_transport_meeting' ? 'ground_transport_meeting' : 'ground_transport';
         const transportEmoji = getGroundTransportEmoji(transport, title);
         allCalendarEvents.push({ type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
