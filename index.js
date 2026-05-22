@@ -3242,7 +3242,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         if (hasPosition || hasAssignments || hasPayTotal) {
           if (hasPosition) payrollInfo += `Position: ${positionValue}\n`;
           if (hasAssignments) payrollInfo += `Assignments: ${assignmentsValue}\n`;
-          if (hasPayTotal) payrollInfo += `Pay: ${payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`}\n`;
+          if (hasPayTotal) payrollInfo += `Total Pay: ${payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`}\n(Pay includes add-ons)\n`;
           payrollInfo += '\n';
         }
         let calltimeInfo = '';
@@ -4031,7 +4031,7 @@ function processAdminEvents(eventsArray) {
           }
           if (hasPayTotal) {
             const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
-            payrollInfo += `Pay: ${payDisplay}\n`;
+            payrollInfo += `Total Pay: ${payDisplay}\n(Pay includes add-ons)\n`;
           }
           payrollInfo += '\n---\n\n';
         }
