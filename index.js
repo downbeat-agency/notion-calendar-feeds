@@ -5298,7 +5298,7 @@ app.get('/api/flight/:flightId/status', async (req, res) => {
     // Cache the result for 1 hour (3600 seconds)
     if (cacheEnabled && redis) {
       try {
-        await redis.setex(cacheKey, 3600, JSON.stringify(statusData));
+        await redis.setEx(cacheKey, 3600, JSON.stringify(statusData));
         console.log(`💾 Cached flight status for ${airline}${flightNumber}`);
       } catch (cacheError) {
         console.warn('Cache write error:', cacheError.message);
