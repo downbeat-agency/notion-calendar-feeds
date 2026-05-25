@@ -1301,17 +1301,21 @@ async function regenerateFromCalendarDataPage(calendarDataPage, options = {}) {
       return { success: false, pageId, reason: 'missing_personnel_relation' };
     }
 
-    const eventsResult = await regenerateCalendarForPersonSplit(linkedPersonId, pageId, 'events_only', { trigger });
-    const nonEventsResult = await regenerateCalendarForPersonSplit(linkedPersonId, pageId, 'non_events_only', { trigger });
-    const success = eventsResult.success && nonEventsResult.success;
+    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger, composeFull: false });
+    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger, composeFull: false });
+    const splitsOk = eventsResult.success && nonEventsResult.success;
+    const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
+    const success = splitsOk && (composed || !redis || !cacheEnabled);
     return {
       success,
       personId: linkedPersonId,
       personName: eventsResult.personName || nonEventsResult.personName,
       eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0),
       pageId,
-      composed: eventsResult.composed || nonEventsResult.composed,
-      error: success ? null : (eventsResult.error || nonEventsResult.error)
+      composed,
+      error: !splitsOk
+        ? getSplitRegenError(eventsResult, nonEventsResult)
+        : (!success ? 'Split compose did not produce full cache' : null)
     };
   } catch (error) {
     console.error(`❌ Failed to process Calendar Data row ${pageId}:`, error.message);
@@ -1333,17 +1337,21 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     if (waitContext) {
       await waitForManualRegensToDrain(waitContext);
     }
-    const eventsResult = await regenerateCalendarForPersonSplit(entry.personId, entry.pageId, 'events_only', { trigger });
-    const nonEventsResult = await regenerateCalendarForPersonSplit(entry.personId, entry.pageId, 'non_events_only', { trigger });
-    const success = eventsResult.success && nonEventsResult.success;
+    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', { trigger, composeFull: false });
+    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false });
+    const splitsOk = eventsResult.success && nonEventsResult.success;
+    const composed = splitsOk ? await composeSplitCacheForPerson(entry.personId) : false;
+    const success = splitsOk && (composed || !redis || !cacheEnabled);
     return {
       success,
       personId: entry.personId,
       personName: eventsResult.personName || nonEventsResult.personName,
       eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0),
       pageId: entry.pageId,
-      composed: eventsResult.composed || nonEventsResult.composed,
-      error: success ? null : (eventsResult.error || nonEventsResult.error)
+      composed,
+      error: !splitsOk
+        ? getSplitRegenError(eventsResult, nonEventsResult)
+        : (!success ? 'Split compose did not produce full cache' : null)
     };
   });
 
@@ -3111,7 +3119,7 @@ async function tryComposeFullCalendarFromSplitCaches(personId) {
 
 /** Run split regen (events_only or non_events_only) and optionally compose full cache when both exist. */
 async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, regenMode, options = {}) {
-  const { trigger = 'unknown' } = options;
+  const { trigger = 'unknown', composeFull = true } = options;
   if (!calendarDataPageId || !['events_only', 'non_events_only'].includes(regenMode)) {
     return { success: false, personId, error: 'Invalid regenMode or missing calendarDataPageId' };
   }
@@ -3137,6 +3145,19 @@ async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, re
       ? { ...partialData, flights: [], rehearsals: [], hotels: [], ground_transport: [], team_calendar: [], event_note_reminders: [] }
       : { personName: partialData.personName || 'Unknown', events: [], ...partialData };
     const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
+    if (regenMode === 'events_only') {
+      const sourceEventCount = Array.isArray(calendarData.events) ? calendarData.events.length : 0;
+      const mainEventCount = allCalendarEvents.filter(event => event.type === 'main_event').length;
+      if (sourceEventCount > 0 && mainEventCount === 0) {
+        const firstEvent = calendarData.events[0] || {};
+        const firstEventKeys = Object.keys(firstEvent).slice(0, 20).join(', ');
+        return {
+          success: false,
+          personId,
+          error: `events_only rendered 0 main events from ${sourceEventCount} raw Events entries. First event keys: ${firstEventKeys || 'none'}; first event_date: ${firstEvent.event_date || 'missing'}`
+        };
+      }
+    }
     const personName = calendarData.personName || 'Unknown';
     const cachePayload = { personName, events: allCalendarEvents };
     const cacheKey = regenMode === 'events_only' ? `calendar:${personId}:events` : `calendar:${personId}:non_events`;
@@ -3144,12 +3165,32 @@ async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, re
       await setCalendarCache(cacheKey, JSON.stringify(cachePayload));
       verboseLog(`✅ Cached ${regenMode} for ${personId} (${allCalendarEvents.length} items)`);
     }
-    const composed = await composeSplitCacheForPerson(personId);
+    const composed = composeFull ? await composeSplitCacheForPerson(personId) : false;
     return { success: true, personId, personName, eventCount: allCalendarEvents.length, composed };
   } catch (error) {
     console.error(`❌ Split regen ${regenMode} failed for ${personId}:`, error.message);
     return { success: false, personId, error: error.message };
   }
+}
+
+async function regenerateCalendarForPersonSplitWithTimeout(personId, calendarDataPageId, regenMode, options = {}) {
+  try {
+    return await withTimeout(
+      regenerateCalendarForPersonSplit(personId, calendarDataPageId, regenMode, options),
+      REGEN_PERSON_STEP_TIMEOUT_MS,
+      `${regenMode} split regen timed out after ${REGEN_PERSON_STEP_TIMEOUT_MS}ms`
+    );
+  } catch (error) {
+    console.error(`❌ Split regen ${regenMode} timed out/failed for ${personId}:`, error.message);
+    return { success: false, personId, error: error.message, regenMode };
+  }
+}
+
+function getSplitRegenError(eventsResult, nonEventsResult) {
+  return [
+    !eventsResult?.success ? `events_only: ${eventsResult?.error || 'unknown error'}` : null,
+    !nonEventsResult?.success ? `non_events_only: ${nonEventsResult?.error || 'unknown error'}` : null
+  ].filter(Boolean).join('; ');
 }
 
 /** Compose full calendar cache from events + non_events split caches. Returns true if composed. */
@@ -3456,24 +3497,26 @@ async function regenerateCalendarForPerson(personId, options = {}) {
         return { success: false, personId, reason: 'no_events' };
       }
       console.log(`🔄 Split regen for ${personId} (events: NOTION_API_KEY, non-events: NOTION_API_KEY2)`);
-      const eventsResult = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'events_only', { trigger });
-      const nonEventsResult = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'non_events_only', { trigger });
+      const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'events_only', { trigger, composeFull: false });
+      const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'non_events_only', { trigger, composeFull: false });
       const bothOk = eventsResult.success && nonEventsResult.success;
       if (!bothOk) {
-        const err = eventsResult.error || nonEventsResult.error;
+        const err = getSplitRegenError(eventsResult, nonEventsResult);
         console.warn(`⚠️  Split regen had failures for ${personId}: events=${eventsResult.success}, non_events=${nonEventsResult.success}, error=${err}`);
-        if (!eventsResult.success && !nonEventsResult.success) {
-          return { success: false, personId, error: err, reason: 'no_events' };
-        }
+        return { success: false, personId, error: err, reason: 'split_regen_failed' };
       }
       if (!redis || !cacheEnabled) {
         return { success: bothOk, personId, personName: eventsResult.personName || nonEventsResult.personName, regenMode: REGEN_MODE_FULL, eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0) };
+      }
+      const composed = await composeSplitCacheForPerson(personId);
+      if (!composed) {
+        return { success: false, personId, error: 'Split compose did not produce full cache', reason: 'split_regen_failed' };
       }
       const icsData = await redis.get(`calendar:${personId}:ics`);
       const googleIcsData = await redis.get(`calendar:${personId}:google_ics`);
       const jsonData = await redis.get(`calendar:${personId}:json`);
       if (!icsData || !jsonData) {
-        return { success: false, personId, error: 'Split compose did not produce full cache', reason: 'no_events' };
+        return { success: false, personId, error: 'Split compose did not produce full cache', reason: 'split_regen_failed' };
       }
       const jsonResponse = JSON.parse(jsonData);
       const personName = jsonResponse.personName || 'Unknown';
@@ -3529,12 +3572,13 @@ async function regenerateCalendarForPerson(personId, options = {}) {
       return { success: true, personId, personName, regenMode: selectedRegenMode, eventCount: allCalendarEvents.length, icsData, googleIcsData, jsonData, jsonResponse, allCalendarEvents };
     }
     if (selectedRegenMode === REGEN_MODE_EVENTS_ONLY) {
-      const result = await regenerateCalendarForPersonSplit(personId, resolvedPageId, 'events_only', { trigger });
-      if (!result.success) return { success: false, personId, error: result.error, reason: 'no_events' };
+      const result = await regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'events_only', { trigger, composeFull: false });
+      if (!result.success) return { success: false, personId, error: result.error, reason: 'split_regen_failed' };
       const eventsRaw = await redis.get(`calendar:${personId}:events`);
       const payload = eventsRaw ? JSON.parse(eventsRaw) : { personName: 'Unknown', events: [] };
-      const allCalendarEvents = buildCalendarEventsFromCalendarData({ ...payload, flights: [], rehearsals: [], hotels: [], ground_transport: [], team_calendar: [], event_note_reminders: [] });
-      const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(payload.personName, allCalendarEvents, { totalMainEvents: payload.events?.length || 0, regenMode: selectedRegenMode, dataSource: 'split_events_only' });
+      const allCalendarEvents = Array.isArray(payload.events) ? payload.events : [];
+      const totalMainEvents = allCalendarEvents.filter(event => event.type === 'main_event').length;
+      const { icsData, googleIcsData, jsonResponse, jsonData } = buildCalendarArtifacts(payload.personName, allCalendarEvents, { totalMainEvents, regenMode: selectedRegenMode, dataSource: 'split_events_only' });
       if (redis && cacheEnabled) {
         await setCalendarCache(`${cachePrefix}:ics`, icsData);
         await setCalendarCache(`${cachePrefix}:google_ics`, googleIcsData);
@@ -5764,10 +5808,14 @@ app.get('/calendar-data/regenerate', async (req, res) => {
         calendarDataPageId: pageId
       });
     }
-    const eventsResult = await regenerateCalendarForPersonSplit(linkedPersonId, pageId, 'events_only', { trigger: 'manual_regen_calendar_data' });
-    const nonEventsResult = await regenerateCalendarForPersonSplit(linkedPersonId, pageId, 'non_events_only', { trigger: 'manual_regen_calendar_data' });
-    const success = eventsResult.success && nonEventsResult.success;
-    const errorMsg = eventsResult.error || nonEventsResult.error;
+    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger: 'manual_regen_calendar_data', composeFull: false });
+    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger: 'manual_regen_calendar_data', composeFull: false });
+    const splitsOk = eventsResult.success && nonEventsResult.success;
+    const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
+    const success = splitsOk && (composed || !redis || !cacheEnabled);
+    const errorMsg = !splitsOk
+      ? getSplitRegenError(eventsResult, nonEventsResult)
+      : (!success ? 'Split compose did not produce full cache' : null);
     const result = { success, personName: eventsResult.personName || nonEventsResult.personName, eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0), reason: errorMsg || 'no_events', error: errorMsg, regenMode };
 
     if (result.success) {
