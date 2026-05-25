@@ -792,6 +792,7 @@ async function getCalendarDataPropertyIdMap(maxRetries = 5) {
     Name: props.Name?.id || null,
     Personnel: props.Personnel?.id || null,
     Events: props.Events?.id || null,
+    Events2: props['Events 2']?.id || props.Events2?.id || null,
     Flights: props.Flights?.id || null,
     Transportation: props.Transportation?.id || null,
     Hotels: props.Hotels?.id || null,
@@ -869,6 +870,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   const [
     nameStr,
     eventsStr,
+    events2Str,
     flightsStr,
     transportationStr,
     hotelsStr,
@@ -878,6 +880,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   ] = await Promise.all([
     fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(pageId, ids.Events2, maxRetries, notionEvents),
     fetchPagePropertyString(pageId, ids.Flights, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Transportation, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Hotels, maxRetries, notionAux),
@@ -889,6 +892,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   return {
     Name: { formula: { string: nameStr || '' } },
     Events: { formula: { string: eventsStr || '[]' } },
+    'Events 2': { formula: { string: events2Str || '[]' } },
     Flights: { formula: { string: flightsStr || '[]' } },
     Transportation: { formula: { string: transportationStr || '[]' } },
     Hotels: { formula: { string: hotelsStr || '[]' } },
@@ -901,12 +905,14 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
 /** Fetch only Events property (for events_only split regen). Uses NOTION_API_KEY. */
 async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
-  const [eventsStr, nameStr] = await Promise.all([
+  const [eventsStr, events2Str, nameStr] = await Promise.all([
     fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(pageId, ids.Events2, maxRetries, notionEvents),
     fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux)
   ]);
   return {
     Events: { formula: { string: eventsStr || '[]' } },
+    'Events 2': { formula: { string: events2Str || '[]' } },
     Name: { formula: { string: nameStr || '' } },
   };
 }
@@ -1028,8 +1034,14 @@ async function getCalendarDataEventsOnlyFromPageIdOrUrl(calendarDataInput, linke
     throw new Error('Invalid Calendar Data page ID or URL');
   }
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
-  const eventsString = await fetchPagePropertyString(pageId, propertyIds.Events, maxRetries, notionEvents);
-  const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
+  const [eventsString, events2String] = await Promise.all([
+    fetchPagePropertyString(pageId, propertyIds.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(pageId, propertyIds.Events2, maxRetries, notionEvents)
+  ]);
+  const events = parseMergedEventsProperties({
+    Events: { formula: { string: eventsString || '[]' } },
+    'Events 2': { formula: { string: events2String || '[]' } }
+  });
 
   return {
     pageId,
@@ -1104,6 +1116,17 @@ function parseJsonFormulaArray(propertyValue, propertyLabel) {
   }
 }
 
+function parseMergedEventsProperties(calendarData) {
+  const eventShards = [
+    { label: 'Events', property: calendarData?.Events },
+    { label: 'Events 2', property: calendarData?.['Events 2'] || calendarData?.Events2 }
+  ];
+
+  return eventShards.flatMap(({ label, property }) =>
+    parseJsonFormulaArray(property, label)
+  );
+}
+
 function extractPersonNameFromPersonnelPage(personPage) {
   if (!personPage?.properties) return 'Unknown';
   return (
@@ -1153,12 +1176,16 @@ async function getCalendarDataEventsOnlyFromCalendarDataPagePath(personId, expli
 
   const propertyIds = await getCalendarDataPropertyIdMap(maxRetries);
   const eventsFetchStart = Date.now();
-  const [eventsString, nameString] = await Promise.all([
+  const [eventsString, events2String, nameString] = await Promise.all([
     fetchPagePropertyString(calendarDataPageId, propertyIds.Events, maxRetries, notionEvents),
+    fetchPagePropertyString(calendarDataPageId, propertyIds.Events2, maxRetries, notionEvents),
     fetchPagePropertyString(calendarDataPageId, propertyIds.Name, maxRetries, notionAux)
   ]);
   const eventsFetchMs = Date.now() - eventsFetchStart;
-  const events = parseJsonFormulaArray({ formula: { string: eventsString || '[]' } }, 'Events');
+  const events = parseMergedEventsProperties({
+    Events: { formula: { string: eventsString || '[]' } },
+    'Events 2': { formula: { string: events2String || '[]' } }
+  });
   const personName = (nameString || '').trim() || 'Unknown';
 
   console.log(`📊 CalendarData events-only direct timings for ${personId}: eventsProperty=${eventsFetchMs}ms pageId=${calendarDataPageId}`);
@@ -1571,14 +1598,7 @@ function processCalendarDataProperties(calendarData) {
   // Parse all the JSON strings with better error handling
   let events, flights, transportation, hotels, rehearsals, teamCalendar, eventNotesReminders;
   
-  const rawFormulaString = calendarData.Events?.formula?.string || '';
-  
-  try {
-    events = JSON.parse(rawFormulaString || '[]');
-  } catch (e) {
-    console.error('Error parsing Events JSON:', calendarData.Events?.formula?.string?.substring(0, 100));
-    throw new Error(`Events JSON parse error: ${e.message}`);
-  }
+  events = parseMergedEventsProperties(calendarData);
   
   try {
     flights = JSON.parse(calendarData.Flights?.formula?.string || '[]');
@@ -1762,14 +1782,8 @@ function processCalendarDataProperties(calendarData) {
 /** Parse Events + Name only (for events_only split regen). Preserves nested flights, rehearsals, hotels, ground_transport in each event. */
 function processCalendarDataEventsOnly(props) {
   if (!props) return null;
-  const eventsStr = props.Events?.formula?.string || '[]';
   const nameStr = (props.Name?.formula?.string || '').trim();
-  let events;
-  try {
-    events = JSON.parse(eventsStr || '[]');
-  } catch (e) {
-    throw new Error(`Events JSON parse error: ${e.message}`);
-  }
+  const events = parseMergedEventsProperties(props);
   const personName = nameStr || 'Unknown';
   return {
     personName,
