@@ -701,7 +701,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 
 const REGEN_TOTAL_TIMEOUT_MS = Number(process.env.REGEN_TOTAL_TIMEOUT_MS || 60000); // hard per-person budget
 const REGEN_FETCH_STEP_TIMEOUT_MS = Number(process.env.REGEN_FETCH_STEP_TIMEOUT_MS || 60000);
-const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 60000);
+const REGEN_PERSON_STEP_TIMEOUT_MS = Number(process.env.REGEN_PERSON_STEP_TIMEOUT_MS || 180000);
 const CALENDAR_FETCH_TIMEOUT_MS = Number(process.env.CALENDAR_FETCH_TIMEOUT_MS || 60000); // max allowed for admin/travel/blockout pulls
 const REGEN_MODE_FULL = 'full';
 const REGEN_MODE_EVENTS_ONLY = 'events_only';
@@ -1301,8 +1301,10 @@ async function regenerateFromCalendarDataPage(calendarDataPage, options = {}) {
       return { success: false, pageId, reason: 'missing_personnel_relation' };
     }
 
-    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger, composeFull: false });
-    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger, composeFull: false });
+    const [eventsResult, nonEventsResult] = await Promise.all([
+      regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger, composeFull: false }),
+      regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger, composeFull: false })
+    ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
     const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
@@ -1337,8 +1339,10 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     if (waitContext) {
       await waitForManualRegensToDrain(waitContext);
     }
-    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', { trigger, composeFull: false });
-    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false });
+    const [eventsResult, nonEventsResult] = await Promise.all([
+      regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', { trigger, composeFull: false }),
+      regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false })
+    ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
     const composed = splitsOk ? await composeSplitCacheForPerson(entry.personId) : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
@@ -3497,8 +3501,10 @@ async function regenerateCalendarForPerson(personId, options = {}) {
         return { success: false, personId, reason: 'no_events' };
       }
       console.log(`🔄 Split regen for ${personId} (events: NOTION_API_KEY, non-events: NOTION_API_KEY2)`);
-      const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'events_only', { trigger, composeFull: false });
-      const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'non_events_only', { trigger, composeFull: false });
+      const [eventsResult, nonEventsResult] = await Promise.all([
+        regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'events_only', { trigger, composeFull: false }),
+        regenerateCalendarForPersonSplitWithTimeout(personId, resolvedPageId, 'non_events_only', { trigger, composeFull: false })
+      ]);
       const bothOk = eventsResult.success && nonEventsResult.success;
       if (!bothOk) {
         const err = getSplitRegenError(eventsResult, nonEventsResult);
@@ -5808,8 +5814,10 @@ app.get('/calendar-data/regenerate', async (req, res) => {
         calendarDataPageId: pageId
       });
     }
-    const eventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger: 'manual_regen_calendar_data', composeFull: false });
-    const nonEventsResult = await regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger: 'manual_regen_calendar_data', composeFull: false });
+    const [eventsResult, nonEventsResult] = await Promise.all([
+      regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'events_only', { trigger: 'manual_regen_calendar_data', composeFull: false }),
+      regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger: 'manual_regen_calendar_data', composeFull: false })
+    ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
     const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
