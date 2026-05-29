@@ -799,6 +799,9 @@ async function getCalendarDataPropertyIdMap(maxRetries = 5) {
     Rehearsals: props.Rehearsals?.id || null,
     TeamCalendar: props['Team Calendar']?.id || null,
     EventNotesReminders: props['Event Notes Reminders']?.id || null,
+    AdminEvents: props['Admin Events']?.id || null,
+    AdminEvents1: props['Admin Events 1']?.id || null,
+    AdminEvents2: props['Admin Events 2']?.id || null,
   };
   return calendarDataPropertyIdCache;
 }
@@ -3976,12 +3979,17 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  const readAdminProperty = async (propertyName) => {
+  const propertyIds = CALENDAR_DATA_DB ? await getCalendarDataPropertyIdMap() : {};
+  const readAdminProperty = async (propertyName, propertyId = null) => {
     try {
-      return await fetchPagePropertyString(pageId, propertyName, 5, notionAux);
+      return await fetchPagePropertyString(pageId, propertyId || propertyName, 5, notionAux);
     } catch (error) {
       const status = error?.status || error?.code;
-      if (status === 404 || error?.body?.includes?.('Could not find property')) {
+      if (
+        status === 404 ||
+        error?.body?.includes?.('Could not find property') ||
+        error?.message?.includes?.('is not a property that exists')
+      ) {
         return '';
       }
       throw error;
@@ -3999,8 +4007,8 @@ async function getAdminCalendarData() {
   };
 
   const [adminEvents1String, adminEvents2String] = await Promise.all([
-    readAdminProperty('Admin Events 1'),
-    readAdminProperty('Admin Events 2')
+    readAdminProperty('Admin Events 1', propertyIds.AdminEvents1),
+    readAdminProperty('Admin Events 2', propertyIds.AdminEvents2)
   ]);
 
   if (adminEvents1String || adminEvents2String) {
@@ -4012,7 +4020,7 @@ async function getAdminCalendarData() {
 
   // Extract legacy Admin Events property
   const adminEventsString =
-    (await readAdminProperty('Admin Events')) ||
+    (await readAdminProperty('Admin Events', propertyIds.AdminEvents)) ||
     '[]';
 
   try {
