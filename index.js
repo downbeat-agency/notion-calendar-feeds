@@ -3981,10 +3981,44 @@ async function getAdminCalendarData() {
     notionAux.pages.retrieve({ page_id: pageId })
   );
 
-  // Extract Admin Events property
-  const adminEventsString = page.properties['Admin Events']?.formula?.string || 
-                            page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
-                            '[]';
+  const readAdminProperty = async (propertyName) => {
+    const property = page.properties[propertyName];
+    if (!property) return '';
+    return await fetchPagePropertyString(pageId, property.id, 5, notionAux);
+  };
+
+  const parseAdminEventsString = (raw, propertyName) => {
+    try {
+      const parsed = JSON.parse(raw || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.error(`Error parsing ${propertyName} JSON:`, raw?.substring?.(0, 100));
+      throw new Error(`${propertyName} JSON parse error: ${e.message}`);
+    }
+  };
+
+  const hasShardedAdminEvents =
+    page.properties['Admin Events 1'] ||
+    page.properties['Admin Events 2'];
+
+  if (hasShardedAdminEvents) {
+    const [adminEvents1String, adminEvents2String] = await Promise.all([
+      readAdminProperty('Admin Events 1'),
+      readAdminProperty('Admin Events 2')
+    ]);
+
+    return [
+      ...parseAdminEventsString(adminEvents1String, 'Admin Events 1'),
+      ...parseAdminEventsString(adminEvents2String, 'Admin Events 2')
+    ];
+  }
+
+  // Extract legacy Admin Events property
+  const adminEventsString =
+    (await readAdminProperty('Admin Events')) ||
+    page.properties['Admin Events']?.formula?.string ||
+    page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
+    '[]';
 
   try {
     const adminEvents = JSON.parse(adminEventsString);
@@ -4124,6 +4158,16 @@ function processAdminEvents(eventsArray) {
               description += `  • ${person}\n`;
             });
           }
+        }
+
+        const timelineLink = (event.timeline_url || event.timeline_link || '').trim();
+        if (timelineLink) {
+          description += `\nTimeline Link: ${timelineLink}\n`;
+        }
+
+        const setListLink = (event.set_list_url || event.set_list_link || event.setlist_url || '').trim();
+        if (setListLink) {
+          description += `\nSet List Link: ${setListLink}\n`;
         }
         
         // General Info / Notes

@@ -1,0 +1,274 @@
+Admin Events 1
+
+if(
+  prop("Page") == "Admin Calendar",
+  lets(
+    all_events,
+      prop("Event Stats")
+        .map(current.prop("Events"))
+        .flat()
+        .unique()
+        .filter(current.prop("Day Date/Time") >= parseDate(format(now().year()) + "-01-01"))
+        .sort(current.prop("Day Date/Time")),
+
+    events,
+      all_events.slice(0, ceil(all_events.length() / 2)),
+
+    "[" +
+    events.map(
+      lets(
+        event_name,
+          replaceAll(replaceAll(replaceAll((current.prop("Band Name").format() + " " + current.prop("Event Type").format()), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        notion_url,
+          "https://www.notion.so/" + replaceAll(current.id(), "-", ""),
+
+        band,
+          replaceAll(replaceAll(replaceAll(current.prop("Band").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        event_date,
+          current.prop("Day Date/Time"),
+
+        event_date_helper,
+          current.prop("Event Date"),
+
+        venue,
+          replaceAll(replaceAll(replaceAll(current.prop("Venue").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        venue_address_raw,
+          if(empty(current.prop("Venue").map(current.prop("Address")).first()), "", current.prop("Venue").map(current.prop("Address")).first()),
+
+        venue_address,
+          replaceAll(replaceAll(replaceAll(venue_address_raw, "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        event_personnel,
+          replaceAll(replaceAll(replaceAll(current.prop("Event Personnel").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        timeline_url,
+          "https://timeline.downbeat.agency/" + current.id(),
+
+        set_list_url,
+          if(current.prop("Music Q").empty(), "", "https://music.downbeat.agency/setlist/" + current.prop("Music Q").first().id()),
+
+        general_info,
+          replaceAll(replaceAll(replaceAll(current.prop("General Calendar Info").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        rehearsal,
+          current.prop("Rehearsals"),
+
+        in_rehearsal,
+          rehearsal
+            .filter(not empty(current.prop("Rehearsal Date")))
+            .filter(
+              now() >= current.prop("Rehearsal Date").dateStart() and
+              now() <= if(empty(current.prop("Rehearsal Date").dateEnd()), dateAdd(current.prop("Rehearsal Date").dateStart(), 2, "hours"), current.prop("Rehearsal Date").dateEnd())
+            )
+            .length() > 0,
+
+        rehearsals_json,
+          "[" +
+          rehearsal.map(
+            lets(
+              r_start,
+                if(empty(current.prop("Rehearsal Date")), "", current.prop("Rehearsal Date").dateStart()),
+
+              r_end,
+                if(empty(current.prop("Rehearsal Date")), "", current.prop("Rehearsal Date").dateEnd()),
+
+              r_time,
+                if(empty(current.prop("Rehearsal Date")), "null", "\"" + dateRange(r_start, r_end) + "\""),
+
+              r_pco,
+                if(empty(current.prop("Rehearsal PCO")), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal PCO"), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              r_link,
+                "\"" + "https://www.notion.so/" + replaceAll(current.id(), "-", "") + "\"",
+
+              r_band,
+                "\"" + replaceAll(replaceAll(current.prop("Personnel"), "\"", "\\\""), "\n", "\\n") + "\"",
+
+              r_desc,
+                "\"" + replaceAll(replaceAll(("Rehearsal for " + current.prop("Event").format()), "\"", "\\\""), "\n", "\\n") + "\"",
+
+              r_location,
+                if(empty(current.prop("Rehearsal Rooms")), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal Rooms").format(), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              r_address,
+                if(empty(current.prop("Rehearsal Rooms").map(current.prop("Address"))), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal Rooms").map(current.prop("Address")).format(), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              "{" +
+                "\"rehearsal_time\":" + r_time + "," +
+                "\"rehearsal_pco\":" + r_pco + "," +
+                "\"rehearsal_link\":" + r_link + "," +
+                "\"rehearsal_band\":" + r_band + "," +
+                "\"description\":" + r_desc + "," +
+                "\"rehearsal_location\":" + r_location + "," +
+                "\"rehearsal_address\":" + r_address +
+              "}"
+            )
+          )
+          .filter(not empty(current))
+          .join(",")
+          + "]",
+
+        "{" +
+          "\"event_name\":\"" + event_name + "\"," +
+          "\"notion_url\":\"" + notion_url + "\"," +
+          "\"event_date\":\"" + event_date + "\"," +
+          "\"event_date_helper\":\"" + event_date_helper + "\"," +
+          "\"band\":\"" + band + "\"," +
+          "\"event_personnel\":\"" + event_personnel + "\"," +
+          "\"timeline_url\":\"" + timeline_url + "\"," +
+          "\"set_list_url\":\"" + set_list_url + "\"," +
+          "\"venue\":\"" + venue + "\"," +
+          "\"venue_address\":\"" + venue_address + "\"," +
+          "\"general_info\":\"" + general_info + "\"," +
+          "\"in_rehearsal\":" + if(in_rehearsal, "true", "false") + "," +
+          "\"rehearsal\":" + rehearsals_json +
+        "}"
+      )
+    )
+    .filter(not empty(current))
+    .join(",")
+    + "]"
+  ),
+  "[]"
+)
+
+
+Admin Events 2
+
+if(
+  prop("Page") == "Admin Calendar",
+  lets(
+    all_events,
+      prop("Event Stats")
+        .map(current.prop("Events"))
+        .flat()
+        .unique()
+        .filter(current.prop("Day Date/Time") >= parseDate(format(now().year()) + "-01-01"))
+        .sort(current.prop("Day Date/Time")),
+
+    events,
+      all_events.slice(ceil(all_events.length() / 2), all_events.length()),
+
+    "[" +
+    events.map(
+      lets(
+        event_name,
+          replaceAll(replaceAll(replaceAll((current.prop("Band Name").format() + " " + current.prop("Event Type").format()), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        notion_url,
+          "https://www.notion.so/" + replaceAll(current.id(), "-", ""),
+
+        band,
+          replaceAll(replaceAll(replaceAll(current.prop("Band").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        event_date,
+          current.prop("Day Date/Time"),
+
+        event_date_helper,
+          current.prop("Event Date"),
+
+        venue,
+          replaceAll(replaceAll(replaceAll(current.prop("Venue").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        venue_address_raw,
+          if(empty(current.prop("Venue").map(current.prop("Address")).first()), "", current.prop("Venue").map(current.prop("Address")).first()),
+
+        venue_address,
+          replaceAll(replaceAll(replaceAll(venue_address_raw, "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        event_personnel,
+          replaceAll(replaceAll(replaceAll(current.prop("Event Personnel").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        timeline_url,
+          "https://timeline.downbeat.agency/" + current.id(),
+
+        set_list_url,
+          if(current.prop("Music Q").empty(), "", "https://music.downbeat.agency/setlist/" + current.prop("Music Q").first().id()),
+
+        general_info,
+          replaceAll(replaceAll(replaceAll(current.prop("General Calendar Info").format(), "\"", "\\\""), "\n", "\\n"), "\r", ""),
+
+        rehearsal,
+          current.prop("Rehearsals"),
+
+        in_rehearsal,
+          rehearsal
+            .filter(not empty(current.prop("Rehearsal Date")))
+            .filter(
+              now() >= current.prop("Rehearsal Date").dateStart() and
+              now() <= if(empty(current.prop("Rehearsal Date").dateEnd()), dateAdd(current.prop("Rehearsal Date").dateStart(), 2, "hours"), current.prop("Rehearsal Date").dateEnd())
+            )
+            .length() > 0,
+
+        rehearsals_json,
+          "[" +
+          rehearsal.map(
+            lets(
+              r_start,
+                if(empty(current.prop("Rehearsal Date")), "", current.prop("Rehearsal Date").dateStart()),
+
+              r_end,
+                if(empty(current.prop("Rehearsal Date")), "", current.prop("Rehearsal Date").dateEnd()),
+
+              r_time,
+                if(empty(current.prop("Rehearsal Date")), "null", "\"" + dateRange(r_start, r_end) + "\""),
+
+              r_pco,
+                if(empty(current.prop("Rehearsal PCO")), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal PCO"), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              r_link,
+                "\"" + "https://www.notion.so/" + replaceAll(current.id(), "-", "") + "\"",
+
+              r_band,
+                "\"" + replaceAll(replaceAll(current.prop("Personnel"), "\"", "\\\""), "\n", "\\n") + "\"",
+
+              r_desc,
+                "\"" + replaceAll(replaceAll(("Rehearsal for " + current.prop("Event").format()), "\"", "\\\""), "\n", "\\n") + "\"",
+
+              r_location,
+                if(empty(current.prop("Rehearsal Rooms")), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal Rooms").format(), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              r_address,
+                if(empty(current.prop("Rehearsal Rooms").map(current.prop("Address"))), "null", "\"" + replaceAll(replaceAll(current.prop("Rehearsal Rooms").map(current.prop("Address")).format(), "\"", "\\\""), "\n", "\\n") + "\""),
+
+              "{" +
+                "\"rehearsal_time\":" + r_time + "," +
+                "\"rehearsal_pco\":" + r_pco + "," +
+                "\"rehearsal_link\":" + r_link + "," +
+                "\"rehearsal_band\":" + r_band + "," +
+                "\"description\":" + r_desc + "," +
+                "\"rehearsal_location\":" + r_location + "," +
+                "\"rehearsal_address\":" + r_address +
+              "}"
+            )
+          )
+          .filter(not empty(current))
+          .join(",")
+          + "]",
+
+        "{" +
+          "\"event_name\":\"" + event_name + "\"," +
+          "\"notion_url\":\"" + notion_url + "\"," +
+          "\"event_date\":\"" + event_date + "\"," +
+          "\"event_date_helper\":\"" + event_date_helper + "\"," +
+          "\"band\":\"" + band + "\"," +
+          "\"event_personnel\":\"" + event_personnel + "\"," +
+          "\"timeline_url\":\"" + timeline_url + "\"," +
+          "\"set_list_url\":\"" + set_list_url + "\"," +
+          "\"venue\":\"" + venue + "\"," +
+          "\"venue_address\":\"" + venue_address + "\"," +
+          "\"general_info\":\"" + general_info + "\"," +
+          "\"in_rehearsal\":" + if(in_rehearsal, "true", "false") + "," +
+          "\"rehearsal\":" + rehearsals_json +
+        "}"
+      )
+    )
+    .filter(not empty(current))
+    .join(",")
+    + "]"
+  ),
+  "[]"
+)
