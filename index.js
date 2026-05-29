@@ -3976,15 +3976,16 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch the page and extract Admin Events property (uses NOTION_API_KEY2)
-  const page = await retryNotionCall(() => 
-    notionAux.pages.retrieve({ page_id: pageId })
-  );
-
   const readAdminProperty = async (propertyName) => {
-    const property = page.properties[propertyName];
-    if (!property) return '';
-    return await fetchPagePropertyString(pageId, property.id, 5, notionAux);
+    try {
+      return await fetchPagePropertyString(pageId, propertyName, 5, notionAux);
+    } catch (error) {
+      const status = error?.status || error?.code;
+      if (status === 404 || error?.body?.includes?.('Could not find property')) {
+        return '';
+      }
+      throw error;
+    }
   };
 
   const parseAdminEventsString = (raw, propertyName) => {
@@ -3997,16 +3998,12 @@ async function getAdminCalendarData() {
     }
   };
 
-  const hasShardedAdminEvents =
-    page.properties['Admin Events 1'] ||
-    page.properties['Admin Events 2'];
+  const [adminEvents1String, adminEvents2String] = await Promise.all([
+    readAdminProperty('Admin Events 1'),
+    readAdminProperty('Admin Events 2')
+  ]);
 
-  if (hasShardedAdminEvents) {
-    const [adminEvents1String, adminEvents2String] = await Promise.all([
-      readAdminProperty('Admin Events 1'),
-      readAdminProperty('Admin Events 2')
-    ]);
-
+  if (adminEvents1String || adminEvents2String) {
     return [
       ...parseAdminEventsString(adminEvents1String, 'Admin Events 1'),
       ...parseAdminEventsString(adminEvents2String, 'Admin Events 2')
@@ -4016,8 +4013,6 @@ async function getAdminCalendarData() {
   // Extract legacy Admin Events property
   const adminEventsString =
     (await readAdminProperty('Admin Events')) ||
-    page.properties['Admin Events']?.formula?.string ||
-    page.properties['Admin Events']?.rich_text?.[0]?.text?.content ||
     '[]';
 
   try {
