@@ -3983,7 +3983,18 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  const propertyIds = CALENDAR_DATA_DB ? await getCalendarDataPropertyIdMap() : {};
+  // Admin feed reads its own page properties directly; it should not depend on
+  // the Calendar Data database schema being available.
+  const adminPage = await retryNotionCall(() =>
+    notionAux.pages.retrieve({ page_id: pageId })
+  );
+  const adminPageProperties = adminPage?.properties || {};
+  const propertyIds = {
+    AdminEvents: adminPageProperties['Admin Events']?.id || null,
+    AdminEvents1: adminPageProperties['Admin Events 1']?.id || null,
+    AdminEvents2: adminPageProperties['Admin Events 2']?.id || null
+  };
+
   const readAdminProperty = async (propertyName, propertyId = null) => {
     try {
       return await fetchPagePropertyString(pageId, propertyId || propertyName, 5, notionAux);
