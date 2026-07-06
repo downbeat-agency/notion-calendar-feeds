@@ -6427,11 +6427,24 @@ app.get('/subscribe/travel', async (req, res) => {
             transform: translateY(0);
         }
 
+        .calendar-button {
+            font-family: inherit;
+        }
+
         .calendar-button:disabled,
         .copy-btn:disabled {
             opacity: 0.58;
             cursor: wait;
             transform: none;
+        }
+
+        .calendar-button.is-preparing {
+            border-color: #2ecc71;
+        }
+
+        .button-text {
+            display: inline-block;
+            text-align: center;
         }
         
         .calendar-button.primary {
@@ -6697,7 +6710,7 @@ app.get('/subscribe/travel', async (req, res) => {
         <div class="calendar-card primary">
             <button type="button" class="calendar-button primary" data-subscribe-action="apple" onclick="prepareTravelSubscription('apple')">
                 <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
-                <span>Subscribe with Apple Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Apple Calendar">Subscribe with Apple Calendar</span>
                 <span class="badge">One Click</span>
             </button>
         </div>
@@ -6706,7 +6719,7 @@ app.get('/subscribe/travel', async (req, res) => {
         <div class="calendar-card">
             <button type="button" class="calendar-button" data-subscribe-action="google" onclick="prepareTravelSubscription('google')">
                 <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
-                <span>Subscribe with Google Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Google Calendar">Subscribe with Google Calendar</span>
             </button>
             
             <div class="steps">
@@ -6760,6 +6773,37 @@ app.get('/subscribe/travel', async (req, res) => {
         function setControlsDisabled(disabled) {
             document.querySelectorAll('[data-subscribe-action]').forEach((control) => {
                 control.disabled = disabled;
+            });
+        }
+
+        function setPreparingControl(action) {
+            document.querySelectorAll('.calendar-button').forEach((button) => {
+                const label = button.querySelector('[data-default-label]');
+                button.classList.remove('is-preparing');
+                if (label) {
+                    label.textContent = label.dataset.defaultLabel;
+                }
+            });
+
+            const activeControl = document.querySelector('[data-subscribe-action="' + action + '"]');
+            if (!activeControl || !activeControl.classList.contains('calendar-button')) {
+                return;
+            }
+
+            const activeLabel = activeControl.querySelector('[data-default-label]');
+            activeControl.classList.add('is-preparing');
+            if (activeLabel) {
+                activeLabel.textContent = 'Preparing travel calendar...';
+            }
+        }
+
+        function clearPreparingControl() {
+            document.querySelectorAll('.calendar-button').forEach((button) => {
+                const label = button.querySelector('[data-default-label]');
+                button.classList.remove('is-preparing');
+                if (label) {
+                    label.textContent = label.dataset.defaultLabel;
+                }
             });
         }
 
@@ -6829,6 +6873,7 @@ app.get('/subscribe/travel', async (req, res) => {
 
             isPreparingCalendar = true;
             setControlsDisabled(true);
+            setPreparingControl(action);
             setPreparationStatus('Preparing travel calendar...');
             startPreparationProgress();
 
@@ -6864,6 +6909,7 @@ app.get('/subscribe/travel', async (req, res) => {
                 setPreparationStatus(error?.message || 'The calendar server could not prepare this feed.', 'error');
             } finally {
                 isPreparingCalendar = false;
+                clearPreparingControl();
                 setControlsDisabled(false);
             }
         }
