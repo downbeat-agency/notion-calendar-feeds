@@ -3994,8 +3994,14 @@ async function getAdminCalendarData() {
     AdminEvents1: adminPageProperties['Admin Events 1']?.id || null,
     AdminEvents2: adminPageProperties['Admin Events 2']?.id || null
   };
+  const hasAdminProperty = (propertyName) =>
+    Object.prototype.hasOwnProperty.call(adminPageProperties, propertyName);
 
   const readAdminProperty = async (propertyName, propertyId = null) => {
+    if (!propertyId && !hasAdminProperty(propertyName)) {
+      return '';
+    }
+
     try {
       return await fetchPagePropertyString(pageId, propertyId || propertyName, 5, notionAux);
     } catch (error) {
