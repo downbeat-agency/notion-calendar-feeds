@@ -6119,6 +6119,103 @@ function buildSubscribePreparationScript({
 `;
 }
 
+function sendCalendarFeedError(res, format, statusCode, error, message) {
+  if (format === 'json') {
+    return res.status(statusCode).json({ error, message });
+  }
+
+  res.status(statusCode);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  return res.send(`${error}: ${message}`);
+}
+
+function buildSharedCalendarIcsData({ name, description, events, alarmsForEvent = () => [] }) {
+  const calendar = ical({
+    name,
+    description,
+    ttl: 300
+  });
+
+  events.forEach(event => {
+    const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+    const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+
+    calendar.createEvent({
+      start: startDate,
+      end: endDate,
+      summary: event.title,
+      description: event.description,
+      location: event.location,
+      url: event.url || '',
+      floating: true,
+      alarms: alarmsForEvent(event)
+    });
+  });
+
+  return serializeCalendar(calendar);
+}
+
+function sharedCalendarIcsHasEvents(icsData) {
+  return typeof icsData === 'string' && icsData.includes('BEGIN:VEVENT');
+}
+
+async function getSharedCalendarIcsFromCachedJson({
+  jsonCacheKey,
+  icsCacheKey,
+  name,
+  description,
+  alarmsForEvent
+}) {
+  if (!redis || !cacheEnabled) {
+    return null;
+  }
+
+  const cachedJson = await redis.get(jsonCacheKey);
+  if (!cachedJson) {
+    return null;
+  }
+
+  const parsed = JSON.parse(cachedJson);
+  const events = Array.isArray(parsed.events) ? parsed.events : [];
+  if (!events.length) {
+    return null;
+  }
+
+  const icsData = buildSharedCalendarIcsData({
+    name,
+    description,
+    events,
+    alarmsForEvent
+  });
+  await setCalendarCache(icsCacheKey, icsData);
+  return icsData;
+}
+
+async function sendSharedCalendarCachedJsonAsIcs(res, options) {
+  const icsData = await getSharedCalendarIcsFromCachedJson(options);
+  if (!icsData) {
+    return false;
+  }
+
+  res.setHeader('Content-Type', 'text/calendar');
+  res.setHeader('Content-Disposition', `attachment; filename="${options.filename}"`);
+  res.send(icsData);
+  return true;
+}
+
+async function hasUsableSharedCalendarCache(options) {
+  if (!redis || !cacheEnabled) {
+    return false;
+  }
+
+  const cachedIcs = await redis.get(options.icsCacheKey);
+  if (sharedCalendarIcsHasEvents(cachedIcs)) {
+    return true;
+  }
+
+  return Boolean(await getSharedCalendarIcsFromCachedJson(options));
+}
+
 // Calendar subscription endpoint with proper headers
 // Admin calendar subscription page
 app.get('/subscribe/admin', async (req, res) => {
@@ -7982,9 +8079,9 @@ app.get('/subscribe/:personId', async (req, res) => {
 // ============================================
 // ADMIN CALENDAR ENDPOINT
 // ============================================
-app.get('/admin/calendar', async (req, res) => {
+async function handleAdminCalendar(req, res, forcedFormat) {
   try {
-    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:admin:${format}`;
     
@@ -7999,9 +8096,12 @@ app.get('/admin/calendar', async (req, res) => {
             res.setHeader('Content-Type', 'application/json');
             return res.send(cachedData);
           } else {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
-            return res.send(cachedData);
+            if (sharedCalendarIcsHasEvents(cachedData)) {
+              res.setHeader('Content-Type', 'text/calendar');
+              res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
+              return res.send(cachedData);
+            }
+            console.warn('⚠️  Ignoring cached admin ICS with no events');
           }
         }
         logWithDedup(
@@ -8023,13 +8123,7 @@ app.get('/admin/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        // Return empty calendar for calendar apps
-        const emptyCalendar = ical({ 
-          name: 'Admin Calendar',
-          description: 'Admin calendar not configured'
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(emptyCalendar.toString());
+        return sendCalendarFeedError(res, format, 500, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8051,12 +8145,7 @@ app.get('/admin/calendar', async (req, res) => {
         if (format === 'json') {
           return res.status(404).json(noEventsMsg);
         } else {
-          const emptyCalendar = ical({ 
-            name: 'Admin Calendar',
-            description: 'No events found'
-          });
-          res.setHeader('Content-Type', 'text/calendar');
-          return res.send(emptyCalendar.toString());
+          return sendCalendarFeedError(res, format, 404, noEventsMsg.error, noEventsMsg.message);
         }
       }
     } catch (error) {
@@ -8077,9 +8166,26 @@ app.get('/admin/calendar', async (req, res) => {
               res.setHeader('Content-Type', 'application/json');
               return res.send(cachedData);
             }
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
-            return res.send(cachedData);
+            if (sharedCalendarIcsHasEvents(cachedData)) {
+              res.setHeader('Content-Type', 'text/calendar');
+              res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
+              return res.send(cachedData);
+            }
+            console.warn('⚠️  Ignoring cached admin ICS fallback with no events');
+          }
+
+          if (format !== 'json') {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+              jsonCacheKey: 'calendar:admin:json',
+              icsCacheKey: 'calendar:admin:ics',
+              name: 'Admin Calendar',
+              description: 'All upcoming events',
+              filename: 'admin-calendar.ics'
+            });
+            if (sentCachedJsonFallback) {
+              console.log('✅ Rebuilt admin ICS from cached JSON fallback');
+              return;
+            }
           }
         } catch (cacheError) {
           console.error('Error retrieving cached admin data:', cacheError);
@@ -8094,12 +8200,7 @@ app.get('/admin/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        const errorCalendar = ical({ 
-          name: 'Admin Calendar',
-          description: `Error: ${error.message}`
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(errorCalendar.toString());
+        return sendCalendarFeedError(res, format, 503, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8174,7 +8275,9 @@ app.get('/admin/calendar', async (req, res) => {
       message: error.message
     });
   }
-});
+}
+
+app.get('/admin/calendar', (req, res) => handleAdminCalendar(req, res));
 
 // Admin calendar regeneration endpoint (clears cache and regenerates)
 app.get('/admin/calendar/regen', async (req, res) => {
@@ -8186,18 +8289,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
       });
     }
 
-    console.log('🔄 Regenerating admin calendar (clearing cache)...');
-    
-    // Clear both ICS and JSON caches
-    if (redis && cacheEnabled) {
-      try {
-        await redis.del('calendar:admin:ics');
-        await redis.del('calendar:admin:json');
-        console.log('✅ Admin calendar cache cleared');
-      } catch (cacheError) {
-        console.error('Redis cache clear error:', cacheError);
-      }
-    }
+    console.log('🔄 Regenerating admin calendar...');
 
     // Fetch fresh data
     const adminEvents = await withTimeout(
@@ -8255,12 +8347,31 @@ app.get('/admin/calendar/regen', async (req, res) => {
       success: true,
       message: 'Admin calendar regenerated successfully',
       total_events: allCalendarEvents.length,
-      cache_cleared: true,
+      cache_replaced: redis && cacheEnabled,
       cached_for_seconds: CACHE_TTL
     });
 
   } catch (error) {
     console.error('Admin calendar regen error:', error);
+    try {
+      const hasCachedCalendar = await hasUsableSharedCalendarCache({
+        jsonCacheKey: 'calendar:admin:json',
+        icsCacheKey: 'calendar:admin:ics',
+        name: 'Admin Calendar',
+        description: 'All upcoming events'
+      });
+      if (hasCachedCalendar) {
+        return res.json({
+          success: true,
+          message: 'Admin calendar refresh timed out; using last successful cached calendar',
+          stale: true,
+          cache_replaced: false,
+          warning: error.message
+        });
+      }
+    } catch (cacheError) {
+      console.error('Admin calendar cached fallback error:', cacheError);
+    }
     res.status(500).json({ 
       error: 'Error regenerating admin calendar',
       message: error.message
@@ -8272,9 +8383,9 @@ app.get('/admin/calendar/regen', async (req, res) => {
 // TRAVEL CALENDAR ENDPOINTS
 // ============================================
 
-app.get('/travel/calendar', async (req, res) => {
+async function handleTravelCalendar(req, res, forcedFormat) {
   try {
-    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:travel:${format}`;
     
@@ -8289,9 +8400,12 @@ app.get('/travel/calendar', async (req, res) => {
             res.setHeader('Content-Type', 'application/json');
             return res.send(cachedData);
           } else {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
-            return res.send(cachedData);
+            if (sharedCalendarIcsHasEvents(cachedData)) {
+              res.setHeader('Content-Type', 'text/calendar');
+              res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
+              return res.send(cachedData);
+            }
+            console.warn('⚠️  Ignoring cached travel ICS with no events');
           }
         }
         logWithDedup(
@@ -8313,13 +8427,7 @@ app.get('/travel/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        // Return empty calendar for calendar apps
-        const emptyCalendar = ical({ 
-          name: 'Travel Calendar',
-          description: 'Travel calendar not configured'
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(emptyCalendar.toString());
+        return sendCalendarFeedError(res, format, 500, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8341,12 +8449,7 @@ app.get('/travel/calendar', async (req, res) => {
         if (format === 'json') {
           return res.status(404).json(noEventsMsg);
         } else {
-          const emptyCalendar = ical({ 
-            name: 'Travel Calendar',
-            description: 'No events found'
-          });
-          res.setHeader('Content-Type', 'text/calendar');
-          return res.send(emptyCalendar.toString());
+          return sendCalendarFeedError(res, format, 404, noEventsMsg.error, noEventsMsg.message);
         }
       }
     } catch (error) {
@@ -8369,9 +8472,26 @@ app.get('/travel/calendar', async (req, res) => {
               res.setHeader('Content-Type', 'application/json');
               return res.send(cachedData);
             } else {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
-              return res.send(cachedData);
+              if (sharedCalendarIcsHasEvents(cachedData)) {
+                res.setHeader('Content-Type', 'text/calendar');
+                res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
+                return res.send(cachedData);
+              }
+              console.warn('⚠️  Ignoring cached travel ICS fallback with no events');
+            }
+          }
+
+          if (format !== 'json') {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+              jsonCacheKey: 'calendar:travel:json',
+              icsCacheKey: 'calendar:travel:ics',
+              name: 'Travel Calendar',
+              description: 'All travel events',
+              filename: 'travel-calendar.ics'
+            });
+            if (sentCachedJsonFallback) {
+              console.log('✅ Rebuilt travel ICS from cached JSON fallback');
+              return;
             }
           }
         } catch (cacheError) {
@@ -8387,13 +8507,7 @@ app.get('/travel/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        // Always return a valid ICS file, even on error
-        const errorCalendar = ical({ 
-          name: 'Travel Calendar',
-          description: `Error: ${error.message}. Please try again later.`
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(errorCalendar.toString());
+        return sendCalendarFeedError(res, format, 503, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8468,7 +8582,9 @@ app.get('/travel/calendar', async (req, res) => {
       message: error.message
     });
   }
-});
+}
+
+app.get('/travel/calendar', (req, res) => handleTravelCalendar(req, res));
 
 // Travel calendar regeneration endpoint (clears cache and regenerates)
 app.get('/travel/calendar/regen', async (req, res) => {
@@ -8480,18 +8596,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
       });
     }
 
-    console.log('🔄 Regenerating travel calendar (clearing cache)...');
-    
-    // Clear both ICS and JSON caches
-    if (redis && cacheEnabled) {
-      try {
-        await redis.del('calendar:travel:ics');
-        await redis.del('calendar:travel:json');
-        console.log('✅ Travel calendar cache cleared');
-      } catch (cacheError) {
-        console.error('Redis cache clear error:', cacheError);
-      }
-    }
+    console.log('🔄 Regenerating travel calendar...');
 
     // Fetch fresh data
     const travelEvents = await withTimeout(
@@ -8549,12 +8654,31 @@ app.get('/travel/calendar/regen', async (req, res) => {
       success: true,
       message: 'Travel calendar regenerated successfully',
       total_events: allCalendarEvents.length,
-      cache_cleared: true,
+      cache_replaced: redis && cacheEnabled,
       cached_for_seconds: CACHE_TTL
     });
 
   } catch (error) {
     console.error('Travel calendar regen error:', error);
+    try {
+      const hasCachedCalendar = await hasUsableSharedCalendarCache({
+        jsonCacheKey: 'calendar:travel:json',
+        icsCacheKey: 'calendar:travel:ics',
+        name: 'Travel Calendar',
+        description: 'All travel events'
+      });
+      if (hasCachedCalendar) {
+        return res.json({
+          success: true,
+          message: 'Travel calendar refresh timed out; using last successful cached calendar',
+          stale: true,
+          cache_replaced: false,
+          warning: error.message
+        });
+      }
+    } catch (cacheError) {
+      console.error('Travel calendar cached fallback error:', cacheError);
+    }
     res.status(500).json({ 
       error: 'Error regenerating travel calendar',
       message: error.message
@@ -8566,9 +8690,9 @@ app.get('/travel/calendar/regen', async (req, res) => {
 // BLOCKOUT CALENDAR ENDPOINTS
 // ============================================
 
-app.get('/blockout/calendar', async (req, res) => {
+async function handleBlockoutCalendar(req, res, forcedFormat) {
   try {
-    const format = req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
+    const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = `calendar:blockout:${format}`;
     
@@ -8583,9 +8707,12 @@ app.get('/blockout/calendar', async (req, res) => {
             res.setHeader('Content-Type', 'application/json');
             return res.send(cachedData);
           } else {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
-            return res.send(cachedData);
+            if (sharedCalendarIcsHasEvents(cachedData)) {
+              res.setHeader('Content-Type', 'text/calendar');
+              res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
+              return res.send(cachedData);
+            }
+            console.warn('⚠️  Ignoring cached blockout ICS with no events');
           }
         }
         logWithDedup(
@@ -8607,13 +8734,7 @@ app.get('/blockout/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        // Return empty calendar for calendar apps
-        const emptyCalendar = ical({ 
-          name: 'Blockout Calendar',
-          description: 'Blockout calendar not configured'
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(emptyCalendar.toString());
+        return sendCalendarFeedError(res, format, 500, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8635,12 +8756,7 @@ app.get('/blockout/calendar', async (req, res) => {
         if (format === 'json') {
           return res.status(404).json(noEventsMsg);
         } else {
-          const emptyCalendar = ical({ 
-            name: 'Blockout Calendar',
-            description: 'No events found'
-          });
-          res.setHeader('Content-Type', 'text/calendar');
-          return res.send(emptyCalendar.toString());
+          return sendCalendarFeedError(res, format, 404, noEventsMsg.error, noEventsMsg.message);
         }
       }
     } catch (error) {
@@ -8663,9 +8779,27 @@ app.get('/blockout/calendar', async (req, res) => {
               res.setHeader('Content-Type', 'application/json');
               return res.send(cachedData);
             } else {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
-              return res.send(cachedData);
+              if (sharedCalendarIcsHasEvents(cachedData)) {
+                res.setHeader('Content-Type', 'text/calendar');
+                res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
+                return res.send(cachedData);
+              }
+              console.warn('⚠️  Ignoring cached blockout ICS fallback with no events');
+            }
+          }
+
+          if (format !== 'json') {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+              jsonCacheKey: 'calendar:blockout:json',
+              icsCacheKey: 'calendar:blockout:ics',
+              name: 'Blockout Calendar',
+              description: 'All blockout events',
+              filename: 'blockout-calendar.ics',
+              alarmsForEvent: (event) => getAlarmsForEvent(event.type, event.title)
+            });
+            if (sentCachedJsonFallback) {
+              console.log('✅ Rebuilt blockout ICS from cached JSON fallback');
+              return;
             }
           }
         } catch (cacheError) {
@@ -8681,13 +8815,7 @@ app.get('/blockout/calendar', async (req, res) => {
       if (format === 'json') {
         return res.status(500).json(errorMsg);
       } else {
-        // Always return a valid ICS file, even on error
-        const errorCalendar = ical({ 
-          name: 'Blockout Calendar',
-          description: `Error: ${error.message}. Please try again later.`
-        });
-        res.setHeader('Content-Type', 'text/calendar');
-        return res.send(errorCalendar.toString());
+        return sendCalendarFeedError(res, format, 503, errorMsg.error, errorMsg.message);
       }
     }
     
@@ -8762,7 +8890,9 @@ app.get('/blockout/calendar', async (req, res) => {
       message: error.message
     });
   }
-});
+}
+
+app.get('/blockout/calendar', (req, res) => handleBlockoutCalendar(req, res));
 
 // Blockout calendar regeneration endpoint (clears cache and regenerates)
 app.get('/blockout/calendar/regen', async (req, res) => {
@@ -8774,18 +8904,7 @@ app.get('/blockout/calendar/regen', async (req, res) => {
       });
     }
 
-    console.log('🔄 Regenerating blockout calendar (clearing cache)...');
-    
-    // Clear both ICS and JSON caches
-    if (redis && cacheEnabled) {
-      try {
-        await redis.del('calendar:blockout:ics');
-        await redis.del('calendar:blockout:json');
-        console.log('✅ Blockout calendar cache cleared');
-      } catch (cacheError) {
-        console.error('Redis cache clear error:', cacheError);
-      }
-    }
+    console.log('🔄 Regenerating blockout calendar...');
 
     // Fetch fresh data
     const blockoutEvents = await withTimeout(
@@ -8842,10 +8961,31 @@ app.get('/blockout/calendar/regen', async (req, res) => {
       success: true,
       message: 'Blockout calendar regenerated successfully',
       total_events: allCalendarEvents.length,
-      cached: redis && cacheEnabled
+      cache_replaced: redis && cacheEnabled,
+      cached_for_seconds: CACHE_TTL
     });
   } catch (error) {
     console.error('Error regenerating blockout calendar:', error);
+    try {
+      const hasCachedCalendar = await hasUsableSharedCalendarCache({
+        jsonCacheKey: 'calendar:blockout:json',
+        icsCacheKey: 'calendar:blockout:ics',
+        name: 'Blockout Calendar',
+        description: 'All blockout events',
+        alarmsForEvent: (event) => getAlarmsForEvent(event.type, event.title)
+      });
+      if (hasCachedCalendar) {
+        return res.json({
+          success: true,
+          message: 'Blockout calendar refresh timed out; using last successful cached calendar',
+          stale: true,
+          cache_replaced: false,
+          warning: error.message
+        });
+      }
+    } catch (cacheError) {
+      console.error('Blockout calendar cached fallback error:', cacheError);
+    }
     res.status(500).json({ 
       error: 'Error regenerating blockout calendar',
       message: error.message
@@ -8855,29 +8995,29 @@ app.get('/blockout/calendar/regen', async (req, res) => {
 
 // Admin calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/admin.ics', async (req, res) => {
-  return res.redirect(301, '/admin/calendar?format=ics');
+  return handleAdminCalendar(req, res, 'ics');
 });
 
 app.get('/calendar/admin', async (req, res) => {
-  return res.redirect(301, '/admin/calendar?format=ics');
+  return handleAdminCalendar(req, res, 'ics');
 });
 
 // Travel calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/travel.ics', async (req, res) => {
-  return res.redirect(301, '/travel/calendar?format=ics');
+  return handleTravelCalendar(req, res, 'ics');
 });
 
 app.get('/calendar/travel', async (req, res) => {
-  return res.redirect(301, '/travel/calendar?format=ics');
+  return handleTravelCalendar(req, res, 'ics');
 });
 
 // Blockout calendar compatibility routes (must come before /:personId routes)
 app.get('/calendar/blockout.ics', async (req, res) => {
-  return res.redirect(301, '/blockout/calendar?format=ics');
+  return handleBlockoutCalendar(req, res, 'ics');
 });
 
 app.get('/calendar/blockout', async (req, res) => {
-  return res.redirect(301, '/blockout/calendar?format=ics');
+  return handleBlockoutCalendar(req, res, 'ics');
 });
 
 app.get('/calendar/google/:personId.ics', async (req, res) => {
