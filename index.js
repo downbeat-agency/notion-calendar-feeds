@@ -6290,6 +6290,9 @@ app.get('/subscribe/travel', async (req, res) => {
   }
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/travel`;
+    const webcalUrl = `webcal://${req.get('host')}/calendar/travel`;
+    const regenerationUrl = '/travel/calendar/regen';
+    const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -6423,6 +6426,13 @@ app.get('/subscribe/travel', async (req, res) => {
         .calendar-button:active {
             transform: translateY(0);
         }
+
+        .calendar-button:disabled,
+        .copy-btn:disabled {
+            opacity: 0.58;
+            cursor: wait;
+            transform: none;
+        }
         
         .calendar-button.primary {
             background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
@@ -6451,6 +6461,42 @@ app.get('/subscribe/travel', async (req, res) => {
             border-radius: 12px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+        }
+
+        .preparation-status {
+            min-height: 24px;
+            margin: -24px 0 24px 0;
+            color: #888;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        .preparation-status.success {
+            color: #2ecc71;
+        }
+
+        .preparation-status.error {
+            color: #ff6b6b;
+        }
+
+        .preparation-progress {
+            height: 4px;
+            background: #1f1f1f;
+            border-radius: 999px;
+            overflow: hidden;
+            margin: -12px 0 24px 0;
+        }
+
+        .preparation-progress[hidden] {
+            display: none;
+        }
+
+        .preparation-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #2ecc71;
+            border-radius: inherit;
+            transition: width 0.35s ease;
         }
         
         .steps {
@@ -6641,19 +6687,24 @@ app.get('/subscribe/travel', async (req, res) => {
             <div class="separator"></div>
             <div class="description">View all travel events across all personnel in your calendar app. Includes flight details, hotel information, travel dates, and more. Subscribe once and stay organized across all your devices.</div>
         </div>
+
+        <div class="preparation-status" id="preparationStatus" aria-live="polite"></div>
+        <div class="preparation-progress" id="preparationProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <div class="preparation-progress-fill" id="preparationProgressFill"></div>
+        </div>
         
         <!-- Apple Calendar - Primary -->
         <div class="calendar-card primary">
-            <a href="webcal://${req.get('host')}/calendar/travel" class="calendar-button primary">
+            <button type="button" class="calendar-button primary" data-subscribe-action="apple" onclick="prepareTravelSubscription('apple')">
                 <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
                 <span>Subscribe with Apple Calendar</span>
                 <span class="badge">One Click</span>
-            </a>
+            </button>
         </div>
         
         <!-- Google Calendar - Secondary -->
         <div class="calendar-card">
-            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+            <button type="button" class="calendar-button" data-subscribe-action="google" onclick="prepareTravelSubscription('google')">
                 <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
                 <span>Subscribe with Google Calendar</span>
             </button>
@@ -6683,8 +6734,8 @@ app.get('/subscribe/travel', async (req, res) => {
                 <div class="collapsible-content" id="collapsibleContent">
                     <div class="collapsible-inner">
                         <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
-                        <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
-                        <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                        <div class="url-box" onclick="prepareTravelSubscription('copy')">${subscriptionUrl}</div>
+                        <button type="button" class="copy-btn" data-subscribe-action="copy" onclick="prepareTravelSubscription('copy')">Copy URL</button>
                         <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
                             <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
                             <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
@@ -6698,25 +6749,128 @@ app.get('/subscribe/travel', async (req, res) => {
     <div class="toast" id="toast">✓ URL copied to clipboard!</div>
     
     <script>
-        function copyAndOpenGoogle() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-                setTimeout(() => {
-                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
-                }, 300);
+        const subscriptionUrl = '${subscriptionUrl}';
+        const webcalUrl = '${webcalUrl}';
+        const regenerationUrl = '${regenerationUrl}';
+        const googleCalendarSettingsUrl = '${googleCalendarSettingsUrl}';
+        let isPreparingCalendar = false;
+        let preparationProgressTimer = null;
+        let preparationProgressValue = 0;
+
+        function setControlsDisabled(disabled) {
+            document.querySelectorAll('[data-subscribe-action]').forEach((control) => {
+                control.disabled = disabled;
             });
         }
-        
-        function copyUrl() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-            });
+
+        function setPreparationStatus(message, state = '') {
+            const status = document.getElementById('preparationStatus');
+            status.textContent = message || '';
+            status.className = 'preparation-status' + (state ? ' ' + state : '');
+        }
+
+        function setPreparationProgress(value) {
+            preparationProgressValue = Math.max(0, Math.min(100, value));
+            const progress = document.getElementById('preparationProgress');
+            const fill = document.getElementById('preparationProgressFill');
+            progress.hidden = false;
+            progress.setAttribute('aria-valuenow', Math.round(preparationProgressValue).toString());
+            fill.style.width = preparationProgressValue + '%';
+        }
+
+        function startPreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            setPreparationProgress(8);
+            preparationProgressTimer = setInterval(() => {
+                const remaining = 90 - preparationProgressValue;
+                const step = Math.max(1, remaining * 0.08);
+                setPreparationProgress(Math.min(90, preparationProgressValue + step));
+            }, 500);
+        }
+
+        function completePreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            preparationProgressTimer = null;
+            setPreparationProgress(100);
+        }
+
+        function resetPreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            preparationProgressTimer = null;
+            preparationProgressValue = 0;
+            const progress = document.getElementById('preparationProgress');
+            const fill = document.getElementById('preparationProgressFill');
+            progress.hidden = true;
+            progress.setAttribute('aria-valuenow', '0');
+            fill.style.width = '0%';
+        }
+
+        async function copySubscriptionUrl() {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(subscriptionUrl);
+                return;
+            }
+
+            const textarea = document.createElement('textarea');
+            textarea.value = subscriptionUrl;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
         }
         
-        function showToast() {
+        async function prepareTravelSubscription(action) {
+            if (isPreparingCalendar) {
+                return;
+            }
+
+            isPreparingCalendar = true;
+            setControlsDisabled(true);
+            setPreparationStatus('Preparing travel calendar...');
+            startPreparationProgress();
+
+            try {
+                const response = await fetch(regenerationUrl, {
+                    method: 'GET',
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                });
+                const body = await response.json().catch(() => ({}));
+
+                if (!response.ok || body.success === false) {
+                    throw new Error(body.message || body.error || 'The calendar server could not prepare this feed.');
+                }
+
+                completePreparationProgress();
+                setPreparationStatus('Travel calendar ready.', 'success');
+
+                if (action === 'apple') {
+                    window.location.href = webcalUrl;
+                    return;
+                }
+
+                await copySubscriptionUrl();
+                showToast('✓ URL copied to clipboard!');
+
+                if (action === 'google') {
+                    window.location.href = googleCalendarSettingsUrl;
+                    return;
+                }
+            } catch (error) {
+                resetPreparationProgress();
+                setPreparationStatus(error?.message || 'The calendar server could not prepare this feed.', 'error');
+            } finally {
+                isPreparingCalendar = false;
+                setControlsDisabled(false);
+            }
+        }
+        
+        function showToast(message = '✓ URL copied to clipboard!') {
             const toast = document.getElementById('toast');
+            toast.textContent = message;
             toast.classList.add('show');
             setTimeout(() => {
                 toast.classList.remove('show');
