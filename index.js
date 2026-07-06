@@ -5876,6 +5876,249 @@ app.get('/debug/simple-test/:personId', async (req, res) => {
   }
 });
 
+function getSubscribePreparationStyles() {
+  return `
+        .calendar-button {
+            font-family: inherit;
+        }
+
+        .calendar-button:disabled,
+        .copy-btn:disabled {
+            opacity: 0.58;
+            cursor: wait;
+            transform: none;
+        }
+
+        .calendar-button.is-preparing {
+            border-color: #2ecc71;
+        }
+
+        .button-text {
+            display: inline-block;
+            text-align: center;
+        }
+
+        .preparation-status {
+            min-height: 24px;
+            margin: -24px 0 24px 0;
+            color: #888;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        .preparation-status.success {
+            color: #2ecc71;
+        }
+
+        .preparation-status.error {
+            color: #ff6b6b;
+        }
+
+        .preparation-progress {
+            height: 4px;
+            background: #1f1f1f;
+            border-radius: 999px;
+            overflow: hidden;
+            margin: -12px 0 24px 0;
+        }
+
+        .preparation-progress[hidden] {
+            display: none;
+        }
+
+        .preparation-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #2ecc71;
+            border-radius: inherit;
+            transition: width 0.35s ease;
+        }
+`;
+}
+
+function buildSubscribePreparationScript({
+  functionName,
+  calendarLabel,
+  subscriptionUrl,
+  webcalUrl,
+  regenerationUrl,
+  googleSubscriptionUrl,
+  googleCalendarSettingsUrl
+}) {
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(functionName)) {
+    throw new Error(`Invalid subscription preparation function name: ${functionName}`);
+  }
+
+  const lowercaseLabel = calendarLabel.toLowerCase();
+  const readyLabel = `${calendarLabel.charAt(0).toUpperCase()}${calendarLabel.slice(1)} calendar ready.`;
+  const preparingLabel = `Preparing ${lowercaseLabel} calendar...`;
+  const googleUrl = googleSubscriptionUrl || subscriptionUrl;
+
+  return `
+        const subscriptionUrl = ${JSON.stringify(subscriptionUrl)};
+        const webcalUrl = ${JSON.stringify(webcalUrl)};
+        const regenerationUrl = ${JSON.stringify(regenerationUrl)};
+        const googleSubscriptionUrl = ${JSON.stringify(googleUrl)};
+        const googleCalendarSettingsUrl = ${JSON.stringify(googleCalendarSettingsUrl)};
+        let isPreparingCalendar = false;
+        let preparationProgressTimer = null;
+        let preparationProgressValue = 0;
+
+        function setControlsDisabled(disabled) {
+            document.querySelectorAll('[data-subscribe-action]').forEach((control) => {
+                control.disabled = disabled;
+            });
+        }
+
+        function setPreparingControl(action) {
+            document.querySelectorAll('.calendar-button').forEach((button) => {
+                const label = button.querySelector('[data-default-label]');
+                button.classList.remove('is-preparing');
+                if (label) {
+                    label.textContent = label.dataset.defaultLabel;
+                }
+            });
+
+            const activeControl = document.querySelector('[data-subscribe-action="' + action + '"]');
+            if (!activeControl || !activeControl.classList.contains('calendar-button')) {
+                return;
+            }
+
+            const activeLabel = activeControl.querySelector('[data-default-label]');
+            activeControl.classList.add('is-preparing');
+            if (activeLabel) {
+                activeLabel.textContent = ${JSON.stringify(preparingLabel)};
+            }
+        }
+
+        function clearPreparingControl() {
+            document.querySelectorAll('.calendar-button').forEach((button) => {
+                const label = button.querySelector('[data-default-label]');
+                button.classList.remove('is-preparing');
+                if (label) {
+                    label.textContent = label.dataset.defaultLabel;
+                }
+            });
+        }
+
+        function setPreparationStatus(message, state = '') {
+            const status = document.getElementById('preparationStatus');
+            status.textContent = message || '';
+            status.className = 'preparation-status' + (state ? ' ' + state : '');
+        }
+
+        function setPreparationProgress(value) {
+            preparationProgressValue = Math.max(0, Math.min(100, value));
+            const progress = document.getElementById('preparationProgress');
+            const fill = document.getElementById('preparationProgressFill');
+            progress.hidden = false;
+            progress.setAttribute('aria-valuenow', Math.round(preparationProgressValue).toString());
+            fill.style.width = preparationProgressValue + '%';
+        }
+
+        function startPreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            setPreparationProgress(8);
+            preparationProgressTimer = setInterval(() => {
+                const remaining = 90 - preparationProgressValue;
+                const step = Math.max(1, remaining * 0.08);
+                setPreparationProgress(Math.min(90, preparationProgressValue + step));
+            }, 500);
+        }
+
+        function completePreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            preparationProgressTimer = null;
+            setPreparationProgress(100);
+        }
+
+        function resetPreparationProgress() {
+            clearInterval(preparationProgressTimer);
+            preparationProgressTimer = null;
+            preparationProgressValue = 0;
+            const progress = document.getElementById('preparationProgress');
+            const fill = document.getElementById('preparationProgressFill');
+            progress.hidden = true;
+            progress.setAttribute('aria-valuenow', '0');
+            fill.style.width = '0%';
+        }
+
+        async function copySubscriptionUrl(url = subscriptionUrl) {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+                return;
+            }
+
+            const textarea = document.createElement('textarea');
+            textarea.value = url;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+
+        async function ${functionName}(action) {
+            if (isPreparingCalendar) {
+                return;
+            }
+
+            isPreparingCalendar = true;
+            setControlsDisabled(true);
+            setPreparingControl(action);
+            setPreparationStatus(${JSON.stringify(preparingLabel)});
+            startPreparationProgress();
+
+            try {
+                const response = await fetch(regenerationUrl, {
+                    method: 'GET',
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                });
+                const body = await response.json().catch(() => ({}));
+
+                if (!response.ok || body.success === false) {
+                    throw new Error(body.message || body.error || 'The calendar server could not prepare this feed.');
+                }
+
+                completePreparationProgress();
+                setPreparationStatus(${JSON.stringify(readyLabel)}, 'success');
+
+                if (action === 'apple') {
+                    window.location.href = webcalUrl;
+                    return;
+                }
+
+                await copySubscriptionUrl(action === 'google' ? googleSubscriptionUrl : subscriptionUrl);
+                showToast('✓ URL copied to clipboard!');
+
+                if (action === 'google') {
+                    window.location.href = googleCalendarSettingsUrl;
+                    return;
+                }
+            } catch (error) {
+                resetPreparationProgress();
+                setPreparationStatus(error?.message || 'The calendar server could not prepare this feed.', 'error');
+            } finally {
+                isPreparingCalendar = false;
+                clearPreparingControl();
+                setControlsDisabled(false);
+            }
+        }
+
+        function showToast(message = '✓ URL copied to clipboard!') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+`;
+}
+
 // Calendar subscription endpoint with proper headers
 // Admin calendar subscription page
 app.get('/subscribe/admin', async (req, res) => {
@@ -5886,6 +6129,9 @@ app.get('/subscribe/admin', async (req, res) => {
   }
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/admin`;
+    const webcalUrl = `webcal://${req.get('host')}/calendar/admin`;
+    const regenerationUrl = '/admin/calendar/regen';
+    const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -6048,6 +6294,8 @@ app.get('/subscribe/admin', async (req, res) => {
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
+        ${getSubscribePreparationStyles()}
         
         .steps {
             margin-top: 24px;
@@ -6182,21 +6430,26 @@ app.get('/subscribe/admin', async (req, res) => {
             <div class="separator"></div>
             <div class="description">View all upcoming events across all personnel in your calendar app. Includes event details, venues, personnel, general info, and more. Subscribe once and stay organized across all your devices.</div>
         </div>
+
+        <div class="preparation-status" id="preparationStatus" aria-live="polite"></div>
+        <div class="preparation-progress" id="preparationProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <div class="preparation-progress-fill" id="preparationProgressFill"></div>
+        </div>
         
         <!-- Apple Calendar - Primary -->
         <div class="calendar-card primary">
-            <a href="webcal://${req.get('host')}/calendar/admin" class="calendar-button primary">
+            <button type="button" class="calendar-button primary" data-subscribe-action="apple" onclick="prepareAdminSubscription('apple')">
                 <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
-                <span>Subscribe with Apple Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Apple Calendar">Subscribe with Apple Calendar</span>
                 <span class="badge">One Click</span>
-            </a>
+            </button>
         </div>
         
         <!-- Google Calendar - Secondary -->
         <div class="calendar-card">
-            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+            <button type="button" class="calendar-button" data-subscribe-action="google" onclick="prepareAdminSubscription('google')">
                 <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
-                <span>Subscribe with Google Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Google Calendar">Subscribe with Google Calendar</span>
             </button>
             
             <div class="steps">
@@ -6224,8 +6477,8 @@ app.get('/subscribe/admin', async (req, res) => {
                 <div class="collapsible-content" id="collapsibleContent">
                     <div class="collapsible-inner">
                         <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
-                        <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
-                        <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                        <div class="url-box" onclick="prepareAdminSubscription('copy')">${subscriptionUrl}</div>
+                        <button type="button" class="copy-btn" data-subscribe-action="copy" onclick="prepareAdminSubscription('copy')">Copy URL</button>
                         <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
                             <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
                             <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
@@ -6239,30 +6492,14 @@ app.get('/subscribe/admin', async (req, res) => {
     <div class="toast" id="toast">✓ URL copied to clipboard!</div>
     
     <script>
-        function copyAndOpenGoogle() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-                setTimeout(() => {
-                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
-                }, 300);
-            });
-        }
-        
-        function copyUrl() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-            });
-        }
-        
-        function showToast() {
-            const toast = document.getElementById('toast');
-            toast.classList.add('show');
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 2000);
-        }
+        ${buildSubscribePreparationScript({
+          functionName: 'prepareAdminSubscription',
+          calendarLabel: 'admin',
+          subscriptionUrl,
+          webcalUrl,
+          regenerationUrl,
+          googleCalendarSettingsUrl
+        })}
         
         function toggleCollapsible() {
             const header = event.currentTarget;
@@ -6950,6 +7187,9 @@ app.get('/subscribe/blockout', async (req, res) => {
   }
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/blockout`;
+    const webcalUrl = `webcal://${req.get('host')}/calendar/blockout`;
+    const regenerationUrl = '/blockout/calendar/regen';
+    const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -7085,6 +7325,8 @@ app.get('/subscribe/blockout', async (req, res) => {
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
+        ${getSubscribePreparationStyles()}
         
         .steps {
             margin-top: 24px;
@@ -7192,21 +7434,26 @@ app.get('/subscribe/blockout', async (req, res) => {
             <div class="separator"></div>
             <div class="description">View all blockout events in your calendar app. Subscribe once and stay organized across all your devices.</div>
         </div>
+
+        <div class="preparation-status" id="preparationStatus" aria-live="polite"></div>
+        <div class="preparation-progress" id="preparationProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <div class="preparation-progress-fill" id="preparationProgressFill"></div>
+        </div>
         
         <!-- Apple Calendar - Primary -->
         <div class="calendar-card primary">
-            <a href="webcal://${req.get('host')}/calendar/blockout" class="calendar-button primary">
+            <button type="button" class="calendar-button primary" data-subscribe-action="apple" onclick="prepareBlockoutSubscription('apple')">
                 <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
-                <span>Subscribe with Apple Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Apple Calendar">Subscribe with Apple Calendar</span>
                 <span class="badge">One Click</span>
-            </a>
+            </button>
         </div>
         
         <!-- Google Calendar - Secondary -->
         <div class="calendar-card">
-            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+            <button type="button" class="calendar-button" data-subscribe-action="google" onclick="prepareBlockoutSubscription('google')">
                 <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
-                <span>Subscribe with Google Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Google Calendar">Subscribe with Google Calendar</span>
             </button>
             
             <div class="steps">
@@ -7233,8 +7480,8 @@ app.get('/subscribe/blockout', async (req, res) => {
             <div class="collapsible-content" id="collapsibleContent" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
                 <div style="padding: 24px; background: #0a0a0a; border: 1px solid #2a2a2a; border-top: none; border-radius: 0 0 8px 8px; margin-top: -8px;">
                     <p style="margin: 0 0 16px 0; color: #999; font-size: 0.9rem;">Copy this URL and add it to your calendar app:</p>
-                    <div class="url-box" onclick="copyUrl()">${subscriptionUrl}</div>
-                    <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                    <div class="url-box" onclick="prepareBlockoutSubscription('copy')">${subscriptionUrl}</div>
+                    <button type="button" class="copy-btn" data-subscribe-action="copy" onclick="prepareBlockoutSubscription('copy')">Copy URL</button>
                     <p style="margin: 16px 0 0 0; color: #666; font-size: 0.85rem; line-height: 1.6;">
                         <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br>
                         <strong>Other apps:</strong> Look for "Subscribe to calendar" or "Add calendar from URL" option
@@ -7247,30 +7494,14 @@ app.get('/subscribe/blockout', async (req, res) => {
     <div class="toast" id="toast">✓ URL copied to clipboard!</div>
     
     <script>
-        function copyAndOpenGoogle() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-                setTimeout(() => {
-                    window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
-                }, 300);
-            });
-        }
-        
-        function copyUrl() {
-            const url = '${subscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-            });
-        }
-        
-        function showToast() {
-            const toast = document.getElementById('toast');
-            toast.classList.add('show');
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 2000);
-        }
+        ${buildSubscribePreparationScript({
+          functionName: 'prepareBlockoutSubscription',
+          calendarLabel: 'blockout',
+          subscriptionUrl,
+          webcalUrl,
+          regenerationUrl,
+          googleCalendarSettingsUrl
+        })}
         
         function toggleCollapsible() {
             const content = document.getElementById('collapsibleContent');
@@ -7306,6 +7537,9 @@ app.get('/subscribe/:personId', async (req, res) => {
     
     const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
     const googleSubscriptionUrl = `https://${req.get('host')}/calendar/google/${personId}.ics`;
+    const webcalUrl = `webcal://${req.get('host')}/calendar/${personId}`;
+    const regenerationUrl = `/regenerate/${encodeURIComponent(personId)}`;
+    const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/u/0/r/settings/addcalendar';
     
     // Check if this is a calendar app request
     const userAgent = req.headers['user-agent'] || '';
@@ -7463,6 +7697,8 @@ app.get('/subscribe/:personId', async (req, res) => {
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
+        ${getSubscribePreparationStyles()}
         
         .steps {
             margin-top: 24px;
@@ -7653,21 +7889,26 @@ app.get('/subscribe/:personId', async (req, res) => {
             <div class="separator"></div>
             <div class="description"><strong>Introducing Downbeat Calendar</strong> - your personalized event calendar with everything you need: call times, venue details, MD contacts, payroll info, flights, hotels, and more. Subscribe once and stay organized across all your devices.</div>
         </div>
+
+        <div class="preparation-status" id="preparationStatus" aria-live="polite"></div>
+        <div class="preparation-progress" id="preparationProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <div class="preparation-progress-fill" id="preparationProgressFill"></div>
+        </div>
         
         <!-- Apple Calendar - Primary -->
         <div class="calendar-card primary">
-            <a href="webcal://${req.get('host')}/calendar/${personId}" class="calendar-button primary">
+            <button type="button" class="calendar-button primary" data-subscribe-action="apple" onclick="preparePersonalSubscription('apple')">
                 <img src="/Apple%20Logo.png" alt="Apple" onerror="this.style.display='none'">
-                <span>Subscribe with Apple Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Apple Calendar">Subscribe with Apple Calendar</span>
                 <span class="badge">One Click</span>
-            </a>
+            </button>
         </div>
         
         <!-- Google Calendar - Secondary -->
         <div class="calendar-card">
-            <button class="calendar-button" onclick="copyAndOpenGoogle()">
+            <button type="button" class="calendar-button" data-subscribe-action="google" onclick="preparePersonalSubscription('google')">
                 <img src="/Google%20Logo.png" alt="Google" onerror="this.style.display='none'">
-                <span>Subscribe with Google Calendar</span>
+                <span class="button-text" data-default-label="Subscribe with Google Calendar">Subscribe with Google Calendar</span>
             </button>
             
             <div class="steps">
@@ -7696,8 +7937,8 @@ app.get('/subscribe/:personId', async (req, res) => {
                     <p style="margin: 0 0 16px 0; color: #888; font-size: 0.9rem;">
                         Copy this URL and add it to your calendar app:
                     </p>
-                    <div class="url-box" id="urlBox">${subscriptionUrl}</div>
-                    <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
+                    <div class="url-box" id="urlBox" onclick="preparePersonalSubscription('copy')">${subscriptionUrl}</div>
+                    <button type="button" class="copy-btn" data-subscribe-action="copy" onclick="preparePersonalSubscription('copy')">Copy URL</button>
                     <div class="divider">• • •</div>
                     <div class="step-text" style="margin-top: 16px;">
                         <strong>Outlook:</strong> Calendar → Add calendar → Subscribe from web → Paste URL<br><br>
@@ -7711,31 +7952,15 @@ app.get('/subscribe/:personId', async (req, res) => {
     <div class="toast" id="toast">✓ URL copied to clipboard!</div>
     
     <script>
-        function showToast() {
-            const toast = document.getElementById('toast');
-            toast.classList.add('show');
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 2500);
-        }
-        
-        function copyUrl() {
-            const urlBox = document.getElementById('urlBox');
-            navigator.clipboard.writeText(urlBox.textContent).then(() => {
-                showToast();
-            });
-        }
-        
-        function copyAndOpenGoogle() {
-            const url = '${googleSubscriptionUrl}';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast();
-                // Small delay so user sees the toast before opening new tab
-                setTimeout(() => {
-                    window.open('https://calendar.google.com/calendar/u/0/r/settings/addcalendar', '_blank', 'noopener,noreferrer');
-                }, 300);
-            });
-        }
+        ${buildSubscribePreparationScript({
+          functionName: 'preparePersonalSubscription',
+          calendarLabel: 'personal',
+          subscriptionUrl,
+          webcalUrl,
+          regenerationUrl,
+          googleSubscriptionUrl,
+          googleCalendarSettingsUrl
+        })}
         
         function toggleCollapsible() {
             const header = document.querySelector('.collapsible-header');
