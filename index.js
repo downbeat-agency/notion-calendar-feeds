@@ -71,6 +71,7 @@ const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
 const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
+const TRAVEL_ADMIN_PROPERTY_ID = process.env.TRAVEL_ADMIN_PROPERTY_ID || '%3B%3CuW';
 
 // Cache TTL in seconds (30 minutes by default)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
@@ -4293,15 +4294,32 @@ async function getTravelCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Fetch the page and extract Travel Admin property (uses NOTION_API_KEY2)
-  const page = await retryNotionCall(() => 
-    notionAux.pages.retrieve({ page_id: pageId })
-  );
+  let travelEventsString = '';
+  try {
+    travelEventsString = await fetchPagePropertyString(pageId, TRAVEL_ADMIN_PROPERTY_ID, 5, notionAux);
+  } catch (error) {
+    console.warn(`⚠️  Travel Admin direct property read failed, falling back to page payload: ${error.message}`);
+  }
 
-  // Extract Travel Admin property
-  let travelEventsString = page.properties['Travel Admin']?.formula?.string || 
-                          page.properties['Travel Admin']?.rich_text?.[0]?.text?.content ||
-                          '[]';
+  if (!travelEventsString) {
+    // Fallback for schema changes: discover the Travel Admin property from the page payload.
+    const page = await retryNotionCall(() =>
+      notionAux.pages.retrieve({ page_id: pageId })
+    );
+    const travelAdminProperty = page.properties['Travel Admin'];
+    if (travelAdminProperty?.id && travelAdminProperty.id !== TRAVEL_ADMIN_PROPERTY_ID) {
+      try {
+        travelEventsString = await fetchPagePropertyString(pageId, travelAdminProperty.id, 5, notionAux);
+      } catch (error) {
+        console.warn(`⚠️  Travel Admin discovered property read failed, using page payload: ${error.message}`);
+      }
+    }
+
+    travelEventsString = travelEventsString ||
+                         travelAdminProperty?.formula?.string ||
+                         travelAdminProperty?.rich_text?.[0]?.text?.content ||
+                         '[]';
+  }
 
   // Clean the string - remove any leading/trailing whitespace
   travelEventsString = travelEventsString.trim();
