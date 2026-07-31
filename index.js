@@ -3995,7 +3995,7 @@ async function getAdminCalendarData() {
     ? await getCalendarDataPropertyIdMap()
     : {};
   const propertyIds = {
-    AdminEvents: ADMIN_EVENTS_PROPERTY_ID || calendarDataPropertyIds.AdminEvents || 'dWRFUw',
+    AdminEvents: ADMIN_EVENTS_PROPERTY_ID || calendarDataPropertyIds.AdminEvents || 'udES',
     AdminEvents1: ADMIN_EVENTS_1_PROPERTY_ID || calendarDataPropertyIds.AdminEvents1 || null,
     AdminEvents2: ADMIN_EVENTS_2_PROPERTY_ID || calendarDataPropertyIds.AdminEvents2 || null
   };
