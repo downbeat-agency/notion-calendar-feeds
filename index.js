@@ -3995,29 +3995,27 @@ async function getAdminCalendarData() {
     ? await getCalendarDataPropertyIdMap()
     : {};
   const propertyIds = {
-    AdminEvents: ADMIN_EVENTS_PROPERTY_ID || calendarDataPropertyIds.AdminEvents || 'udES',
-    AdminEvents1: ADMIN_EVENTS_1_PROPERTY_ID || calendarDataPropertyIds.AdminEvents1 || null,
-    AdminEvents2: ADMIN_EVENTS_2_PROPERTY_ID || calendarDataPropertyIds.AdminEvents2 || null
+    AdminEvents: calendarDataPropertyIds.AdminEvents || ADMIN_EVENTS_PROPERTY_ID || 'udES',
+    AdminEvents1: calendarDataPropertyIds.AdminEvents1 || ADMIN_EVENTS_1_PROPERTY_ID || null,
+    AdminEvents2: calendarDataPropertyIds.AdminEvents2 || ADMIN_EVENTS_2_PROPERTY_ID || null
   };
 
-  const readAdminProperty = async (propertyName, propertyId = null) => {
-    if (!propertyId) {
-      return '';
-    }
-
-    try {
-      return await fetchPagePropertyString(pageId, propertyId, 5, notionAux);
-    } catch (error) {
-      const status = error?.status || error?.code;
-      if (
-        status === 404 ||
-        error?.body?.includes?.('Could not find property') ||
-        error?.message?.includes?.('is not a property that exists')
-      ) {
-        return '';
-      }
-      throw error;
-    }
+  const hasAdminShards = Boolean(propertyIds.AdminEvents1 || propertyIds.AdminEvents2);
+  const selectedPropertyIds = hasAdminShards
+    ? [propertyIds.AdminEvents1, propertyIds.AdminEvents2].filter(Boolean)
+    : [propertyIds.AdminEvents];
+  const adminPage = await retryNotionCall(
+    () => notionAux.pages.retrieve({
+      page_id: pageId,
+      filter_properties: selectedPropertyIds
+    }),
+    5
+  );
+  const adminPageProperties = adminPage?.properties || {};
+  const readFilteredAdminProperty = (propertyName, propertyId) => {
+    const property = adminPageProperties[propertyName] ||
+      Object.values(adminPageProperties).find(item => item?.id === propertyId);
+    return extractPropertyStringFromItem(property);
   };
 
   const parseAdminEventsString = (raw, propertyName) => {
@@ -4029,12 +4027,9 @@ async function getAdminCalendarData() {
     }
   };
 
-  const [adminEvents1String, adminEvents2String] = await Promise.all([
-    readAdminProperty('Admin Events 1', propertyIds.AdminEvents1),
-    readAdminProperty('Admin Events 2', propertyIds.AdminEvents2)
-  ]);
-
-  if (adminEvents1String || adminEvents2String) {
+  if (hasAdminShards) {
+    const adminEvents1String = readFilteredAdminProperty('Admin Events 1', propertyIds.AdminEvents1);
+    const adminEvents2String = readFilteredAdminProperty('Admin Events 2', propertyIds.AdminEvents2);
     return [
       ...parseAdminEventsString(adminEvents1String, 'Admin Events 1'),
       ...parseAdminEventsString(adminEvents2String, 'Admin Events 2')
@@ -4042,9 +4037,7 @@ async function getAdminCalendarData() {
   }
 
   // Extract legacy Admin Events property
-  const adminEventsString =
-    (await readAdminProperty('Admin Events', propertyIds.AdminEvents)) ||
-    '[]';
+  const adminEventsString = readFilteredAdminProperty('Admin Events', propertyIds.AdminEvents) || '[]';
 
   try {
     return parseNotionFormulaJsonArray(adminEventsString);
