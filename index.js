@@ -4015,7 +4015,22 @@ async function getAdminCalendarData() {
   const readFilteredAdminProperty = (propertyName, propertyId) => {
     const property = adminPageProperties[propertyName] ||
       Object.values(adminPageProperties).find(item => item?.id === propertyId);
-    return extractPropertyStringFromItem(property);
+    return {
+      property,
+      raw: extractPropertyStringFromItem(property)
+    };
+  };
+  const attachReadDiagnostics = (events, diagnostics) => {
+    Object.defineProperty(events, 'readDiagnostics', {
+      value: {
+        build: (process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 8) || null,
+        returnedPropertyNames: Object.keys(adminPageProperties),
+        ...diagnostics,
+        eventCount: events.length
+      },
+      enumerable: false
+    });
+    return events;
   };
 
   const parseAdminEventsString = (raw, propertyName) => {
@@ -4028,19 +4043,35 @@ async function getAdminCalendarData() {
   };
 
   if (hasAdminShards) {
-    const adminEvents1String = readFilteredAdminProperty('Admin Events 1', propertyIds.AdminEvents1);
-    const adminEvents2String = readFilteredAdminProperty('Admin Events 2', propertyIds.AdminEvents2);
-    return [
-      ...parseAdminEventsString(adminEvents1String, 'Admin Events 1'),
-      ...parseAdminEventsString(adminEvents2String, 'Admin Events 2')
+    const adminEvents1 = readFilteredAdminProperty('Admin Events 1', propertyIds.AdminEvents1);
+    const adminEvents2 = readFilteredAdminProperty('Admin Events 2', propertyIds.AdminEvents2);
+    const events = [
+      ...parseAdminEventsString(adminEvents1.raw, 'Admin Events 1'),
+      ...parseAdminEventsString(adminEvents2.raw, 'Admin Events 2')
     ];
+    return attachReadDiagnostics(events, {
+      source: 'shards',
+      selectedPropertyCount: selectedPropertyIds.length,
+      propertyTypes: [adminEvents1.property?.type || null, adminEvents2.property?.type || null],
+      formulaTypes: [adminEvents1.property?.formula?.type || null, adminEvents2.property?.formula?.type || null],
+      rawLengths: [adminEvents1.raw.length, adminEvents2.raw.length]
+    });
   }
 
   // Extract legacy Admin Events property
-  const adminEventsString = readFilteredAdminProperty('Admin Events', propertyIds.AdminEvents) || '[]';
+  const adminEvents = readFilteredAdminProperty('Admin Events', propertyIds.AdminEvents);
+  const adminEventsString = adminEvents.raw || '[]';
 
   try {
-    return parseNotionFormulaJsonArray(adminEventsString);
+    const events = parseNotionFormulaJsonArray(adminEventsString);
+    return attachReadDiagnostics(events, {
+      source: 'legacy',
+      selectedPropertyCount: selectedPropertyIds.length,
+      propertyType: adminEvents.property?.type || null,
+      formulaType: adminEvents.property?.formula?.type || null,
+      rawLength: adminEvents.raw.length,
+      firstNonWhitespaceCharacter: adminEvents.raw.trimStart().charAt(0) || null
+    });
   } catch (e) {
     console.error('Error parsing Admin Events JSON:', adminEventsString?.substring(0, 100));
     throw new Error(`Admin Events JSON parse error: ${e.message}`);
@@ -8132,7 +8163,10 @@ async function handleAdminCalendar(req, res, forcedFormat) {
       if (!adminEvents || adminEvents.length === 0) {
         const noEventsMsg = {
           error: 'No events found',
-          message: 'Admin Events property is empty or contains no events'
+          message: 'Admin Events property is empty or contains no events',
+          ...(req.query.debug === 'true' && adminEvents?.readDiagnostics
+            ? { diagnostics: adminEvents.readDiagnostics }
+            : {})
         };
         
         if (format === 'json') {
