@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   escapeJsonStringControlCharacters,
+  fillMissingJsonValues,
   parseNotionFormulaJsonArray
 } from './admin-json.js';
 
@@ -22,6 +23,24 @@ test('preserves valid escaped JSON and structural whitespace', () => {
     general_info: 'Already escaped\tvalue',
     enabled: true
   }]);
+});
+
+test('fills structurally missing formula values without changing string content', () => {
+  const raw = `[{
+    "rehearsal": {
+      "rehearsal_location":,
+      "rehearsal_address": },
+    "general_info": "Keep the literal :, text"
+  }]`;
+
+  assert.deepEqual(parseNotionFormulaJsonArray(raw), [{
+    rehearsal: {
+      rehearsal_location: null,
+      rehearsal_address: null
+    },
+    general_info: 'Keep the literal :, text'
+  }]);
+  assert.equal(fillMissingJsonValues('{"text":"literal :, value"}'), '{"text":"literal :, value"}');
 });
 
 test('returns an empty array for empty input or non-array JSON', () => {

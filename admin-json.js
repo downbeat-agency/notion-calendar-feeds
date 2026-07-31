@@ -47,7 +47,61 @@ export function escapeJsonStringControlCharacters(raw) {
   return result;
 }
 
+export function fillMissingJsonValues(raw) {
+  const source = typeof raw === 'string' ? raw : '';
+  let result = '';
+  let insideString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (insideString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        insideString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      insideString = true;
+      result += character;
+      continue;
+    }
+
+    result += character;
+    if (character !== ':') {
+      continue;
+    }
+
+    let valueIndex = index + 1;
+    while (
+      valueIndex < source.length &&
+      [' ', '\t', '\n', '\r'].includes(source[valueIndex])
+    ) {
+      result += source[valueIndex];
+      valueIndex += 1;
+    }
+
+    if (
+      valueIndex < source.length &&
+      [',', '}', ']'].includes(source[valueIndex])
+    ) {
+      result += 'null';
+    }
+    index = valueIndex - 1;
+  }
+
+  return result;
+}
+
 export function parseNotionFormulaJsonArray(raw) {
-  const parsed = JSON.parse(escapeJsonStringControlCharacters(raw || '[]'));
+  const escaped = escapeJsonStringControlCharacters(raw || '[]');
+  const parsed = JSON.parse(fillMissingJsonValues(escaped));
   return Array.isArray(parsed) ? parsed : [];
 }
