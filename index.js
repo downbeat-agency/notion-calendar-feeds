@@ -72,6 +72,9 @@ const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
 const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
+const ADMIN_EVENTS_PROPERTY_ID = process.env.ADMIN_EVENTS_PROPERTY_ID || null;
+const ADMIN_EVENTS_1_PROPERTY_ID = process.env.ADMIN_EVENTS_1_PROPERTY_ID || null;
+const ADMIN_EVENTS_2_PROPERTY_ID = process.env.ADMIN_EVENTS_2_PROPERTY_ID || null;
 const TRAVEL_ADMIN_PROPERTY_ID = process.env.TRAVEL_ADMIN_PROPERTY_ID || '%3B%3CuW';
 
 // Cache TTL in seconds (30 minutes by default)
@@ -3985,27 +3988,25 @@ async function getAdminCalendarData() {
     pageId = pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
   }
 
-  // Admin feed reads its own page properties directly; it should not depend on
-  // the Calendar Data database schema being available.
-  const adminPage = await retryNotionCall(() =>
-    notionAux.pages.retrieve({ page_id: pageId })
-  );
-  const adminPageProperties = adminPage?.properties || {};
+  // Reading the whole Admin Calendar page evaluates every large formula on it.
+  // Resolve property IDs from the lightweight database schema instead, then
+  // fetch only the admin formula properties that actually exist.
+  const calendarDataPropertyIds = CALENDAR_DATA_DB
+    ? await getCalendarDataPropertyIdMap()
+    : {};
   const propertyIds = {
-    AdminEvents: adminPageProperties['Admin Events']?.id || null,
-    AdminEvents1: adminPageProperties['Admin Events 1']?.id || null,
-    AdminEvents2: adminPageProperties['Admin Events 2']?.id || null
+    AdminEvents: ADMIN_EVENTS_PROPERTY_ID || calendarDataPropertyIds.AdminEvents || 'dWRFUw',
+    AdminEvents1: ADMIN_EVENTS_1_PROPERTY_ID || calendarDataPropertyIds.AdminEvents1 || null,
+    AdminEvents2: ADMIN_EVENTS_2_PROPERTY_ID || calendarDataPropertyIds.AdminEvents2 || null
   };
-  const hasAdminProperty = (propertyName) =>
-    Object.prototype.hasOwnProperty.call(adminPageProperties, propertyName);
 
   const readAdminProperty = async (propertyName, propertyId = null) => {
-    if (!propertyId && !hasAdminProperty(propertyName)) {
+    if (!propertyId) {
       return '';
     }
 
     try {
-      return await fetchPagePropertyString(pageId, propertyId || propertyName, 5, notionAux);
+      return await fetchPagePropertyString(pageId, propertyId, 5, notionAux);
     } catch (error) {
       const status = error?.status || error?.code;
       if (
