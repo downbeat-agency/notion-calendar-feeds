@@ -4,6 +4,7 @@ import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 import { createClient } from 'redis';
 import path from 'path';
+import { parseNotionFormulaJsonArray } from './admin-json.js';
 
 // Server refresh - October 1, 2025
 // Updated with event_personnel field support - October 8, 2025
@@ -4020,8 +4021,7 @@ async function getAdminCalendarData() {
 
   const parseAdminEventsString = (raw, propertyName) => {
     try {
-      const parsed = JSON.parse(raw || '[]');
-      return Array.isArray(parsed) ? parsed : [];
+      return parseNotionFormulaJsonArray(raw);
     } catch (e) {
       console.error(`Error parsing ${propertyName} JSON:`, raw?.substring?.(0, 100));
       throw new Error(`${propertyName} JSON parse error: ${e.message}`);
@@ -4046,8 +4046,7 @@ async function getAdminCalendarData() {
     '[]';
 
   try {
-    const adminEvents = JSON.parse(adminEventsString);
-    return Array.isArray(adminEvents) ? adminEvents : [];
+    return parseNotionFormulaJsonArray(adminEventsString);
   } catch (e) {
     console.error('Error parsing Admin Events JSON:', adminEventsString?.substring(0, 100));
     throw new Error(`Admin Events JSON parse error: ${e.message}`);
