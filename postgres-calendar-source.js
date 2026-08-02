@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 const VALID_SOURCES = new Set(['notion', 'shadow', 'postgres']);
 const DEFAULT_TIMEOUT_MS = 25_000;
+const MAX_WEAK_PAIR_DISTANCE_MS = 72 * 60 * 60 * 1000;
 
 function clean(value, limit = 2_000) {
   return String(value ?? '').trim().slice(0, limit);
@@ -168,6 +169,15 @@ function canonicalUrlIdentity(value) {
   }
 }
 
+function embeddedNotionUrlIdentity(value) {
+  const candidates = clean(value).match(/https?:\/\/[^\s<>]+/giu) || [];
+  for (const candidate of candidates) {
+    const identity = canonicalNotionUrlIdentity(candidate);
+    if (identity) return identity;
+  }
+  return '';
+}
+
 function normalizeEmbeddedNotionUrls(value) {
   return clean(value).replace(/https?:\/\/[^\s<>]+/giu, (candidate) => {
     const notionIdentity = canonicalNotionUrlIdentity(candidate);
@@ -205,7 +215,15 @@ function eventStartDistance(left, right) {
   return Math.abs(leftMs - rightMs);
 }
 
-function pairByKey(notionEntries, postgresEntries, keyFn, method, pairs, pairsByMethod) {
+function pairByKey(
+  notionEntries,
+  postgresEntries,
+  keyFn,
+  method,
+  pairs,
+  pairsByMethod,
+  maxDistanceMs = Number.POSITIVE_INFINITY
+) {
   const notionGroups = groupUnmatched(notionEntries, keyFn);
   const postgresGroups = groupUnmatched(postgresEntries, keyFn);
   for (const [key, notionGroup] of notionGroups) {
@@ -215,7 +233,8 @@ function pairByKey(notionEntries, postgresEntries, keyFn, method, pairs, pairsBy
       .localeCompare(comparableField(right.event, 'start')));
     for (const notionEntry of notionGroup) {
       const match = postgresGroup
-        .filter((postgresEntry) => !postgresEntry.matched)
+        .filter((postgresEntry) => !postgresEntry.matched
+          && eventStartDistance(notionEntry.event, postgresEntry.event) <= maxDistanceMs)
         .sort((left, right) => eventStartDistance(notionEntry.event, left.event)
           - eventStartDistance(notionEntry.event, right.event))[0];
       if (!match) break;
@@ -233,7 +252,8 @@ function pairByContainedIdentity(
   identityFn,
   method,
   pairs,
-  pairsByMethod
+  pairsByMethod,
+  maxDistanceMs = Number.POSITIVE_INFINITY
 ) {
   for (const notionEntry of notionEntries) {
     if (notionEntry.matched) continue;
@@ -241,7 +261,11 @@ function pairByContainedIdentity(
     const notionIdentity = identityFn(notionEntry.event);
     if (notionIdentity.length < 8) continue;
     const matches = postgresEntries.filter((postgresEntry) => {
-      if (postgresEntry.matched || comparableField(postgresEntry.event, 'type') !== notionType) return false;
+      if (
+        postgresEntry.matched
+        || comparableField(postgresEntry.event, 'type') !== notionType
+        || eventStartDistance(notionEntry.event, postgresEntry.event) > maxDistanceMs
+      ) return false;
       const postgresIdentity = identityFn(postgresEntry.event);
       return postgresIdentity.length >= 8
         && (notionIdentity.includes(postgresIdentity) || postgresIdentity.includes(notionIdentity));
@@ -267,10 +291,50 @@ export function pairCalendarEvents(notionEvents, postgresEvents) {
   };
 
   pairByKey(notionEntries, postgresEntries, typed((event) => canonicalUrlIdentity(event.url)), 'url', pairs, pairsByMethod);
-  pairByKey(notionEntries, postgresEntries, typed((event) => normalizedIdentity(event.mainEvent)), 'mainEvent', pairs, pairsByMethod);
-  pairByKey(notionEntries, postgresEntries, typed(baseTitle), 'title', pairs, pairsByMethod);
-  pairByContainedIdentity(notionEntries, postgresEntries, (event) => normalizedIdentity(event.mainEvent), 'containedMainEvent', pairs, pairsByMethod);
-  pairByContainedIdentity(notionEntries, postgresEntries, baseTitle, 'containedTitle', pairs, pairsByMethod);
+  pairByKey(
+    notionEntries,
+    postgresEntries,
+    typed((event) => embeddedNotionUrlIdentity(event.description)),
+    'descriptionUrl',
+    pairs,
+    pairsByMethod
+  );
+  pairByKey(
+    notionEntries,
+    postgresEntries,
+    typed((event) => normalizedIdentity(event.mainEvent)),
+    'mainEvent',
+    pairs,
+    pairsByMethod,
+    MAX_WEAK_PAIR_DISTANCE_MS
+  );
+  pairByKey(
+    notionEntries,
+    postgresEntries,
+    typed(baseTitle),
+    'title',
+    pairs,
+    pairsByMethod,
+    MAX_WEAK_PAIR_DISTANCE_MS
+  );
+  pairByContainedIdentity(
+    notionEntries,
+    postgresEntries,
+    (event) => normalizedIdentity(event.mainEvent),
+    'containedMainEvent',
+    pairs,
+    pairsByMethod,
+    MAX_WEAK_PAIR_DISTANCE_MS
+  );
+  pairByContainedIdentity(
+    notionEntries,
+    postgresEntries,
+    baseTitle,
+    'containedTitle',
+    pairs,
+    pairsByMethod,
+    MAX_WEAK_PAIR_DISTANCE_MS
+  );
   pairByKey(notionEntries, postgresEntries, typed((event) => comparableField(event, 'start')), 'start', pairs, pairsByMethod);
 
   return {

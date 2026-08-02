@@ -191,3 +191,45 @@ test('shadow comparison pairs repeated titles to the nearest occurrence time', (
   assert.equal(comparison.fieldMismatchCounts.start, 0);
   assert.equal(comparison.unpairedPostgresByType.rehearsal, 1);
 });
+
+test('shadow comparison does not pair weak repeated labels across distant dates', () => {
+  const notion = [{
+    type: 'main_event',
+    title: 'Same City Wedding',
+    mainEvent: 'Same City Wedding',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T12:00:00Z',
+  }];
+  const postgres = [{
+    type: 'main_event',
+    title: 'Same City Wedding',
+    mainEvent: 'Same City Wedding',
+    start: '2026-08-08T10:00:00Z',
+    end: '2026-08-08T12:00:00Z',
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 0);
+  assert.equal(comparison.unpairedNotionByType.main_event, 1);
+  assert.equal(comparison.unpairedPostgresByType.main_event, 1);
+});
+
+test('shadow comparison uses embedded Notion links as strong occurrence identities', () => {
+  const pageId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const notion = [{
+    type: 'main_event',
+    title: 'Legacy title',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T12:00:00Z',
+    description: `Notion Link: https://www.notion.so/${pageId}`,
+  }];
+  const postgres = [{
+    type: 'main_event',
+    title: 'Postgres title',
+    start: '2026-08-08T10:00:00Z',
+    end: '2026-08-08T12:00:00Z',
+    description: `Notion Link: https://notion.so/workspace-${pageId.replaceAll('-', '')}`,
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.pairsByMethod.descriptionUrl, 1);
+});
