@@ -75,3 +75,26 @@ test('shadow comparison separates missing occurrences from field-level drift', (
   assert.equal(comparison.fieldMismatchCounts.description, 1);
   assert.doesNotMatch(JSON.stringify(comparison), /Legacy description|Postgres description/u);
 });
+
+test('shadow comparison pairs the same main event despite presentation differences', () => {
+  const notion = [{
+    type: 'main_event',
+    title: 'Legacy title (Legacy band label)',
+    mainEvent: 'Private Event — Legacy helper',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  }];
+  const postgres = [{
+    type: 'main_event',
+    title: 'Postgres title (Current band label)',
+    mainEvent: 'Private Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.pairsByMethod.containedMainEvent, 1);
+  assert.equal(comparison.fieldMismatchCounts.title, 1);
+  assert.equal(comparison.unpairedNotionCount, 0);
+  assert.equal(comparison.unpairedPostgresCount, 0);
+});

@@ -126,25 +126,100 @@ function comparableField(event, field) {
   return field === 'start' || field === 'end' ? iso(event?.[field]) : clean(event?.[field]);
 }
 
-function pairingKey(event = {}) {
-  const type = comparableField(event, 'type');
-  const start = comparableField(event, 'start');
-  const url = comparableField(event, 'url');
-  const title = comparableField(event, 'title').toLowerCase();
-  return createHash('sha256')
-    .update(JSON.stringify({ type, start, identity: url || title }))
-    .digest('hex')
-    .slice(0, 20);
+function normalizedIdentity(value) {
+  return clean(value)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
 }
 
-function groupedByPairingKey(events = []) {
+function baseTitle(event = {}) {
+  return normalizedIdentity(clean(event.title).replace(/\s*\([^)]*\)\s*$/u, ''));
+}
+
+function groupUnmatched(entries, keyFn) {
   const groups = new Map();
-  for (const event of events) {
-    const key = pairingKey(event);
+  for (const entry of entries) {
+    if (entry.matched) continue;
+    const key = keyFn(entry.event);
+    if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(event);
+    groups.get(key).push(entry);
   }
   return groups;
+}
+
+function pairByKey(notionEntries, postgresEntries, keyFn, method, pairs, pairsByMethod) {
+  const notionGroups = groupUnmatched(notionEntries, keyFn);
+  const postgresGroups = groupUnmatched(postgresEntries, keyFn);
+  for (const [key, notionGroup] of notionGroups) {
+    const postgresGroup = postgresGroups.get(key);
+    if (!postgresGroup) continue;
+    const byStart = (left, right) => comparableField(left.event, 'start')
+      .localeCompare(comparableField(right.event, 'start'));
+    notionGroup.sort(byStart);
+    postgresGroup.sort(byStart);
+    const pairCount = Math.min(notionGroup.length, postgresGroup.length);
+    for (let index = 0; index < pairCount; index += 1) {
+      notionGroup[index].matched = true;
+      postgresGroup[index].matched = true;
+      pairs.push([notionGroup[index].event, postgresGroup[index].event]);
+      pairsByMethod[method] = (pairsByMethod[method] || 0) + 1;
+    }
+  }
+}
+
+function pairByContainedIdentity(
+  notionEntries,
+  postgresEntries,
+  identityFn,
+  method,
+  pairs,
+  pairsByMethod
+) {
+  for (const notionEntry of notionEntries) {
+    if (notionEntry.matched) continue;
+    const notionType = comparableField(notionEntry.event, 'type');
+    const notionIdentity = identityFn(notionEntry.event);
+    if (notionIdentity.length < 8) continue;
+    const match = postgresEntries.find((postgresEntry) => {
+      if (postgresEntry.matched || comparableField(postgresEntry.event, 'type') !== notionType) return false;
+      const postgresIdentity = identityFn(postgresEntry.event);
+      return postgresIdentity.length >= 8
+        && (notionIdentity.includes(postgresIdentity) || postgresIdentity.includes(notionIdentity));
+    });
+    if (!match) continue;
+    notionEntry.matched = true;
+    match.matched = true;
+    pairs.push([notionEntry.event, match.event]);
+    pairsByMethod[method] = (pairsByMethod[method] || 0) + 1;
+  }
+}
+
+function pairCalendarEvents(notionEvents, postgresEvents) {
+  const notionEntries = notionEvents.map((event) => ({ event, matched: false }));
+  const postgresEntries = postgresEvents.map((event) => ({ event, matched: false }));
+  const pairs = [];
+  const pairsByMethod = {};
+  const typed = (valueFn) => (event) => {
+    const value = valueFn(event);
+    return value ? `${comparableField(event, 'type')}|${value}` : '';
+  };
+
+  pairByKey(notionEntries, postgresEntries, typed((event) => normalizedIdentity(event.url)), 'url', pairs, pairsByMethod);
+  pairByKey(notionEntries, postgresEntries, typed((event) => normalizedIdentity(event.mainEvent)), 'mainEvent', pairs, pairsByMethod);
+  pairByKey(notionEntries, postgresEntries, typed(baseTitle), 'title', pairs, pairsByMethod);
+  pairByContainedIdentity(notionEntries, postgresEntries, (event) => normalizedIdentity(event.mainEvent), 'containedMainEvent', pairs, pairsByMethod);
+  pairByContainedIdentity(notionEntries, postgresEntries, baseTitle, 'containedTitle', pairs, pairsByMethod);
+  pairByKey(notionEntries, postgresEntries, typed((event) => comparableField(event, 'start')), 'start', pairs, pairsByMethod);
+
+  return {
+    pairs,
+    pairsByMethod,
+    unpairedNotionCount: notionEntries.filter((entry) => !entry.matched).length,
+    unpairedPostgresCount: postgresEntries.filter((entry) => !entry.matched).length,
+  };
 }
 
 export function compareCalendarEventSets(notionEvents = [], postgresEvents = []) {
@@ -154,24 +229,12 @@ export function compareCalendarEventSets(notionEvents = [], postgresEvents = [])
     .filter((fingerprint) => !postgresFingerprints.has(fingerprint));
   const extraInPostgres = [...postgresFingerprints]
     .filter((fingerprint) => !notionFingerprints.has(fingerprint));
-  const notionGroups = groupedByPairingKey(notionEvents);
-  const postgresGroups = groupedByPairingKey(postgresEvents);
+  const paired = pairCalendarEvents(notionEvents, postgresEvents);
   const fieldMismatchCounts = Object.fromEntries(COMPARED_EVENT_FIELDS.map((field) => [field, 0]));
-  let pairedCount = 0;
-  let unpairedNotionCount = 0;
-  let unpairedPostgresCount = 0;
-  for (const key of new Set([...notionGroups.keys(), ...postgresGroups.keys()])) {
-    const notionGroup = notionGroups.get(key) || [];
-    const postgresGroup = postgresGroups.get(key) || [];
-    const pairCount = Math.min(notionGroup.length, postgresGroup.length);
-    pairedCount += pairCount;
-    unpairedNotionCount += notionGroup.length - pairCount;
-    unpairedPostgresCount += postgresGroup.length - pairCount;
-    for (let index = 0; index < pairCount; index += 1) {
-      for (const field of COMPARED_EVENT_FIELDS) {
-        if (comparableField(notionGroup[index], field) !== comparableField(postgresGroup[index], field)) {
-          fieldMismatchCounts[field] += 1;
-        }
+  for (const [notionEvent, postgresEvent] of paired.pairs) {
+    for (const field of COMPARED_EVENT_FIELDS) {
+      if (comparableField(notionEvent, field) !== comparableField(postgresEvent, field)) {
+        fieldMismatchCounts[field] += 1;
       }
     }
   }
@@ -183,9 +246,10 @@ export function compareCalendarEventSets(notionEvents = [], postgresEvents = [])
     postgresByType: eventTypeCounts(postgresEvents),
     missingFromPostgresCount: missingFromPostgres.length,
     extraInPostgresCount: extraInPostgres.length,
-    pairedCount,
-    unpairedNotionCount,
-    unpairedPostgresCount,
+    pairedCount: paired.pairs.length,
+    pairsByMethod: paired.pairsByMethod,
+    unpairedNotionCount: paired.unpairedNotionCount,
+    unpairedPostgresCount: paired.unpairedPostgresCount,
     fieldMismatchCounts,
     // Hashes are safe diagnostics: no calendar titles, locations, names, or notes are logged.
     missingFingerprintSample: missingFromPostgres.slice(0, 10),
