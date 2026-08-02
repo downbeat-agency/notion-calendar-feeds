@@ -1519,7 +1519,8 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     concurrency = 1,
     waitContext = null,
     source = 'redis_index',
-    pageCount = 0
+    pageCount = 0,
+    onResult = null,
   } = options;
 
   const normalizedEntries = normalizeCalendarDataIndexEntries(entries);
@@ -1534,7 +1535,7 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     const splitsOk = eventsResult.success && nonEventsResult.success;
     const composed = splitsOk ? await composeSplitCacheForPerson(entry.personId) : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
-    return {
+    const rowResult = {
       success,
       personId: entry.personId,
       personName: eventsResult.personName || nonEventsResult.personName,
@@ -1545,6 +1546,8 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
         ? getSplitRegenError(eventsResult, nonEventsResult)
         : (!success ? 'Split compose did not produce full cache' : null)
     };
+    if (typeof onResult === 'function') await onResult(rowResult);
+    return rowResult;
   });
 
   console.log(
@@ -1655,7 +1658,8 @@ async function processCalendarDataRowsPaginated(options = {}) {
     concurrency = 1,
     maxRetries = 5,
     pageSize = CALENDAR_DATA_SWEEP_PAGE_SIZE,
-    waitContext = null
+    waitContext = null,
+    onResult = null,
   } = options;
 
   if (!CALENDAR_DATA_DB) {
@@ -1672,7 +1676,8 @@ async function processCalendarDataRowsPaginated(options = {}) {
         concurrency,
         waitContext,
         source: 'redis_index',
-        pageCount: Number(cachedIndex?.pageCount) || 0
+        pageCount: Number(cachedIndex?.pageCount) || 0,
+        onResult,
       });
     }
 
@@ -1688,7 +1693,8 @@ async function processCalendarDataRowsPaginated(options = {}) {
           concurrency,
           waitContext,
           source: builtIndex.source,
-          pageCount: Number(builtIndex?.pageCount) || 0
+          pageCount: Number(builtIndex?.pageCount) || 0,
+          onResult,
         });
       }
     } catch (indexError) {
@@ -1730,7 +1736,9 @@ async function processCalendarDataRowsPaginated(options = {}) {
       if (waitContext) {
         await waitForManualRegensToDrain(waitContext);
       }
-      return regenerateFromCalendarDataPage(calendarDataPage, { trigger, maxRetries });
+      const rowResult = await regenerateFromCalendarDataPage(calendarDataPage, { trigger, maxRetries });
+      if (typeof onResult === 'function') await onResult(rowResult);
+      return rowResult;
     });
     results.push(...batchResults);
 
@@ -3945,53 +3953,40 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
   }
 }
 
-async function compareCalendarShadowSweepResults(results = []) {
-  const comparable = [...new Map(
-    (Array.isArray(results) ? results : [])
-      .filter((result) => result?.success && result?.personId)
-      .map((result) => [result.personId, result])
-  ).values()];
-  shadowAuditState = {
-    ...shadowAuditState,
-    phase: 'personal_comparison',
-    totalPersonalComparisons: comparable.length,
-    completedPersonalComparisons: 0,
-  };
-  await mapWithConcurrency(
-    comparable,
-    Math.max(1, DEFAULT_REGEN_CONCURRENCY),
-    async (result) => {
-      try {
-        const raw = redis && cacheEnabled
-          ? await redis.get(buildCalendarCacheKey(result.personId, 'json'))
-          : null;
-        if (!raw) {
-          await recordCalendarShadowResult(
-            'personal',
-            result.personId,
-            null,
-            'SHADOW_BASELINE_CACHE_MISSING'
-          );
-          return;
-        }
-        const payload = JSON.parse(raw);
-        await comparePersonalCalendarShadow(result.personId, payload.events || []);
-      } catch (error) {
-        await recordCalendarShadowResult(
-          'personal',
-          result.personId,
-          null,
-          error.code || 'SHADOW_BASELINE_READ_FAILED'
-        );
-      } finally {
-        shadowAuditState = {
-          ...shadowAuditState,
-          completedPersonalComparisons:
-            Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
-        };
-      }
+async function compareCalendarShadowSweepResult(result) {
+  if (!result?.personId) return;
+  if (!result.success) {
+    await recordCalendarShadowResult(
+      'personal',
+      result.personId,
+      null,
+      'NOTION_BASELINE_REGEN_FAILED'
+    );
+    return;
+  }
+  try {
+    const raw = redis && cacheEnabled
+      ? await redis.get(buildCalendarCacheKey(result.personId, 'json'))
+      : null;
+    if (!raw) {
+      await recordCalendarShadowResult(
+        'personal',
+        result.personId,
+        null,
+        'SHADOW_BASELINE_CACHE_MISSING'
+      );
+      return;
     }
-  );
+    const payload = JSON.parse(raw);
+    await comparePersonalCalendarShadow(result.personId, payload.events || []);
+  } catch (error) {
+    await recordCalendarShadowResult(
+      'personal',
+      result.personId,
+      null,
+      error.code || 'SHADOW_BASELINE_READ_FAILED'
+    );
+  }
 }
 
 async function regenerateCalendarForPerson(personId, options = {}) {
@@ -4013,7 +4008,11 @@ async function regenerateCalendarForPerson(personId, options = {}) {
 }
 
 // Helper function to regenerate all calendars using batched parallel processing
-async function regenerateAllCalendars() {
+async function regenerateAllCalendars(options = {}) {
+  const {
+    trigger = 'bulk_regen',
+    onResult = null,
+  } = options;
   const startTime = Date.now();
   
   try {
@@ -4023,7 +4022,7 @@ async function regenerateAllCalendars() {
       const concurrency = Math.max(1, DEFAULT_REGEN_CONCURRENCY);
       const results = await mapWithConcurrency(people, concurrency, (person) =>
         regenerateCalendarForPerson(person.notionPageId || person.personnelId, {
-          trigger: 'bulk_regen_postgres'
+          trigger: trigger === 'bulk_regen' ? 'bulk_regen_postgres' : trigger,
         })
       );
       const totalSuccess = results.filter(result => result.success).length;
@@ -4049,9 +4048,10 @@ async function regenerateAllCalendars() {
     console.log(`Processing Calendar Data with worker concurrency=${concurrency} and pageSize=${CALENDAR_DATA_SWEEP_PAGE_SIZE}`);
 
     const { results: allResults, totalRows, pageCount } = await processCalendarDataRowsPaginated({
-      trigger: 'bulk_regen',
+      trigger,
       concurrency,
-      maxRetries: 5
+      maxRetries: 5,
+      onResult,
     });
 
     const totalSuccess = allResults.filter(r => r.success).length;
@@ -6309,17 +6309,41 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     return res.status(202).json({ success: true, alreadyRunning: true });
   }
   const startedAt = new Date().toISOString();
+  let expectedPersonalComparisons = 0;
+  try {
+    const cachedAuditIndex = await getCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY);
+    expectedPersonalComparisons = normalizeCalendarDataIndexEntries(
+      cachedAuditIndex?.entries
+    ).length;
+  } catch (error) {
+    console.warn('[calendar-shadow] audit index read failed:', error.code || 'REDIS_ERROR');
+  }
   shadowAuditState = {
     status: 'running',
-    phase: 'notion_regeneration',
+    phase: 'notion_regeneration_and_personal_comparison',
     startedAt,
     completedAt: null,
     errorCode: null,
+    totalPersonalComparisons: expectedPersonalComparisons,
+    completedPersonalComparisons: 0,
   };
   res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
   activeShadowAudit = (async () => {
-    const personalSweep = await regenerateAllCalendars();
-    await compareCalendarShadowSweepResults(personalSweep?.results || []);
+    const personalSweep = await regenerateAllCalendars({
+      trigger: 'calendar_shadow_audit',
+      onResult: async (result) => {
+        await compareCalendarShadowSweepResult(result);
+        shadowAuditState = {
+          ...shadowAuditState,
+          completedPersonalComparisons:
+            Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
+        };
+      },
+    });
+    shadowAuditState = {
+      ...shadowAuditState,
+      totalPersonalComparisons: Number(personalSweep?.total) || 0,
+    };
     shadowAuditState = { ...shadowAuditState, phase: 'global_comparison' };
     await Promise.allSettled([
       getConfiguredAdminCalendarData(),
