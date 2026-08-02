@@ -121,9 +121,29 @@ function eventFingerprint(event = {}) {
   })).digest('hex').slice(0, 20);
 }
 
-const COMPARED_EVENT_FIELDS = ['type', 'title', 'start', 'end', 'description', 'location', 'url'];
+const COMPARED_EVENT_FIELDS = [
+  'type',
+  'title',
+  'start',
+  'end',
+  'description',
+  'location',
+  'url',
+  'pay',
+];
+
+function comparablePay(event = {}) {
+  if (clean(event.type, 100) !== 'main_event') return '';
+  const match = clean(event.description).match(
+    /(?:^|\n)Total Pay:\s*\$?\s*(-?[\d,]+(?:\.\d+)?)/iu
+  );
+  if (!match) return '';
+  const amount = Number(match[1].replaceAll(',', ''));
+  return Number.isFinite(amount) ? amount.toFixed(2) : '';
+}
 
 function comparableField(event, field) {
+  if (field === 'pay') return comparablePay(event);
   return field === 'start' || field === 'end' ? iso(event?.[field]) : clean(event?.[field]);
 }
 
@@ -186,6 +206,7 @@ function normalizeEmbeddedNotionUrls(value) {
 }
 
 function semanticallyComparableField(event, field) {
+  if (field === 'pay') return comparablePay(event);
   if (field === 'start' || field === 'end') return iso(event?.[field]);
   if (field === 'type') return normalizedIdentity(event?.[field]);
   if (field === 'url') return canonicalUrlIdentity(event?.[field]);

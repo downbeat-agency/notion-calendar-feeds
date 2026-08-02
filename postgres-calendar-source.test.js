@@ -76,6 +76,38 @@ test('shadow comparison separates missing occurrences from field-level drift', (
   assert.doesNotMatch(JSON.stringify(comparison), /Legacy description|Postgres description/u);
 });
 
+test('shadow comparison reports rendered pay drift without exposing dollar values', () => {
+  const base = {
+    type: 'main_event',
+    title: 'Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  };
+  const comparison = compareCalendarEventSets(
+    [{ ...base, description: 'Total Pay: $1,200\n(Pay includes add-ons)' }],
+    [{ ...base, description: 'Total Pay: $850\n(Pay includes add-ons)' }]
+  );
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.fieldMismatchCounts.pay, 1);
+  assert.equal(comparison.fieldMismatchCountsByType.main_event.pay, 1);
+  assert.doesNotMatch(JSON.stringify(comparison), /1,200|850/u);
+});
+
+test('shadow pay comparison normalizes equivalent currency formatting', () => {
+  const base = {
+    type: 'main_event',
+    title: 'Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  };
+  const comparison = compareCalendarEventSets(
+    [{ ...base, description: 'Total Pay: $1,200' }],
+    [{ ...base, description: 'Total Pay: $1200.00' }]
+  );
+  assert.equal(comparison.fieldMismatchCounts.description, 1);
+  assert.equal(comparison.fieldMismatchCounts.pay, 0);
+});
+
 test('shadow comparison pairs the same main event despite presentation differences', () => {
   const notion = [{
     type: 'main_event',
