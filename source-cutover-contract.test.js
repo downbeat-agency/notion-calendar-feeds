@@ -53,4 +53,5 @@ test('shadow parity report and audit runner require service authentication', () 
   assert.match(source, /onResult: async \(result\) =>/u);
   assert.match(source, /compareCalendarShadowSweepResult\(result\)/u);
   assert.match(source, /SHADOW_BASELINE_CACHE_MISSING/u);
+  assert.match(source, /pageSize: 100,\s+pagesPerRun: 1000/u);
 });

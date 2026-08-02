@@ -3989,6 +3989,23 @@ async function compareCalendarShadowSweepResult(result) {
   }
 }
 
+async function ensureCalendarShadowAuditIndex() {
+  const cachedIndex = await getCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY);
+  const cachedEntries = normalizeCalendarDataIndexEntries(cachedIndex?.entries);
+  if (cachedEntries.length > 0) return cachedEntries;
+  const builtIndex = await extendCalendarDataRowIndex({
+    pageSize: 100,
+    pagesPerRun: 1000,
+  });
+  const builtEntries = normalizeCalendarDataIndexEntries(builtIndex?.entries);
+  if (!builtIndex?.complete || builtEntries.length === 0) {
+    const error = new Error('Calendar shadow audit could not build a complete personnel index.');
+    error.code = 'SHADOW_AUDIT_INDEX_INCOMPLETE';
+    throw error;
+  }
+  return builtEntries;
+}
+
 async function regenerateCalendarForPerson(personId, options = {}) {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
     return regenerateCalendarForPersonFromPostgres(personId, options);
@@ -6320,7 +6337,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   }
   shadowAuditState = {
     status: 'running',
-    phase: 'notion_regeneration_and_personal_comparison',
+    phase: 'calendar_data_index',
     startedAt,
     completedAt: null,
     errorCode: null,
@@ -6329,6 +6346,12 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   };
   res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
   activeShadowAudit = (async () => {
+    const auditEntries = await ensureCalendarShadowAuditIndex();
+    shadowAuditState = {
+      ...shadowAuditState,
+      phase: 'notion_regeneration_and_personal_comparison',
+      totalPersonalComparisons: auditEntries.length,
+    };
     const personalSweep = await regenerateAllCalendars({
       trigger: 'calendar_shadow_audit',
       onResult: async (result) => {
