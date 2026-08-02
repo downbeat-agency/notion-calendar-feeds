@@ -35,3 +35,19 @@ test('Postgres mode does not run the Notion fleet sweep', () => {
   );
 });
 
+test('Postgres cache is validated against the current source revision', () => {
+  assert.match(source, /fetchPostgresCalendarFeed\('version'\)/u);
+  assert.match(source, /validatePostgresCacheRevision\(revisionCacheKey\)/u);
+  assert.match(source, /Source revision changed; rebuilding/u);
+});
+
+test('shadow parity report and audit runner require service authentication', () => {
+  for (const route of [
+    '/api/internal/calendar-shadow-report',
+    '/api/internal/calendar-shadow-run',
+  ]) {
+    const routeIndex = source.indexOf(`'${route}'`);
+    assert.notEqual(routeIndex, -1);
+    assert.match(source.slice(routeIndex, routeIndex + 150), /requireCalendarFeedServiceKey/u);
+  }
+});

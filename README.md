@@ -43,6 +43,8 @@ Shadow diagnostics include only occurrence counts, type counts, and content hash
 
 Postgres mode uses a separate Redis namespace, assigns stable ICS UIDs supplied by Downbeat, preserves last-known-good calendar artifacts on downstream failures, and disables the Notion fleet sweep. The existing calendar URLs—including personal, Google, Admin, Travel, and Blockout routes—do not change.
 
+Cached Postgres artifacts are validated against Downbeat's durable calendar source revision on every subscription request. A relevant edit therefore rebuilds on the next client poll rather than waiting for `CACHE_TTL`. Shadow comparisons are retained in Redis for seven days and are available through the service-key-authenticated `/api/internal/calendar-shadow-report`; `/api/internal/calendar-shadow-run` starts a complete shadow audit while Notion remains the served source.
+
 ## Contributing
 
 1. Fork the repository

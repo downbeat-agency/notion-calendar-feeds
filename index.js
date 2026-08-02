@@ -3,9 +3,11 @@ import express from 'express';
 import { Client } from '@notionhq/client';
 import ical from 'ical-generator';
 import { createClient } from 'redis';
+import { createHash } from 'node:crypto';
 import path from 'path';
 import { parseNotionFormulaJsonArray } from './admin-json.js';
 import {
+  calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
   configuredCalendarFeedSource,
   fetchPostgresCalendarFeed,
@@ -92,6 +94,17 @@ if (CALENDAR_FEED_SOURCE === 'shadow') {
 
 // Cache TTL in seconds (30 minutes by default)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
+const SHADOW_PARITY_REDIS_KEY = 'calendar:shadow:parity:v2';
+const SHADOW_PARITY_TTL_SECONDS = 7 * 24 * 60 * 60;
+const shadowParityMemory = new Map();
+const activeShadowComparisons = new Set();
+let activeShadowAudit = null;
+let shadowAuditState = {
+  status: 'idle',
+  startedAt: null,
+  completedAt: null,
+  errorCode: null,
+};
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
 const CALENDAR_DATA_INDEX_TTL = Number(process.env.CALENDAR_DATA_INDEX_TTL || 24 * 60 * 60);
@@ -711,6 +724,194 @@ function buildSharedCalendarCacheKey(kind, formatKey) {
   const prefix = CALENDAR_FEED_SOURCE === 'postgres' ? 'calendar:postgres' : 'calendar';
   return `${prefix}:${kind}:${formatKey}`;
 }
+
+async function validatePostgresCacheRevision(revisionCacheKey) {
+  if (CALENDAR_FEED_SOURCE !== 'postgres' || !redis || !cacheEnabled) {
+    return { matches: true, sourceRevision: null, unavailable: false };
+  }
+  try {
+    const [payload, cachedRevision] = await Promise.all([
+      fetchPostgresCalendarFeed('version'),
+      redis.get(revisionCacheKey),
+    ]);
+    const sourceRevision = String(payload.sourceRevision || '');
+    return {
+      matches: Boolean(sourceRevision && cachedRevision === sourceRevision),
+      sourceRevision,
+      unavailable: false,
+    };
+  } catch (error) {
+    console.warn('[calendar-postgres] Source revision check failed:', error.code || 'UNKNOWN');
+    return { matches: true, sourceRevision: null, unavailable: true };
+  }
+}
+
+async function cachePostgresSourceRevision(revisionCacheKey, sourceRevision) {
+  if (
+    CALENDAR_FEED_SOURCE === 'postgres'
+    && redis
+    && cacheEnabled
+    && sourceRevision != null
+    && String(sourceRevision)
+  ) {
+    await setCalendarCache(revisionCacheKey, String(sourceRevision));
+  }
+}
+
+function attachPostgresSourceRevision(data, payload) {
+  if (data && typeof data === 'object') {
+    Object.defineProperty(data, 'sourceRevision', {
+      configurable: true,
+      enumerable: false,
+      value: payload?.sourceRevision || null,
+    });
+  }
+  return data;
+}
+
+function shadowSelectorHash(kind, selector) {
+  return createHash('sha256')
+    .update(`${kind}:${String(selector || kind)}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+async function recordCalendarShadowResult(kind, selector, comparison = null, errorCode = null) {
+  const selectorValue = String(selector || kind);
+  const selectorHash = shadowSelectorHash(kind, selectorValue);
+  const entry = {
+    kind,
+    selector: selectorValue,
+    selectorHash,
+    comparedAt: new Date().toISOString(),
+    comparison,
+    errorCode: errorCode || null,
+  };
+  const field = `${kind}:${selectorValue}`;
+  shadowParityMemory.set(field, entry);
+  if (redis && cacheEnabled) {
+    try {
+      await redis.hSet(SHADOW_PARITY_REDIS_KEY, field, JSON.stringify(entry));
+      await redis.expire(SHADOW_PARITY_REDIS_KEY, SHADOW_PARITY_TTL_SECONDS);
+    } catch (error) {
+      console.warn('[calendar-shadow] parity ledger write failed:', error.code || 'REDIS_ERROR');
+    }
+  }
+  if (comparison) {
+    console.log(`[calendar-shadow] ${kind}`, JSON.stringify({ selectorHash, ...comparison }));
+  } else {
+    console.warn(`[calendar-shadow] ${kind} comparison failed:`, JSON.stringify({ selectorHash, errorCode }));
+  }
+}
+
+function trackCalendarShadowComparison(comparisonPromise) {
+  const tracked = Promise.resolve(comparisonPromise).finally(() => {
+    activeShadowComparisons.delete(tracked);
+  });
+  activeShadowComparisons.add(tracked);
+  return tracked;
+}
+
+async function waitForCalendarShadowComparisons() {
+  while (activeShadowComparisons.size > 0) {
+    await Promise.allSettled([...activeShadowComparisons]);
+  }
+}
+
+async function loadCalendarShadowEntries() {
+  const entries = new Map(shadowParityMemory);
+  if (redis && cacheEnabled) {
+    try {
+      const stored = await redis.hGetAll(SHADOW_PARITY_REDIS_KEY);
+      for (const [field, raw] of Object.entries(stored || {})) {
+        try {
+          entries.set(field, JSON.parse(raw));
+        } catch {
+          // Ignore a malformed diagnostic row without affecting calendar delivery.
+        }
+      }
+    } catch (error) {
+      console.warn('[calendar-shadow] parity ledger read failed:', error.code || 'REDIS_ERROR');
+    }
+  }
+  return [...entries.values()].sort((left, right) => left.kind.localeCompare(right.kind)
+    || left.selector.localeCompare(right.selector));
+}
+
+function summarizeCalendarShadowEntries(entries) {
+  const summary = {
+    comparisons: entries.length,
+    matches: 0,
+    mismatches: 0,
+    errors: 0,
+    notionEvents: 0,
+    postgresEvents: 0,
+    missingFromPostgres: 0,
+    extraInPostgres: 0,
+    pairedEvents: 0,
+    unpairedNotion: 0,
+    unpairedPostgres: 0,
+    fieldMismatchCounts: {},
+    byKind: {},
+  };
+  for (const entry of entries) {
+    const kindSummary = summary.byKind[entry.kind] || { comparisons: 0, matches: 0, mismatches: 0, errors: 0 };
+    kindSummary.comparisons += 1;
+    if (entry.errorCode || !entry.comparison) {
+      summary.errors += 1;
+      kindSummary.errors += 1;
+      summary.byKind[entry.kind] = kindSummary;
+      continue;
+    }
+    if (entry.comparison.matches) {
+      summary.matches += 1;
+      kindSummary.matches += 1;
+    } else {
+      summary.mismatches += 1;
+      kindSummary.mismatches += 1;
+    }
+    summary.notionEvents += Number(entry.comparison.notionCount) || 0;
+    summary.postgresEvents += Number(entry.comparison.postgresCount) || 0;
+    summary.missingFromPostgres += Number(entry.comparison.missingFromPostgresCount) || 0;
+    summary.extraInPostgres += Number(entry.comparison.extraInPostgresCount) || 0;
+    summary.pairedEvents += Number(entry.comparison.pairedCount) || 0;
+    summary.unpairedNotion += Number(entry.comparison.unpairedNotionCount) || 0;
+    summary.unpairedPostgres += Number(entry.comparison.unpairedPostgresCount) || 0;
+    for (const [field, count] of Object.entries(entry.comparison.fieldMismatchCounts || {})) {
+      summary.fieldMismatchCounts[field] = (summary.fieldMismatchCounts[field] || 0) + (Number(count) || 0);
+    }
+    summary.byKind[entry.kind] = kindSummary;
+  }
+  return summary;
+}
+
+function requireCalendarFeedServiceKey(req, res, next) {
+  if (!calendarFeedServiceRequestIsAuthorized(req)) {
+    return res.status(401).json({ error: 'Invalid calendar feed service key' });
+  }
+  return next();
+}
+
+app.get('/api/internal/calendar-shadow-report', requireCalendarFeedServiceKey, async (req, res) => {
+  const entries = await loadCalendarShadowEntries();
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    sourceMode: CALENDAR_FEED_SOURCE,
+    generatedAt: new Date().toISOString(),
+    audit: {
+      ...shadowAuditState,
+      activeComparisons: activeShadowComparisons.size,
+    },
+    summary: summarizeCalendarShadowEntries(entries),
+    ...(req.query.details === 'true' ? { entries } : {}),
+  });
+});
+
+app.delete('/api/internal/calendar-shadow-report', requireCalendarFeedServiceKey, async (_req, res) => {
+  shadowParityMemory.clear();
+  if (redis && cacheEnabled) await redis.del(SHADOW_PARITY_REDIS_KEY);
+  res.json({ success: true });
+});
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
   if (!timeoutMs || timeoutMs <= 0) {
@@ -3700,7 +3901,8 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
     const cacheKeys = {
       ics: buildCalendarCacheKey(personId, 'ics', selectedRegenMode),
       googleIcs: buildCalendarCacheKey(personId, 'google_ics', selectedRegenMode),
-      json: buildCalendarCacheKey(personId, 'json', selectedRegenMode)
+      json: buildCalendarCacheKey(personId, 'json', selectedRegenMode),
+      sourceRevision: buildCalendarCacheKey(personId, 'source_revision', selectedRegenMode)
     };
     if (redis && cacheEnabled) {
       if (clearCache) {
@@ -3709,7 +3911,8 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
       await Promise.all([
         setCalendarCache(cacheKeys.ics, artifacts.icsData),
         setCalendarCache(cacheKeys.googleIcs, artifacts.googleIcsData),
-        setCalendarCache(cacheKeys.json, artifacts.jsonData)
+        setCalendarCache(cacheKeys.json, artifacts.jsonData),
+        cachePostgresSourceRevision(cacheKeys.sourceRevision, payload.sourceRevision)
       ]);
     }
     return {
@@ -3718,6 +3921,7 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
       personName,
       regenMode: selectedRegenMode,
       eventCount: allCalendarEvents.length,
+      sourceRevision: payload.sourceRevision || null,
       ...artifacts,
       allCalendarEvents
     };
@@ -3732,9 +3936,9 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
     const comparison = compareCalendarEventSets(notionEvents, postgresEvents);
-    console.log('[calendar-shadow] personal', JSON.stringify(comparison));
+    await recordCalendarShadowResult('personal', personId, comparison);
   } catch (error) {
-    console.warn('[calendar-shadow] personal comparison failed:', error.code || 'UNKNOWN');
+    await recordCalendarShadowResult('personal', personId, null, error.code || 'UNKNOWN');
   }
 }
 
@@ -3749,7 +3953,9 @@ async function regenerateCalendarForPerson(personId, options = {}) {
     && selectedRegenMode === REGEN_MODE_FULL
     && result.success
   ) {
-    void comparePersonalCalendarShadow(personId, result.allCalendarEvents || []);
+    void trackCalendarShadowComparison(
+      comparePersonalCalendarShadow(personId, result.allCalendarEvents || [])
+    );
   }
   return result;
 }
@@ -5298,41 +5504,50 @@ async function compareSharedCalendarShadow(kind, notionRaw, processor, payloadFi
     const payload = await fetchPostgresCalendarFeed(kind);
     const postgresRaw = payload?.[payloadField] || [];
     const comparison = compareCalendarEventSets(processor(notionRaw), processor(postgresRaw));
-    console.log(`[calendar-shadow] ${kind}`, JSON.stringify(comparison));
+    await recordCalendarShadowResult(kind, kind, comparison);
   } catch (error) {
-    console.warn(`[calendar-shadow] ${kind} comparison failed:`, error.code || 'UNKNOWN');
+    await recordCalendarShadowResult(kind, kind, null, error.code || 'UNKNOWN');
   }
 }
 
 async function getConfiguredAdminCalendarData() {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
-    return (await fetchPostgresCalendarFeed('admin')).events || [];
+    const payload = await fetchPostgresCalendarFeed('admin');
+    return attachPostgresSourceRevision(payload.events || [], payload);
   }
   const events = await getAdminCalendarData();
   if (CALENDAR_FEED_SOURCE === 'shadow') {
-    void compareSharedCalendarShadow('admin', events, processAdminEvents, 'events');
+    void trackCalendarShadowComparison(
+      compareSharedCalendarShadow('admin', events, processAdminEvents, 'events')
+    );
   }
   return events;
 }
 
 async function getConfiguredTravelCalendarData() {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
-    return (await fetchPostgresCalendarFeed('travel')).travelGroups || [];
+    const payload = await fetchPostgresCalendarFeed('travel');
+    return attachPostgresSourceRevision(payload.travelGroups || [], payload);
   }
   const groups = await getTravelCalendarData();
   if (CALENDAR_FEED_SOURCE === 'shadow') {
-    void compareSharedCalendarShadow('travel', groups, processTravelEvents, 'travelGroups');
+    void trackCalendarShadowComparison(
+      compareSharedCalendarShadow('travel', groups, processTravelEvents, 'travelGroups')
+    );
   }
   return groups;
 }
 
 async function getConfiguredBlockoutCalendarData() {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
-    return (await fetchPostgresCalendarFeed('blockout')).events || [];
+    const payload = await fetchPostgresCalendarFeed('blockout');
+    return attachPostgresSourceRevision(payload.events || [], payload);
   }
   const events = await getBlockoutCalendarData();
   if (CALENDAR_FEED_SOURCE === 'shadow') {
-    void compareSharedCalendarShadow('blockout', events, processBlockoutEvents, 'events');
+    void trackCalendarShadowComparison(
+      compareSharedCalendarShadow('blockout', events, processBlockoutEvents, 'events')
+    );
   }
   return events;
 }
@@ -6034,6 +6249,48 @@ app.get('/regenerate/:personId/status', async (req, res) => {
 });
 
 // Regeneration endpoint - regenerate all calendars
+app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, async (_req, res) => {
+  if (CALENDAR_FEED_SOURCE !== 'shadow') {
+    return res.status(409).json({ error: 'Calendar service is not in shadow mode.' });
+  }
+  if (activeShadowAudit) {
+    return res.status(202).json({ success: true, alreadyRunning: true });
+  }
+  const startedAt = new Date().toISOString();
+  shadowAuditState = {
+    status: 'running',
+    startedAt,
+    completedAt: null,
+    errorCode: null,
+  };
+  res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
+  activeShadowAudit = (async () => {
+    const personalSweep = await regenerateAllCalendars();
+    await Promise.allSettled([
+      getConfiguredAdminCalendarData(),
+      getConfiguredTravelCalendarData(),
+      getConfiguredBlockoutCalendarData(),
+    ]);
+    await waitForCalendarShadowComparisons();
+    shadowAuditState = {
+      status: personalSweep?.success === false ? 'failed' : 'complete',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      errorCode: personalSweep?.success === false ? 'PERSONAL_SWEEP_FAILED' : null,
+    };
+  })().catch((error) => {
+    shadowAuditState = {
+      status: 'failed',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      errorCode: error.code || 'UNKNOWN',
+    };
+    console.error('[calendar-shadow] audit run failed:', error.code || error.message || 'UNKNOWN');
+  }).finally(() => {
+    activeShadowAudit = null;
+  });
+});
+
 app.get('/regenerate-all', async (req, res) => {
   try {
     // Start the regeneration process
@@ -8314,12 +8571,17 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = buildSharedCalendarCacheKey('admin', format);
+    const revisionCacheKey = buildSharedCalendarCacheKey('admin', 'source_revision');
+    const postgresCacheRevision = !forceFresh
+      ? await validatePostgresCacheRevision(revisionCacheKey)
+      : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
-    if (redis && cacheEnabled && !forceFresh) {
+    if (redis && cacheEnabled && !forceFresh && postgresCacheRevision.matches) {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
+          if (postgresCacheRevision.unavailable) res.setHeader('X-Downbeat-Calendar-Stale', 'true');
           verboseLog(`✅ Cache HIT for admin calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
@@ -8440,6 +8702,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     
     // Process events
     const allCalendarEvents = processAdminEvents(adminEvents);
+    const sourceRevision = adminEvents?.sourceRevision || null;
     
     // Return based on format
     if (format === 'json') {
@@ -8453,6 +8716,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, jsonData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached admin calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -8492,6 +8756,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, icsData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached admin calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -8624,12 +8889,17 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = buildSharedCalendarCacheKey('travel', format);
+    const revisionCacheKey = buildSharedCalendarCacheKey('travel', 'source_revision');
+    const postgresCacheRevision = !forceFresh
+      ? await validatePostgresCacheRevision(revisionCacheKey)
+      : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
-    if (redis && cacheEnabled && !forceFresh) {
+    if (redis && cacheEnabled && !forceFresh && postgresCacheRevision.matches) {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
+          if (postgresCacheRevision.unavailable) res.setHeader('X-Downbeat-Calendar-Stale', 'true');
           verboseLog(`✅ Cache HIT for travel calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
@@ -8750,6 +9020,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     
     // Process events
     const allCalendarEvents = processTravelEvents(travelEvents);
+    const sourceRevision = travelEvents?.sourceRevision || null;
     
     // Return based on format
     if (format === 'json') {
@@ -8763,6 +9034,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, jsonData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached travel calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -8802,6 +9074,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, icsData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached travel calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -8934,12 +9207,17 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
     const cacheKey = buildSharedCalendarCacheKey('blockout', format);
+    const revisionCacheKey = buildSharedCalendarCacheKey('blockout', 'source_revision');
+    const postgresCacheRevision = !forceFresh
+      ? await validatePostgresCacheRevision(revisionCacheKey)
+      : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
-    if (redis && cacheEnabled && !forceFresh) {
+    if (redis && cacheEnabled && !forceFresh && postgresCacheRevision.matches) {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
+          if (postgresCacheRevision.unavailable) res.setHeader('X-Downbeat-Calendar-Stale', 'true');
           verboseLog(`✅ Cache HIT for blockout calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
@@ -9061,6 +9339,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     
     // Process events
     const allCalendarEvents = processBlockoutEvents(blockoutEvents);
+    const sourceRevision = blockoutEvents?.sourceRevision || null;
     
     // Return based on format
     if (format === 'json') {
@@ -9074,6 +9353,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, jsonData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached blockout calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -9113,6 +9393,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
       if (redis && cacheEnabled) {
         try {
           await setCalendarCache(cacheKey, icsData);
+          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
           verboseLog(`💾 Cached blockout calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
@@ -9340,6 +9621,10 @@ app.get('/calendar/:personId', async (req, res) => {
     const forceFresh = req.query.fresh === 'true';
     const cacheFormat = shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json';
     const cacheKey = buildCalendarCacheKey(personId, cacheFormat, regenMode);
+    const revisionCacheKey = buildCalendarCacheKey(personId, 'source_revision', regenMode);
+    const postgresCacheRevision = !forceFresh
+      ? await validatePostgresCacheRevision(revisionCacheKey)
+      : { matches: false, sourceRevision: null, unavailable: false };
     
     if (forceFresh && CALENDAR_FEED_SOURCE !== 'postgres' && redis && cacheEnabled) {
       const icsKey = buildCalendarCacheKey(personId, 'ics', regenMode);
@@ -9356,10 +9641,13 @@ app.get('/calendar/:personId', async (req, res) => {
       }
     }
     
-    if (redis && cacheEnabled && !forceFresh) {
+    if (redis && cacheEnabled && !forceFresh && postgresCacheRevision.matches) {
       try {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
+          if (postgresCacheRevision.unavailable) {
+            res.setHeader('X-Downbeat-Calendar-Stale', 'true');
+          }
           verboseLog(`✅ Cache HIT for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'})`);
           
           if (shouldReturnICS) {
@@ -9377,6 +9665,9 @@ app.get('/calendar/:personId', async (req, res) => {
       } catch (cacheError) {
         console.error('Redis cache read error:', cacheError);
       }
+    }
+    if (CALENDAR_FEED_SOURCE === 'postgres' && !forceFresh && !postgresCacheRevision.matches) {
+      verboseLog(`[calendar-postgres] Source revision changed; rebuilding ${personId}`);
     }
     
     // Check if Calendar Data database is configured

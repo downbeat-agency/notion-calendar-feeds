@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
   configuredCalendarFeedSource,
   fetchPostgresCalendarFeed,
 } from './postgres-calendar-source.js';
+
+test('calendar shadow report authentication uses the dedicated service key', () => {
+  const req = { get: () => 'secret' };
+  assert.equal(calendarFeedServiceRequestIsAuthorized(req, { CALENDAR_FEED_SERVICE_KEY: 'secret' }), true);
+  assert.equal(calendarFeedServiceRequestIsAuthorized(req, { CALENDAR_FEED_SERVICE_KEY: 'wrong' }), false);
+});
 
 test('calendar feed source defaults to notion and validates explicit values', () => {
   assert.equal(configuredCalendarFeedSource({}), 'notion');
@@ -49,3 +56,22 @@ test('shadow comparison reports parity without exposing event text', () => {
   assert.doesNotMatch(JSON.stringify(mismatch), /Private Wedding|Private Home/u);
 });
 
+test('shadow comparison separates missing occurrences from field-level drift', () => {
+  const notion = [{
+    type: 'main_event',
+    title: 'Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+    description: 'Legacy description',
+    location: 'Venue',
+    url: 'https://notion.test/event',
+  }];
+  const postgres = [{ ...notion[0], description: 'Postgres description' }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.matches, false);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.unpairedNotionCount, 0);
+  assert.equal(comparison.unpairedPostgresCount, 0);
+  assert.equal(comparison.fieldMismatchCounts.description, 1);
+  assert.doesNotMatch(JSON.stringify(comparison), /Legacy description|Postgres description/u);
+});

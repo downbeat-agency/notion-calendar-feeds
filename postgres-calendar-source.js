@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const VALID_SOURCES = new Set(['notion', 'shadow', 'postgres']);
 const DEFAULT_TIMEOUT_MS = 25_000;
@@ -29,11 +29,22 @@ function feedPath(kind, selector) {
     if (!personId) throw new Error('A person selector is required for a personal calendar feed.');
     return `/api/internal/calendar-feeds/personal/${encodeURIComponent(personId)}`;
   }
+  if (kind === 'version') return '/api/internal/calendar-feeds/version';
   if (kind === 'people') return '/api/internal/calendar-feeds/people';
   if (kind === 'admin' || kind === 'travel' || kind === 'blockout') {
     return `/api/internal/calendar-feeds/${kind}`;
   }
   throw new Error(`Unsupported Postgres calendar feed kind: ${kind}`);
+}
+
+export function calendarFeedServiceRequestIsAuthorized(req, env = process.env) {
+  const expected = clean(env.CALENDAR_FEED_SERVICE_KEY);
+  const supplied = clean(req?.get?.('X-Downbeat-Calendar-Service-Key'));
+  if (!expected || !supplied) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length
+    && timingSafeEqual(expectedBuffer, suppliedBuffer);
 }
 
 export async function fetchPostgresCalendarFeed(kind, selector = null, options = {}) {
@@ -109,6 +120,33 @@ function eventFingerprint(event = {}) {
   })).digest('hex').slice(0, 20);
 }
 
+const COMPARED_EVENT_FIELDS = ['type', 'title', 'start', 'end', 'description', 'location', 'url'];
+
+function comparableField(event, field) {
+  return field === 'start' || field === 'end' ? iso(event?.[field]) : clean(event?.[field]);
+}
+
+function pairingKey(event = {}) {
+  const type = comparableField(event, 'type');
+  const start = comparableField(event, 'start');
+  const url = comparableField(event, 'url');
+  const title = comparableField(event, 'title').toLowerCase();
+  return createHash('sha256')
+    .update(JSON.stringify({ type, start, identity: url || title }))
+    .digest('hex')
+    .slice(0, 20);
+}
+
+function groupedByPairingKey(events = []) {
+  const groups = new Map();
+  for (const event of events) {
+    const key = pairingKey(event);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(event);
+  }
+  return groups;
+}
+
 export function compareCalendarEventSets(notionEvents = [], postgresEvents = []) {
   const notionFingerprints = new Set(notionEvents.map(eventFingerprint));
   const postgresFingerprints = new Set(postgresEvents.map(eventFingerprint));
@@ -116,6 +154,27 @@ export function compareCalendarEventSets(notionEvents = [], postgresEvents = [])
     .filter((fingerprint) => !postgresFingerprints.has(fingerprint));
   const extraInPostgres = [...postgresFingerprints]
     .filter((fingerprint) => !notionFingerprints.has(fingerprint));
+  const notionGroups = groupedByPairingKey(notionEvents);
+  const postgresGroups = groupedByPairingKey(postgresEvents);
+  const fieldMismatchCounts = Object.fromEntries(COMPARED_EVENT_FIELDS.map((field) => [field, 0]));
+  let pairedCount = 0;
+  let unpairedNotionCount = 0;
+  let unpairedPostgresCount = 0;
+  for (const key of new Set([...notionGroups.keys(), ...postgresGroups.keys()])) {
+    const notionGroup = notionGroups.get(key) || [];
+    const postgresGroup = postgresGroups.get(key) || [];
+    const pairCount = Math.min(notionGroup.length, postgresGroup.length);
+    pairedCount += pairCount;
+    unpairedNotionCount += notionGroup.length - pairCount;
+    unpairedPostgresCount += postgresGroup.length - pairCount;
+    for (let index = 0; index < pairCount; index += 1) {
+      for (const field of COMPARED_EVENT_FIELDS) {
+        if (comparableField(notionGroup[index], field) !== comparableField(postgresGroup[index], field)) {
+          fieldMismatchCounts[field] += 1;
+        }
+      }
+    }
+  }
   return {
     matches: missingFromPostgres.length === 0 && extraInPostgres.length === 0,
     notionCount: notionEvents.length,
@@ -124,6 +183,10 @@ export function compareCalendarEventSets(notionEvents = [], postgresEvents = [])
     postgresByType: eventTypeCounts(postgresEvents),
     missingFromPostgresCount: missingFromPostgres.length,
     extraInPostgresCount: extraInPostgres.length,
+    pairedCount,
+    unpairedNotionCount,
+    unpairedPostgresCount,
+    fieldMismatchCounts,
     // Hashes are safe diagnostics: no calendar titles, locations, names, or notes are logged.
     missingFingerprintSample: missingFromPostgres.slice(0, 10),
     extraFingerprintSample: extraInPostgres.slice(0, 10),
