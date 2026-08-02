@@ -50,8 +50,9 @@ test('shadow parity report and audit runner require service authentication', () 
     assert.notEqual(routeIndex, -1);
     assert.match(source.slice(routeIndex, routeIndex + 150), /requireCalendarFeedServiceKey/u);
   }
-  assert.match(source, /onResult: async \(result\) =>/u);
-  assert.match(source, /compareCalendarShadowSweepResult\(result\)/u);
+  assert.match(source, /compareCachedPersonalCalendarShadow\(entry\.personId\)/u);
+  assert.match(source, /compareCachedSharedCalendarShadow\('admin'/u);
+  assert.match(source, /phase: 'cached_personal_comparison'/u);
   assert.match(source, /SHADOW_BASELINE_CACHE_MISSING/u);
   assert.match(source, /pageSize: 100,\s+pagesPerRun: 1000/u);
 });

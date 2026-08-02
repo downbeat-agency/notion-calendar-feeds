@@ -134,6 +134,54 @@ function normalizedIdentity(value) {
     .trim();
 }
 
+function canonicalNotionPageId(value) {
+  const text = clean(value).toLowerCase();
+  const dashed = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu);
+  if (dashed?.length) return dashed.at(-1).replaceAll('-', '');
+  const compact = text.match(/[0-9a-f]{32}/gu);
+  return compact?.at(-1) || '';
+}
+
+function canonicalNotionUrlIdentity(value) {
+  try {
+    const parsed = new URL(clean(value));
+    const notionHost = /(?:^|\.)notion\.(?:so|com)$/u.test(parsed.hostname.toLowerCase());
+    const notionPageId = notionHost ? canonicalNotionPageId(parsed.href) : '';
+    return notionPageId ? `notion:${notionPageId}` : '';
+  } catch {
+    return '';
+  }
+}
+
+function canonicalUrlIdentity(value) {
+  const text = clean(value);
+  if (!text) return '';
+  const notionIdentity = canonicalNotionUrlIdentity(text);
+  if (notionIdentity) return notionIdentity;
+  try {
+    const parsed = new URL(text);
+    parsed.hash = '';
+    if (parsed.pathname !== '/') parsed.pathname = parsed.pathname.replace(/\/+$/u, '');
+    return parsed.toString();
+  } catch {
+    return normalizedIdentity(text);
+  }
+}
+
+function normalizeEmbeddedNotionUrls(value) {
+  return clean(value).replace(/https?:\/\/[^\s<>]+/giu, (candidate) => {
+    const notionIdentity = canonicalNotionUrlIdentity(candidate);
+    return notionIdentity ? ` ${notionIdentity} ` : candidate;
+  });
+}
+
+function semanticallyComparableField(event, field) {
+  if (field === 'start' || field === 'end') return iso(event?.[field]);
+  if (field === 'type') return normalizedIdentity(event?.[field]);
+  if (field === 'url') return canonicalUrlIdentity(event?.[field]);
+  return normalizedIdentity(normalizeEmbeddedNotionUrls(event?.[field]));
+}
+
 function baseTitle(event = {}) {
   return normalizedIdentity(clean(event.title).replace(/\s*\([^)]*\)\s*$/u, ''));
 }
@@ -207,7 +255,7 @@ function pairCalendarEvents(notionEvents, postgresEvents) {
     return value ? `${comparableField(event, 'type')}|${value}` : '';
   };
 
-  pairByKey(notionEntries, postgresEntries, typed((event) => normalizedIdentity(event.url)), 'url', pairs, pairsByMethod);
+  pairByKey(notionEntries, postgresEntries, typed((event) => canonicalUrlIdentity(event.url)), 'url', pairs, pairsByMethod);
   pairByKey(notionEntries, postgresEntries, typed((event) => normalizedIdentity(event.mainEvent)), 'mainEvent', pairs, pairsByMethod);
   pairByKey(notionEntries, postgresEntries, typed(baseTitle), 'title', pairs, pairsByMethod);
   pairByContainedIdentity(notionEntries, postgresEntries, (event) => normalizedIdentity(event.mainEvent), 'containedMainEvent', pairs, pairsByMethod);
@@ -219,27 +267,80 @@ function pairCalendarEvents(notionEvents, postgresEvents) {
     pairsByMethod,
     unpairedNotionCount: notionEntries.filter((entry) => !entry.matched).length,
     unpairedPostgresCount: postgresEntries.filter((entry) => !entry.matched).length,
+    unpairedNotionByType: eventTypeCounts(
+      notionEntries.filter((entry) => !entry.matched).map((entry) => entry.event)
+    ),
+    unpairedPostgresByType: eventTypeCounts(
+      postgresEntries.filter((entry) => !entry.matched).map((entry) => entry.event)
+    ),
   };
 }
 
+function fingerprintDifference(leftEvents, rightEvents) {
+  const rightCounts = new Map();
+  for (const event of rightEvents) {
+    const fingerprint = eventFingerprint(event);
+    rightCounts.set(fingerprint, (rightCounts.get(fingerprint) || 0) + 1);
+  }
+  const difference = [];
+  for (const event of leftEvents) {
+    const fingerprint = eventFingerprint(event);
+    const remaining = rightCounts.get(fingerprint) || 0;
+    if (remaining > 0) rightCounts.set(fingerprint, remaining - 1);
+    else difference.push(fingerprint);
+  }
+  return difference;
+}
+
 export function compareCalendarEventSets(notionEvents = [], postgresEvents = []) {
-  const notionFingerprints = new Set(notionEvents.map(eventFingerprint));
-  const postgresFingerprints = new Set(postgresEvents.map(eventFingerprint));
-  const missingFromPostgres = [...notionFingerprints]
-    .filter((fingerprint) => !postgresFingerprints.has(fingerprint));
-  const extraInPostgres = [...postgresFingerprints]
-    .filter((fingerprint) => !notionFingerprints.has(fingerprint));
+  const missingFromPostgres = fingerprintDifference(notionEvents, postgresEvents);
+  const extraInPostgres = fingerprintDifference(postgresEvents, notionEvents);
   const paired = pairCalendarEvents(notionEvents, postgresEvents);
   const fieldMismatchCounts = Object.fromEntries(COMPARED_EVENT_FIELDS.map((field) => [field, 0]));
+  const semanticFieldMismatchCounts = Object.fromEntries(
+    COMPARED_EVENT_FIELDS.map((field) => [field, 0])
+  );
+  const fieldMismatchCountsByType = {};
+  const semanticFieldMismatchCountsByType = {};
+  let exactPairCount = 0;
+  let semanticPairCount = 0;
   for (const [notionEvent, postgresEvent] of paired.pairs) {
+    const type = clean(notionEvent?.type, 100) || clean(postgresEvent?.type, 100) || 'unknown';
+    const byType = fieldMismatchCountsByType[type] || Object.fromEntries(
+      COMPARED_EVENT_FIELDS.map((field) => [field, 0])
+    );
+    const semanticByType = semanticFieldMismatchCountsByType[type] || Object.fromEntries(
+      COMPARED_EVENT_FIELDS.map((field) => [field, 0])
+    );
+    let exactPair = true;
+    let semanticPair = true;
     for (const field of COMPARED_EVENT_FIELDS) {
       if (comparableField(notionEvent, field) !== comparableField(postgresEvent, field)) {
         fieldMismatchCounts[field] += 1;
+        byType[field] += 1;
+        exactPair = false;
+      }
+      if (
+        semanticallyComparableField(notionEvent, field)
+        !== semanticallyComparableField(postgresEvent, field)
+      ) {
+        semanticFieldMismatchCounts[field] += 1;
+        semanticByType[field] += 1;
+        semanticPair = false;
       }
     }
+    fieldMismatchCountsByType[type] = byType;
+    semanticFieldMismatchCountsByType[type] = semanticByType;
+    if (exactPair) exactPairCount += 1;
+    if (semanticPair) semanticPairCount += 1;
   }
+  const semanticMismatchTotal = Object.values(semanticFieldMismatchCounts)
+    .reduce((sum, count) => sum + count, 0);
   return {
     matches: missingFromPostgres.length === 0 && extraInPostgres.length === 0,
+    semanticMatches: paired.unpairedNotionCount === 0
+      && paired.unpairedPostgresCount === 0
+      && semanticMismatchTotal === 0,
     notionCount: notionEvents.length,
     postgresCount: postgresEvents.length,
     notionByType: eventTypeCounts(notionEvents),
@@ -250,7 +351,14 @@ export function compareCalendarEventSets(notionEvents = [], postgresEvents = [])
     pairsByMethod: paired.pairsByMethod,
     unpairedNotionCount: paired.unpairedNotionCount,
     unpairedPostgresCount: paired.unpairedPostgresCount,
+    unpairedNotionByType: paired.unpairedNotionByType,
+    unpairedPostgresByType: paired.unpairedPostgresByType,
+    exactPairCount,
+    semanticPairCount,
     fieldMismatchCounts,
+    semanticFieldMismatchCounts,
+    fieldMismatchCountsByType,
+    semanticFieldMismatchCountsByType,
     // Hashes are safe diagnostics: no calendar titles, locations, names, or notes are logged.
     missingFingerprintSample: missingFromPostgres.slice(0, 10),
     extraFingerprintSample: extraInPostgres.slice(0, 10),

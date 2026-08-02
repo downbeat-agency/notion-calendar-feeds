@@ -98,3 +98,77 @@ test('shadow comparison pairs the same main event despite presentation differenc
   assert.equal(comparison.unpairedNotionCount, 0);
   assert.equal(comparison.unpairedPostgresCount, 0);
 });
+
+test('shadow comparison recognizes equivalent Notion URL forms without hiding exact drift', () => {
+  const notion = [{
+    type: 'hotel',
+    title: 'Hotel',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-02T10:00:00Z',
+    description: 'Notion Link: https://www.notion.so/Private-Hotel-123456781234123412341234567890ab',
+    url: 'https://www.notion.so/Private-Hotel-123456781234123412341234567890ab',
+  }];
+  const postgres = [{
+    ...notion[0],
+    description: 'Notion Link: https://app.notion.com/Private-Hotel-123456781234123412341234567890ab?pvs=4',
+    url: 'https://app.notion.com/Private-Hotel-123456781234123412341234567890ab?pvs=4',
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.matches, false);
+  assert.equal(comparison.semanticMatches, true);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.pairsByMethod.url, 1);
+  assert.equal(comparison.fieldMismatchCounts.url, 1);
+  assert.equal(comparison.semanticFieldMismatchCounts.url, 0);
+  assert.equal(comparison.semanticFieldMismatchCounts.description, 0);
+});
+
+test('shadow comparison does not canonicalize unrelated URLs that contain a 32-character id', () => {
+  const notion = [{
+    type: 'main_event',
+    title: 'Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+    description: 'Link: https://example.com/123456781234123412341234567890ab',
+  }];
+  const postgres = [{
+    ...notion[0],
+    description: 'Link: https://other.example/123456781234123412341234567890ab',
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.semanticMatches, false);
+  assert.equal(comparison.semanticFieldMismatchCounts.description, 1);
+});
+
+test('shadow comparison reports unpaired and field drift by occurrence type', () => {
+  const notion = [{
+    type: 'main_event',
+    title: 'Legacy Event',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  }, {
+    type: 'rehearsal',
+    title: 'Rehearsal',
+    start: '2026-08-02T10:00:00Z',
+    end: '2026-08-02T11:00:00Z',
+  }];
+  const postgres = [{ ...notion[0], title: 'Current Event' }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.unpairedNotionByType.rehearsal, 1);
+  assert.equal(comparison.unpairedPostgresByType.rehearsal, undefined);
+  assert.equal(comparison.fieldMismatchCountsByType.main_event.title, 1);
+  assert.equal(comparison.semanticFieldMismatchCountsByType.main_event.title, 1);
+});
+
+test('shadow exact comparison treats duplicate occurrences as a multiset', () => {
+  const event = {
+    type: 'team_calendar',
+    title: 'Office',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T11:00:00Z',
+  };
+  const comparison = compareCalendarEventSets([event, { ...event }], [event]);
+  assert.equal(comparison.matches, false);
+  assert.equal(comparison.missingFromPostgresCount, 1);
+  assert.equal(comparison.extraInPostgresCount, 0);
+});

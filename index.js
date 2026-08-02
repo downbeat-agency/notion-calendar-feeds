@@ -96,6 +96,9 @@ if (CALENDAR_FEED_SOURCE === 'shadow') {
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
 const SHADOW_PARITY_REDIS_KEY = 'calendar:shadow:parity:v2';
 const SHADOW_PARITY_TTL_SECONDS = 7 * 24 * 60 * 60;
+const SHADOW_AUDIT_COMPARISON_CONCURRENCY = Number(
+  process.env.SHADOW_AUDIT_COMPARISON_CONCURRENCY || 4
+);
 const shadowParityMemory = new Map();
 const activeShadowComparisons = new Set();
 let activeShadowAudit = null;
@@ -846,19 +849,35 @@ function summarizeCalendarShadowEntries(entries) {
     comparisons: entries.length,
     matches: 0,
     mismatches: 0,
+    semanticMatches: 0,
+    semanticMismatches: 0,
     errors: 0,
     notionEvents: 0,
     postgresEvents: 0,
     missingFromPostgres: 0,
     extraInPostgres: 0,
     pairedEvents: 0,
+    exactPairedEvents: 0,
+    semanticPairedEvents: 0,
     unpairedNotion: 0,
     unpairedPostgres: 0,
+    unpairedNotionByType: {},
+    unpairedPostgresByType: {},
     fieldMismatchCounts: {},
+    semanticFieldMismatchCounts: {},
+    fieldMismatchCountsByType: {},
+    semanticFieldMismatchCountsByType: {},
     byKind: {},
   };
   for (const entry of entries) {
-    const kindSummary = summary.byKind[entry.kind] || { comparisons: 0, matches: 0, mismatches: 0, errors: 0 };
+    const kindSummary = summary.byKind[entry.kind] || {
+      comparisons: 0,
+      matches: 0,
+      mismatches: 0,
+      semanticMatches: 0,
+      semanticMismatches: 0,
+      errors: 0,
+    };
     kindSummary.comparisons += 1;
     if (entry.errorCode || !entry.comparison) {
       summary.errors += 1;
@@ -873,15 +892,52 @@ function summarizeCalendarShadowEntries(entries) {
       summary.mismatches += 1;
       kindSummary.mismatches += 1;
     }
+    if (entry.comparison.semanticMatches) {
+      summary.semanticMatches += 1;
+      kindSummary.semanticMatches += 1;
+    } else {
+      summary.semanticMismatches += 1;
+      kindSummary.semanticMismatches += 1;
+    }
     summary.notionEvents += Number(entry.comparison.notionCount) || 0;
     summary.postgresEvents += Number(entry.comparison.postgresCount) || 0;
     summary.missingFromPostgres += Number(entry.comparison.missingFromPostgresCount) || 0;
     summary.extraInPostgres += Number(entry.comparison.extraInPostgresCount) || 0;
     summary.pairedEvents += Number(entry.comparison.pairedCount) || 0;
+    summary.exactPairedEvents += Number(entry.comparison.exactPairCount) || 0;
+    summary.semanticPairedEvents += Number(entry.comparison.semanticPairCount) || 0;
     summary.unpairedNotion += Number(entry.comparison.unpairedNotionCount) || 0;
     summary.unpairedPostgres += Number(entry.comparison.unpairedPostgresCount) || 0;
+    for (const [type, count] of Object.entries(entry.comparison.unpairedNotionByType || {})) {
+      summary.unpairedNotionByType[type] = (summary.unpairedNotionByType[type] || 0)
+        + (Number(count) || 0);
+    }
+    for (const [type, count] of Object.entries(entry.comparison.unpairedPostgresByType || {})) {
+      summary.unpairedPostgresByType[type] = (summary.unpairedPostgresByType[type] || 0)
+        + (Number(count) || 0);
+    }
     for (const [field, count] of Object.entries(entry.comparison.fieldMismatchCounts || {})) {
       summary.fieldMismatchCounts[field] = (summary.fieldMismatchCounts[field] || 0) + (Number(count) || 0);
+    }
+    for (const [field, count] of Object.entries(entry.comparison.semanticFieldMismatchCounts || {})) {
+      summary.semanticFieldMismatchCounts[field] = (summary.semanticFieldMismatchCounts[field] || 0)
+        + (Number(count) || 0);
+    }
+    for (const [type, counts] of Object.entries(entry.comparison.fieldMismatchCountsByType || {})) {
+      const target = summary.fieldMismatchCountsByType[type] || {};
+      for (const [field, count] of Object.entries(counts || {})) {
+        target[field] = (target[field] || 0) + (Number(count) || 0);
+      }
+      summary.fieldMismatchCountsByType[type] = target;
+    }
+    for (const [type, counts] of Object.entries(
+      entry.comparison.semanticFieldMismatchCountsByType || {}
+    )) {
+      const target = summary.semanticFieldMismatchCountsByType[type] || {};
+      for (const [field, count] of Object.entries(counts || {})) {
+        target[field] = (target[field] || 0) + (Number(count) || 0);
+      }
+      summary.semanticFieldMismatchCountsByType[type] = target;
     }
     summary.byKind[entry.kind] = kindSummary;
   }
@@ -4006,6 +4062,64 @@ async function ensureCalendarShadowAuditIndex() {
   return builtEntries;
 }
 
+async function loadCalendarShadowCachedEvents(cacheKey) {
+  if (!redis || !cacheEnabled) {
+    const error = new Error('Calendar shadow cache is unavailable.');
+    error.code = 'SHADOW_AUDIT_CACHE_UNAVAILABLE';
+    throw error;
+  }
+  const raw = await redis.get(cacheKey);
+  if (!raw) {
+    const error = new Error('Calendar shadow baseline cache is missing.');
+    error.code = 'SHADOW_BASELINE_CACHE_MISSING';
+    throw error;
+  }
+  try {
+    const payload = JSON.parse(raw);
+    if (!Array.isArray(payload?.events)) throw new Error('events must be an array');
+    return payload.events;
+  } catch {
+    const error = new Error('Calendar shadow baseline cache is invalid.');
+    error.code = 'SHADOW_BASELINE_CACHE_INVALID';
+    throw error;
+  }
+}
+
+async function compareCachedPersonalCalendarShadow(personId) {
+  try {
+    const notionEvents = await loadCalendarShadowCachedEvents(
+      buildCalendarCacheKey(personId, 'json')
+    );
+    await comparePersonalCalendarShadow(personId, notionEvents);
+  } catch (error) {
+    await recordCalendarShadowResult(
+      'personal',
+      personId,
+      null,
+      error.code || 'SHADOW_BASELINE_READ_FAILED'
+    );
+  }
+}
+
+async function compareCachedSharedCalendarShadow(kind, processor, payloadField) {
+  try {
+    const notionEvents = await loadCalendarShadowCachedEvents(
+      buildSharedCalendarCacheKey(kind, 'json')
+    );
+    const payload = await fetchPostgresCalendarFeed(kind);
+    const postgresRaw = payload?.[payloadField] || [];
+    const comparison = compareCalendarEventSets(notionEvents, processor(postgresRaw));
+    await recordCalendarShadowResult(kind, kind, comparison);
+  } catch (error) {
+    await recordCalendarShadowResult(
+      kind,
+      kind,
+      null,
+      error.code || 'SHADOW_BASELINE_READ_FAILED'
+    );
+  }
+}
+
 async function regenerateCalendarForPerson(personId, options = {}) {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
     return regenerateCalendarForPersonFromPostgres(personId, options);
@@ -6349,38 +6463,40 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     const auditEntries = await ensureCalendarShadowAuditIndex();
     shadowAuditState = {
       ...shadowAuditState,
-      phase: 'notion_regeneration_and_personal_comparison',
+      phase: 'cached_personal_comparison',
       totalPersonalComparisons: auditEntries.length,
     };
-    const personalSweep = await regenerateAllCalendars({
-      trigger: 'calendar_shadow_audit',
-      onResult: async (result) => {
-        await compareCalendarShadowSweepResult(result);
+    const comparisonConcurrency = Math.max(
+      1,
+      Math.min(Number(SHADOW_AUDIT_COMPARISON_CONCURRENCY) || 4, 12)
+    );
+    const personalResults = await mapWithConcurrency(
+      auditEntries,
+      comparisonConcurrency,
+      async (entry) => {
+        await compareCachedPersonalCalendarShadow(entry.personId);
         shadowAuditState = {
           ...shadowAuditState,
           completedPersonalComparisons:
             Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
         };
-      },
-    });
-    shadowAuditState = {
-      ...shadowAuditState,
-      totalPersonalComparisons: Number(personalSweep?.total) || 0,
-    };
-    shadowAuditState = { ...shadowAuditState, phase: 'global_comparison' };
+        return { success: true };
+      }
+    );
+    shadowAuditState = { ...shadowAuditState, phase: 'cached_global_comparison' };
     await Promise.allSettled([
-      getConfiguredAdminCalendarData(),
-      getConfiguredTravelCalendarData(),
-      getConfiguredBlockoutCalendarData(),
+      compareCachedSharedCalendarShadow('admin', processAdminEvents, 'events'),
+      compareCachedSharedCalendarShadow('travel', processTravelEvents, 'travelGroups'),
+      compareCachedSharedCalendarShadow('blockout', processBlockoutEvents, 'events'),
     ]);
     await waitForCalendarShadowComparisons();
     shadowAuditState = {
-      status: personalSweep?.success === false ? 'failed' : 'complete',
+      status: 'complete',
       phase: 'complete',
       startedAt,
       completedAt: new Date().toISOString(),
-      errorCode: personalSweep?.success === false ? 'PERSONAL_SWEEP_FAILED' : null,
-      totalPersonalComparisons: shadowAuditState.totalPersonalComparisons || 0,
+      errorCode: null,
+      totalPersonalComparisons: personalResults.length,
       completedPersonalComparisons: shadowAuditState.completedPersonalComparisons || 0,
     };
   })().catch((error) => {
