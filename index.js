@@ -875,6 +875,7 @@ function summarizeCalendarShadowEntries(entries) {
     missingFromPostgres: 0,
     extraInPostgres: 0,
     pairedEvents: 0,
+    pairsByMethod: {},
     exactPairedEvents: 0,
     semanticPairedEvents: 0,
     unpairedNotion: 0,
@@ -928,6 +929,10 @@ function summarizeCalendarShadowEntries(entries) {
     summary.missingFromPostgres += Number(entry.comparison.missingFromPostgresCount) || 0;
     summary.extraInPostgres += Number(entry.comparison.extraInPostgresCount) || 0;
     summary.pairedEvents += Number(entry.comparison.pairedCount) || 0;
+    for (const [method, count] of Object.entries(entry.comparison.pairsByMethod || {})) {
+      summary.pairsByMethod[method] = (summary.pairsByMethod[method] || 0)
+        + (Number(count) || 0);
+    }
     summary.exactPairedEvents += Number(entry.comparison.exactPairCount) || 0;
     summary.semanticPairedEvents += Number(entry.comparison.semanticPairCount) || 0;
     summary.unpairedNotion += Number(entry.comparison.unpairedNotionCount) || 0;
@@ -3411,7 +3416,9 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
     totalCalendarEvents: allCalendarEvents.length,
     dataSource,
     breakdown,
-    events: allCalendarEvents
+    // comparisonIdentity is private, in-process shadow metadata. Never place
+    // it in the public JSON subscription artifact.
+    events: allCalendarEvents.map(publicCalendarEvent)
   };
   const jsonData = JSON.stringify(jsonResponse);
   return { icsData, googleIcsData, jsonResponse, jsonData };
@@ -3583,8 +3590,15 @@ async function composeSplitCacheForPerson(personId) {
 function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyProperty = 'occurrence_key') {
   return {
     uid: source?.[uidProperty] || undefined,
-    occurrenceKey: source?.[occurrenceKeyProperty] || undefined
+    occurrenceKey: source?.[occurrenceKeyProperty] || undefined,
+    comparisonIdentity: source?._comparison_identity || undefined
   };
+}
+
+function publicCalendarEvent(event = {}) {
+  const publicEvent = { ...event };
+  delete publicEvent.comparisonIdentity;
+  return publicEvent;
 }
 
 /** Build calendar event objects from calendarData. Shared by full regen and split regen. */

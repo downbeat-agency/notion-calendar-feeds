@@ -167,11 +167,41 @@ function canonicalNotionUrlIdentity(value) {
   try {
     const parsed = new URL(clean(value));
     const notionHost = /(?:^|\.)notion\.(?:so|com)$/u.test(parsed.hostname.toLowerCase());
-    const notionPageId = notionHost ? canonicalNotionPageId(parsed.href) : '';
+    // A Notion URL can also carry a database-view id in its query string.
+    // Only the path identifies the linked page.
+    const notionPageId = notionHost ? canonicalNotionPageId(parsed.pathname) : '';
     return notionPageId ? `notion:${notionPageId}` : '';
   } catch {
     return '';
   }
+}
+
+function canonicalDownbeatTimelineIdentity(value) {
+  const candidates = clean(value).match(/https?:\/\/[^\s<>]+/giu) || [];
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.hostname.toLowerCase() !== 'music.downbeat.agency') continue;
+      const match = parsed.pathname.match(
+        /^\/timeline\/(?:[eq]\/)?([0-9a-f]{32}|[0-9a-f-]{36})(?:\/|$)/iu
+      );
+      if (match) return `event:${match[1].toLowerCase().replaceAll('-', '')}`;
+    } catch {
+      // Ignore a malformed candidate and continue looking for a valid timeline link.
+    }
+  }
+  return '';
+}
+
+function mainEventComparisonIdentity(event = {}) {
+  if (clean(event.type, 100) !== 'main_event') return '';
+  const explicit = clean(event.comparisonIdentity, 200).toLowerCase();
+  if (/^event:[0-9a-f]{32}$/u.test(explicit)) return explicit;
+  const timelineIdentity = canonicalDownbeatTimelineIdentity(event.description);
+  if (timelineIdentity) return timelineIdentity;
+  const notionIdentity = canonicalNotionUrlIdentity(event.url)
+    || embeddedNotionUrlIdentity(event.description);
+  return notionIdentity ? notionIdentity.replace(/^notion:/u, 'event:') : '';
 }
 
 function canonicalUrlIdentity(value) {
@@ -311,6 +341,14 @@ export function pairCalendarEvents(notionEvents, postgresEvents) {
     return value ? `${comparableField(event, 'type')}|${value}` : '';
   };
 
+  pairByKey(
+    notionEntries,
+    postgresEntries,
+    typed(mainEventComparisonIdentity),
+    'sourceIdentity',
+    pairs,
+    pairsByMethod
+  );
   pairByKey(notionEntries, postgresEntries, typed((event) => canonicalUrlIdentity(event.url)), 'url', pairs, pairsByMethod);
   pairByKey(
     notionEntries,

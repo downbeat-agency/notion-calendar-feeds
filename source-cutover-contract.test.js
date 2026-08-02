@@ -26,6 +26,8 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /buildCalendarEventsFromCalendarData\(calendarData\)/u);
   assert.match(source, /id: event\.uid \|\| undefined/u);
   assert.match(source, /dataSource: 'postgres'/u);
+  assert.match(source, /events: allCalendarEvents\.map\(publicCalendarEvent\)/u);
+  assert.match(source, /delete publicEvent\.comparisonIdentity/u);
 });
 
 test('Postgres mode does not run the Notion fleet sweep', () => {
@@ -55,4 +57,5 @@ test('shadow parity report and audit runner require service authentication', () 
   assert.match(source, /phase: 'cached_personal_comparison'/u);
   assert.match(source, /SHADOW_BASELINE_CACHE_MISSING/u);
   assert.match(source, /pageSize: 100,\s+pagesPerRun: 1000/u);
+  assert.match(source, /summary\.pairsByMethod\[method\]/u);
 });

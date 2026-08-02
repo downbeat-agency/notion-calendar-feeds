@@ -155,6 +155,26 @@ test('shadow comparison recognizes equivalent Notion URL forms without hiding ex
   assert.equal(comparison.semanticFieldMismatchCounts.description, 0);
 });
 
+test('shadow comparison ignores a Notion database-view id when identifying the page', () => {
+  const pageId = '123456781234123412341234567890ab';
+  const viewId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const notion = [{
+    type: 'hotel',
+    title: 'Hotel',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-02T10:00:00Z',
+    url: `https://app.notion.com/workspace/Hotel-${pageId}?v=${viewId}`,
+  }];
+  const postgres = [{
+    ...notion[0],
+    url: `https://www.notion.so/${pageId}?pvs=4`,
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.pairsByMethod.url, 1);
+  assert.equal(comparison.semanticFieldMismatchCounts.url, 0);
+});
+
 test('shadow comparison does not canonicalize unrelated URLs that contain a 32-character id', () => {
   const notion = [{
     type: 'main_event',
@@ -263,5 +283,29 @@ test('shadow comparison uses embedded Notion links as strong occurrence identiti
   }];
   const comparison = compareCalendarEventSets(notion, postgres);
   assert.equal(comparison.pairedCount, 1);
-  assert.equal(comparison.pairsByMethod.descriptionUrl, 1);
+  assert.equal(comparison.pairsByMethod.sourceIdentity, 1);
+});
+
+test('shadow comparison pairs main events by canonical source identity before titles or dates', () => {
+  const eventPageId = '25f39e4a65a980688175d789a9befcdd';
+  const notion = [{
+    type: 'main_event',
+    title: 'Legacy private title',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T12:00:00Z',
+    description: `Timeline: https://music.downbeat.agency/timeline/${eventPageId}`,
+  }];
+  const postgres = [{
+    type: 'main_event',
+    title: 'Current private title',
+    start: '2026-08-15T10:00:00Z',
+    end: '2026-08-15T12:00:00Z',
+    comparisonIdentity: `event:${eventPageId}`,
+  }];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 1);
+  assert.equal(comparison.pairsByMethod.sourceIdentity, 1);
+  assert.equal(comparison.unpairedNotionCount, 0);
+  assert.equal(comparison.unpairedPostgresCount, 0);
+  assert.doesNotMatch(JSON.stringify(comparison), new RegExp(eventPageId, 'u'));
 });

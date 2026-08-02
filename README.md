@@ -39,7 +39,7 @@ CALENDAR_FEED_SERVICE_KEY=<same high-entropy secret configured in Downbeat>
 CALENDAR_FEED_API_TIMEOUT_MS=25000 # optional
 ```
 
-Shadow diagnostics include only occurrence counts, type counts, and content hashes. They do not log names, titles, notes, locations, or booking details.
+Shadow diagnostics include only occurrence counts, type counts, pairing-method counts, and content hashes. Main events pair first by a private canonical source identity supplied by Downbeat; that identity is removed from public JSON artifacts. Diagnostics do not log names, titles, notes, locations, source identities, or booking details.
 
 Postgres mode uses a separate Redis namespace, assigns stable ICS UIDs supplied by Downbeat, preserves last-known-good calendar artifacts on downstream failures, and disables the Notion fleet sweep. The existing calendar URLs—including personal, Google, Admin, Travel, and Blockout routes—do not change.
 
