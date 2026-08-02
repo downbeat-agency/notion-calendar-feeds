@@ -172,3 +172,22 @@ test('shadow exact comparison treats duplicate occurrences as a multiset', () =>
   assert.equal(comparison.missingFromPostgresCount, 1);
   assert.equal(comparison.extraInPostgresCount, 0);
 });
+
+test('shadow comparison pairs repeated titles to the nearest occurrence time', () => {
+  const event = (start) => ({
+    type: 'rehearsal',
+    title: 'Rehearsal',
+    start,
+    end: start,
+  });
+  const notion = [event('2026-08-01T10:00:00Z'), event('2026-08-08T10:00:00Z')];
+  const postgres = [
+    event('2026-07-25T10:00:00Z'),
+    event('2026-08-01T10:00:00Z'),
+    event('2026-08-08T10:00:00Z'),
+  ];
+  const comparison = compareCalendarEventSets(notion, postgres);
+  assert.equal(comparison.pairedCount, 2);
+  assert.equal(comparison.fieldMismatchCounts.start, 0);
+  assert.equal(comparison.unpairedPostgresByType.rehearsal, 1);
+});

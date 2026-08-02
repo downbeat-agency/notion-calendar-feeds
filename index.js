@@ -99,6 +99,11 @@ const SHADOW_PARITY_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SHADOW_AUDIT_COMPARISON_CONCURRENCY = Number(
   process.env.SHADOW_AUDIT_COMPARISON_CONCURRENCY || 4
 );
+const SHADOW_BASELINE_UNAVAILABLE_CODES = new Set([
+  'SHADOW_AUDIT_CACHE_UNAVAILABLE',
+  'SHADOW_BASELINE_CACHE_MISSING',
+  'SHADOW_BASELINE_CACHE_INVALID',
+]);
 const shadowParityMemory = new Map();
 const activeShadowComparisons = new Set();
 let activeShadowAudit = null;
@@ -110,6 +115,8 @@ let shadowAuditState = {
   errorCode: null,
   totalPersonalComparisons: 0,
   completedPersonalComparisons: 0,
+  baselineUnavailablePersonalComparisons: 0,
+  baselineUnavailableGlobalComparisons: 0,
 };
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
@@ -174,6 +181,16 @@ function normalizeCalendarDataIndexEntries(entries) {
     });
   }
 
+  return Array.from(deduped.values());
+}
+
+function uniqueCalendarDataIndexEntriesByPerson(entries) {
+  const deduped = new Map();
+  for (const entry of normalizeCalendarDataIndexEntries(entries)) {
+    const personId = normalizeNotionPageId(entry.personId);
+    if (!personId || deduped.has(personId)) continue;
+    deduped.set(personId, entry);
+  }
   return Array.from(deduped.values());
 }
 
@@ -852,6 +869,7 @@ function summarizeCalendarShadowEntries(entries) {
     semanticMatches: 0,
     semanticMismatches: 0,
     errors: 0,
+    baselineUnavailable: 0,
     notionEvents: 0,
     postgresEvents: 0,
     missingFromPostgres: 0,
@@ -877,11 +895,17 @@ function summarizeCalendarShadowEntries(entries) {
       semanticMatches: 0,
       semanticMismatches: 0,
       errors: 0,
+      baselineUnavailable: 0,
     };
     kindSummary.comparisons += 1;
     if (entry.errorCode || !entry.comparison) {
-      summary.errors += 1;
-      kindSummary.errors += 1;
+      if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(entry.errorCode)) {
+        summary.baselineUnavailable += 1;
+        kindSummary.baselineUnavailable += 1;
+      } else {
+        summary.errors += 1;
+        kindSummary.errors += 1;
+      }
       summary.byKind[entry.kind] = kindSummary;
       continue;
     }
@@ -4004,8 +4028,10 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
     const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
     const comparison = compareCalendarEventSets(notionEvents, postgresEvents);
     await recordCalendarShadowResult('personal', personId, comparison);
+    return { status: 'compared' };
   } catch (error) {
     await recordCalendarShadowResult('personal', personId, null, error.code || 'UNKNOWN');
+    return { status: 'error' };
   }
 }
 
@@ -4090,14 +4116,18 @@ async function compareCachedPersonalCalendarShadow(personId) {
     const notionEvents = await loadCalendarShadowCachedEvents(
       buildCalendarCacheKey(personId, 'json')
     );
-    await comparePersonalCalendarShadow(personId, notionEvents);
+    return await comparePersonalCalendarShadow(personId, notionEvents);
   } catch (error) {
+    if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(error.code)) {
+      return { status: 'baseline_unavailable' };
+    }
     await recordCalendarShadowResult(
       'personal',
       personId,
       null,
       error.code || 'SHADOW_BASELINE_READ_FAILED'
     );
+    return { status: 'error' };
   }
 }
 
@@ -4110,13 +4140,18 @@ async function compareCachedSharedCalendarShadow(kind, processor, payloadField) 
     const postgresRaw = payload?.[payloadField] || [];
     const comparison = compareCalendarEventSets(notionEvents, processor(postgresRaw));
     await recordCalendarShadowResult(kind, kind, comparison);
+    return { status: 'compared' };
   } catch (error) {
+    if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(error.code)) {
+      return { status: 'baseline_unavailable' };
+    }
     await recordCalendarShadowResult(
       kind,
       kind,
       null,
       error.code || 'SHADOW_BASELINE_READ_FAILED'
     );
+    return { status: 'error' };
   }
 }
 
@@ -6443,7 +6478,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   let expectedPersonalComparisons = 0;
   try {
     const cachedAuditIndex = await getCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY);
-    expectedPersonalComparisons = normalizeCalendarDataIndexEntries(
+    expectedPersonalComparisons = uniqueCalendarDataIndexEntriesByPerson(
       cachedAuditIndex?.entries
     ).length;
   } catch (error) {
@@ -6457,10 +6492,13 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     errorCode: null,
     totalPersonalComparisons: expectedPersonalComparisons,
     completedPersonalComparisons: 0,
+    baselineUnavailablePersonalComparisons: 0,
+    baselineUnavailableGlobalComparisons: 0,
   };
   res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
   activeShadowAudit = (async () => {
-    const auditEntries = await ensureCalendarShadowAuditIndex();
+    const indexedEntries = await ensureCalendarShadowAuditIndex();
+    const auditEntries = uniqueCalendarDataIndexEntriesByPerson(indexedEntries);
     shadowAuditState = {
       ...shadowAuditState,
       phase: 'cached_personal_comparison',
@@ -6474,17 +6512,17 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       auditEntries,
       comparisonConcurrency,
       async (entry) => {
-        await compareCachedPersonalCalendarShadow(entry.personId);
+        const result = await compareCachedPersonalCalendarShadow(entry.personId);
         shadowAuditState = {
           ...shadowAuditState,
           completedPersonalComparisons:
             Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
         };
-        return { success: true };
+        return result;
       }
     );
     shadowAuditState = { ...shadowAuditState, phase: 'cached_global_comparison' };
-    await Promise.allSettled([
+    const globalResults = await Promise.all([
       compareCachedSharedCalendarShadow('admin', processAdminEvents, 'events'),
       compareCachedSharedCalendarShadow('travel', processTravelEvents, 'travelGroups'),
       compareCachedSharedCalendarShadow('blockout', processBlockoutEvents, 'events'),
@@ -6498,6 +6536,12 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       errorCode: null,
       totalPersonalComparisons: personalResults.length,
       completedPersonalComparisons: shadowAuditState.completedPersonalComparisons || 0,
+      baselineUnavailablePersonalComparisons: personalResults.filter(
+        (result) => result?.status === 'baseline_unavailable'
+      ).length,
+      baselineUnavailableGlobalComparisons: globalResults.filter(
+        (result) => result?.status === 'baseline_unavailable'
+      ).length,
     };
   })().catch((error) => {
     shadowAuditState = {

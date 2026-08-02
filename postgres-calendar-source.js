@@ -198,21 +198,30 @@ function groupUnmatched(entries, keyFn) {
   return groups;
 }
 
+function eventStartDistance(left, right) {
+  const leftMs = new Date(left?.start).getTime();
+  const rightMs = new Date(right?.start).getTime();
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return Number.POSITIVE_INFINITY;
+  return Math.abs(leftMs - rightMs);
+}
+
 function pairByKey(notionEntries, postgresEntries, keyFn, method, pairs, pairsByMethod) {
   const notionGroups = groupUnmatched(notionEntries, keyFn);
   const postgresGroups = groupUnmatched(postgresEntries, keyFn);
   for (const [key, notionGroup] of notionGroups) {
     const postgresGroup = postgresGroups.get(key);
     if (!postgresGroup) continue;
-    const byStart = (left, right) => comparableField(left.event, 'start')
-      .localeCompare(comparableField(right.event, 'start'));
-    notionGroup.sort(byStart);
-    postgresGroup.sort(byStart);
-    const pairCount = Math.min(notionGroup.length, postgresGroup.length);
-    for (let index = 0; index < pairCount; index += 1) {
-      notionGroup[index].matched = true;
-      postgresGroup[index].matched = true;
-      pairs.push([notionGroup[index].event, postgresGroup[index].event]);
+    notionGroup.sort((left, right) => comparableField(left.event, 'start')
+      .localeCompare(comparableField(right.event, 'start')));
+    for (const notionEntry of notionGroup) {
+      const match = postgresGroup
+        .filter((postgresEntry) => !postgresEntry.matched)
+        .sort((left, right) => eventStartDistance(notionEntry.event, left.event)
+          - eventStartDistance(notionEntry.event, right.event))[0];
+      if (!match) break;
+      notionEntry.matched = true;
+      match.matched = true;
+      pairs.push([notionEntry.event, match.event, method]);
       pairsByMethod[method] = (pairsByMethod[method] || 0) + 1;
     }
   }
@@ -231,21 +240,23 @@ function pairByContainedIdentity(
     const notionType = comparableField(notionEntry.event, 'type');
     const notionIdentity = identityFn(notionEntry.event);
     if (notionIdentity.length < 8) continue;
-    const match = postgresEntries.find((postgresEntry) => {
+    const matches = postgresEntries.filter((postgresEntry) => {
       if (postgresEntry.matched || comparableField(postgresEntry.event, 'type') !== notionType) return false;
       const postgresIdentity = identityFn(postgresEntry.event);
       return postgresIdentity.length >= 8
         && (notionIdentity.includes(postgresIdentity) || postgresIdentity.includes(notionIdentity));
     });
+    const match = matches.sort((left, right) => eventStartDistance(notionEntry.event, left.event)
+      - eventStartDistance(notionEntry.event, right.event))[0];
     if (!match) continue;
     notionEntry.matched = true;
     match.matched = true;
-    pairs.push([notionEntry.event, match.event]);
+    pairs.push([notionEntry.event, match.event, method]);
     pairsByMethod[method] = (pairsByMethod[method] || 0) + 1;
   }
 }
 
-function pairCalendarEvents(notionEvents, postgresEvents) {
+export function pairCalendarEvents(notionEvents, postgresEvents) {
   const notionEntries = notionEvents.map((event) => ({ event, matched: false }));
   const postgresEntries = postgresEvents.map((event) => ({ event, matched: false }));
   const pairs = [];
