@@ -1,11 +1,11 @@
-# Notion Calendar Feeds
+# Downbeat Calendar Feeds
 
-A Node.js application for managing Notion calendar feeds.
+A Node.js compatibility edge for Downbeat calendar subscriptions. Existing public subscription URLs and ICS presentation stay here; the backing data source can be Notion or the Downbeat Postgres projector.
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js (v14 or higher)
+- Node.js 20 or higher
 - npm or yarn
 
 ### Installation
@@ -23,7 +23,25 @@ A Node.js application for managing Notion calendar feeds.
 
 ## Usage
 
-TODO: Add usage instructions here.
+The source defaults to Notion. A safe rollout uses these values in order:
+
+```text
+CALENDAR_FEED_SOURCE=notion   # current behavior
+CALENDAR_FEED_SOURCE=shadow   # serve Notion, compare Postgres in the background
+CALENDAR_FEED_SOURCE=postgres # serve Postgres through the same URLs and renderer
+```
+
+`shadow` and `postgres` also require:
+
+```text
+CALENDAR_FEED_API_BASE_URL=https://<downbeat-app-host>
+CALENDAR_FEED_SERVICE_KEY=<same high-entropy secret configured in Downbeat>
+CALENDAR_FEED_API_TIMEOUT_MS=25000 # optional
+```
+
+Shadow diagnostics include only occurrence counts, type counts, and content hashes. They do not log names, titles, notes, locations, or booking details.
+
+Postgres mode uses a separate Redis namespace, assigns stable ICS UIDs supplied by Downbeat, preserves last-known-good calendar artifacts on downstream failures, and disables the Notion fleet sweep. The existing calendar URLs—including personal, Google, Admin, Travel, and Blockout routes—do not change.
 
 ## Contributing
 

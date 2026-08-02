@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "test": "node --test admin-json.test.js"
+    "test": "node --test admin-json.test.js postgres-calendar-source.test.js source-cutover-contract.test.js"
   },
   "keywords": [
     "notion",

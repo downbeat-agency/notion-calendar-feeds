@@ -5,6 +5,11 @@ import ical from 'ical-generator';
 import { createClient } from 'redis';
 import path from 'path';
 import { parseNotionFormulaJsonArray } from './admin-json.js';
+import {
+  compareCalendarEventSets,
+  configuredCalendarFeedSource,
+  fetchPostgresCalendarFeed,
+} from './postgres-calendar-source.js';
 
 // Server refresh - October 1, 2025
 // Updated with event_personnel field support - October 8, 2025
@@ -76,6 +81,14 @@ const ADMIN_EVENTS_PROPERTY_ID = process.env.ADMIN_EVENTS_PROPERTY_ID || null;
 const ADMIN_EVENTS_1_PROPERTY_ID = process.env.ADMIN_EVENTS_1_PROPERTY_ID || null;
 const ADMIN_EVENTS_2_PROPERTY_ID = process.env.ADMIN_EVENTS_2_PROPERTY_ID || null;
 const TRAVEL_ADMIN_PROPERTY_ID = process.env.TRAVEL_ADMIN_PROPERTY_ID || '%3B%3CuW';
+const CALENDAR_FEED_SOURCE = configuredCalendarFeedSource();
+
+console.log(`📅 Calendar feed source mode: ${CALENDAR_FEED_SOURCE}`);
+if (CALENDAR_FEED_SOURCE === 'shadow') {
+  console.log('   Serving Notion calendars while comparing Postgres projections in the background');
+} else if (CALENDAR_FEED_SOURCE === 'postgres') {
+  console.log('   Serving Postgres projections through the existing subscription URLs and renderer');
+}
 
 // Cache TTL in seconds (30 minutes by default)
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
@@ -687,10 +700,16 @@ function isSplitModeAllowedForPerson(personId, regenMode) {
 }
 
 function buildCalendarCacheKey(personId, formatKey, regenMode = REGEN_MODE_FULL) {
+  const prefix = CALENDAR_FEED_SOURCE === 'postgres' ? 'calendar:postgres' : 'calendar';
   if (regenMode === REGEN_MODE_FULL) {
-    return `calendar:${personId}:${formatKey}`;
+    return `${prefix}:${personId}:${formatKey}`;
   }
-  return `calendar:${personId}:${regenMode}:${formatKey}`;
+  return `${prefix}:${personId}:${regenMode}:${formatKey}`;
+}
+
+function buildSharedCalendarCacheKey(kind, formatKey) {
+  const prefix = CALENDAR_FEED_SOURCE === 'postgres' ? 'calendar:postgres' : 'calendar';
+  return `${prefix}:${kind}:${formatKey}`;
 }
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -3078,6 +3097,7 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
     const endDate = normalizeCalendarEventDate(event.end) || startDate;
     if (!startDate || !endDate) return;
     calendar.createEvent({
+      id: event.uid || undefined,
       start: startDate,
       end: endDate,
       summary: event.title,
@@ -3240,7 +3260,7 @@ async function composeSplitCacheForPerson(personId) {
   allCalendarEvents.forEach(event => {
     const startDate = event.start instanceof Date ? event.start : new Date(event.start);
     const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-    calendar.createEvent({ start: startDate, end: endDate, summary: event.title, description: event.description, location: event.location, url: event.url || '', floating: true, alarms: getAlarmsForEvent(event.type, event.title) });
+    calendar.createEvent({ id: event.uid || undefined, start: startDate, end: endDate, summary: event.title, description: event.description, location: event.location, url: event.url || '', floating: true, alarms: getAlarmsForEvent(event.type, event.title) });
   });
   const icsData = serializeCalendar(calendar);
   const googleIcsData = serializeGoogleCalendar(calendar);
@@ -3266,6 +3286,13 @@ async function composeSplitCacheForPerson(personId) {
   await setCalendarCache(`calendar:${personId}:json`, JSON.stringify(jsonResponse));
   verboseLog(`✅ Composed full cache for ${personId} (${allCalendarEvents.length} events from split)`);
   return true;
+}
+
+function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyProperty = 'occurrence_key') {
+  return {
+    uid: source?.[uidProperty] || undefined,
+    occurrenceKey: source?.[occurrenceKeyProperty] || undefined
+  };
 }
 
 /** Build calendar event objects from calendarData. Shared by full regen and split regen. */
@@ -3326,7 +3353,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const personnelText = sanitizePersonnelTimesAsText(personnelConverted);
         let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
         let notionUrlInfo = event.notion_url?.trim() ? `Notion Link: ${event.notion_url}\n\n` : '';
-        allCalendarEvents.push({ type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
     }
     (event.flights || []).forEach(flight => {
@@ -3336,7 +3363,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         departureTimes = shiftRangeByDays(departureTimes, helperDeltaDays);
         const personName = calendarData.personName || '';
         const desc = buildFlightDescription(flight, 'departure', departureTimes.start, departureTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', airline: flight.departure_airline || '', flightNumber: flight.departure_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', airline: flight.departure_airline || '', flightNumber: flight.departure_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
       }
       if (flight.return_time && flight.return_name) {
         let returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
@@ -3344,7 +3371,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         returnTimes = shiftRangeByDays(returnTimes, helperDeltaDays);
         const personName = calendarData.personName || '';
         const desc = buildFlightDescription(flight, 'return', returnTimes.start, returnTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', airline: flight.return_airline || '', flightNumber: flight.return_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', airline: flight.return_airline || '', flightNumber: flight.return_flightnumber || '', confirmation: flight.confirmation || '', mainEvent: event.event_name });
       }
       if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
         let loTimes = parseUnifiedDateTime(flight.departure_lo_time);
@@ -3352,7 +3379,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         loTimes = shiftRangeByDays(loTimes, helperDeltaDays);
         const personName = calendarData.personName || '';
         const loDesc = buildLayoverDescription(flight, 'departure_lo', loTimes.start, loTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
       }
       if (flight.return_lo_time && flight.return_lo_flightnumber) {
         let loTimes = parseUnifiedDateTime(flight.return_lo_time);
@@ -3360,7 +3387,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         loTimes = shiftRangeByDays(loTimes, helperDeltaDays);
         const personName = calendarData.personName || '';
         const loDesc = buildLayoverDescription(flight, 'return_lo', loTimes.start, loTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: event.event_name });
       }
     });
     (getNestedRehearsals(event) || []).forEach(rehearsal => {
@@ -3371,7 +3398,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ type: 'rehearsal', title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: event.event_name });
       }
     });
     (event.hotels || []).forEach(hotel => {
@@ -3379,7 +3406,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       if (hotelTimes) {
         hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
         const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-        allCalendarEvents.push({ type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
       }
     });
     (event.ground_transport || []).forEach(transport => {
@@ -3391,7 +3418,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime()) ? new Date(endParsed.end) : new Date(startTime.getTime() + 30 * 60 * 1000);
           const title = normalizeTransportTitle(transport.title);
           const transportEmoji = getGroundTransportEmoji(transport, title);
-          allCalendarEvents.push({ type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
+          allCalendarEvents.push({ ...calendarOccurrence(transport), type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
         }
       }
     });
@@ -3402,25 +3429,25 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       const departureTimes = getFlightLegTimes(flight.departure_time, flight.departure_arrival_time);
       if (departureTimes) {
         const desc = buildFlightDescription(flight, 'departure', departureTimes.start, departureTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_departure', title: `✈️ ${flight.departure_name || 'Flight Departure'}`, start: departureTimes.start, end: departureTimes.end, description: desc, location: flight.departure_airport_address || flight.departure_airport || '', url: flight.flight_url || '', mainEvent: '' });
       }
     }
     if (flight.return_time && flight.return_name) {
       const returnTimes = getFlightLegTimes(flight.return_time, flight.return_arrival_time);
       if (returnTimes) {
         const desc = buildFlightDescription(flight, 'return', returnTimes.start, returnTimes.end, personName);
-        allCalendarEvents.push({ type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_return', title: `✈️ ${flight.return_name || 'Flight Return'}`, start: returnTimes.start, end: returnTimes.end, description: desc, location: flight.return_airport_address || flight.return_airport || '', url: flight.flight_url || '', mainEvent: '' });
       }
     }
     if (flight.departure_lo_time && flight.departure_lo_flightnumber) {
       const loTimes = parseUnifiedDateTime(flight.departure_lo_time) || { start: flight.departure_lo_time, end: flight.departure_lo_time };
       const loDesc = buildLayoverDescription(flight, 'departure_lo', loTimes.start, loTimes.end, personName);
-      allCalendarEvents.push({ type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_departure_layover', title: `✈️ Layover: ${flight.departure_lo_from_airport || 'N/A'} → ${flight.departure_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.departure_lo_from_airport_address || flight.departure_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
     }
     if (flight.return_lo_time && flight.return_lo_flightnumber) {
       const loTimes = parseUnifiedDateTime(flight.return_lo_time) || { start: flight.return_lo_time, end: flight.return_lo_time };
       const loDesc = buildLayoverDescription(flight, 'return_lo', loTimes.start, loTimes.end, personName);
-      allCalendarEvents.push({ type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
+      allCalendarEvents.push({ ...calendarOccurrence(flight), type: 'flight_return_layover', title: `✈️ Layover: ${flight.return_lo_from_airport || 'N/A'} → ${flight.return_lo_to_airport || 'N/A'}`, start: loTimes.start, end: loTimes.end, description: loDesc, location: flight.return_lo_from_airport_address || flight.return_lo_from_airport || '', url: flight.flight_url || '', mainEvent: '' });
     }
   });
   topLevelRehearsals.forEach(rehearsal => {
@@ -3431,7 +3458,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ type: 'rehearsal', title: '🎤 Rehearsal', start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: '🎤 Rehearsal', start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: '' });
       }
     }
   });
@@ -3439,7 +3466,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
     const hotelTimes = hotel.dates_booked ? parseUnifiedDateTime(hotel.dates_booked) : null;
     if (hotelTimes) {
       const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-      allCalendarEvents.push({ type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
+      allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
     }
   });
   topLevelTransport.forEach(transport => {
@@ -3450,7 +3477,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const title = normalizeTransportTitle(transport.title);
         const eventType = transport.type === 'ground_transport_pickup' ? 'ground_transport_pickup' : transport.type === 'ground_transport_dropoff' ? 'ground_transport_dropoff' : transport.type === 'ground_transport_meeting' ? 'ground_transport_meeting' : 'ground_transport';
         const transportEmoji = getGroundTransportEmoji(transport, title);
-        allCalendarEvents.push({ type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(transport), type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
       }
     }
   });
@@ -3463,21 +3490,21 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const emoji = isOOO ? '⛔️' : isMeeting ? '💼' : '📅';
         let endDate = eventTimes.end;
         if (isOOO) { endDate = new Date(eventTimes.end); endDate.setDate(endDate.getDate() + 1); }
-        allCalendarEvents.push({ type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: teamEvent.notion_link || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(teamEvent), type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: teamEvent.notion_link || '', mainEvent: '' });
       }
     }
   });
   topLevelEventNoteReminders.forEach(reminder => {
     if (reminder.remind_date) {
       const reminderTimes = parseUnifiedDateTime(reminder.remind_date);
-      if (reminderTimes) allCalendarEvents.push({ type: 'event_note_reminder', title: '🔔 Event Reminder', start: reminderTimes.start, end: reminderTimes.end, description: [reminder.event_name, reminder.description].filter(Boolean).join('\n\n'), location: '', url: reminder.notion_link || '', mainEvent: '' });
+      if (reminderTimes) allCalendarEvents.push({ ...calendarOccurrence(reminder), type: 'event_note_reminder', title: '🔔 Event Reminder', start: reminderTimes.start, end: reminderTimes.end, description: [reminder.event_name, reminder.description].filter(Boolean).join('\n\n'), location: '', url: reminder.notion_link || '', mainEvent: '' });
     }
   });
   return allCalendarEvents;
 }
 
 // Helper function to rebuild and cache a single person's calendar.
-async function regenerateCalendarForPerson(personId, options = {}) {
+async function regenerateCalendarForPersonFromNotion(personId, options = {}) {
   const {
     trigger = 'unknown',
     clearCache = false,
@@ -3632,11 +3659,129 @@ async function regenerateCalendarForPerson(personId, options = {}) {
   }
 }
 
+function selectPostgresCalendarDataMode(calendarData, regenMode) {
+  const emptyNonEvents = {
+    flights: [],
+    rehearsals: [],
+    hotels: [],
+    ground_transport: [],
+    team_calendar: [],
+    event_note_reminders: []
+  };
+  if (regenMode === REGEN_MODE_EVENTS_ONLY) {
+    return { ...calendarData, ...emptyNonEvents };
+  }
+  if (regenMode === REGEN_MODE_NON_EVENTS_ONLY) {
+    return { ...calendarData, events: [] };
+  }
+  return calendarData;
+}
+
+async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
+  const {
+    clearCache = false,
+    regenMode = REGEN_MODE_FULL
+  } = options;
+  const selectedRegenMode = parseRegenMode(regenMode) || REGEN_MODE_FULL;
+  try {
+    const payload = await fetchPostgresCalendarFeed('personal', personId);
+    const calendarData = selectPostgresCalendarDataMode(payload.calendarData || {}, selectedRegenMode);
+    const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
+    if (allCalendarEvents.length === 0) {
+      return { success: false, personId, reason: 'no_events' };
+    }
+    const personName = calendarData.personName || 'Unknown';
+    const totalMainEvents = allCalendarEvents.filter(event => event.type === 'main_event').length;
+    const artifacts = buildCalendarArtifacts(personName, allCalendarEvents, {
+      totalMainEvents,
+      regenMode: selectedRegenMode,
+      dataSource: 'postgres'
+    });
+    const cacheKeys = {
+      ics: buildCalendarCacheKey(personId, 'ics', selectedRegenMode),
+      googleIcs: buildCalendarCacheKey(personId, 'google_ics', selectedRegenMode),
+      json: buildCalendarCacheKey(personId, 'json', selectedRegenMode)
+    };
+    if (redis && cacheEnabled) {
+      if (clearCache) {
+        await Promise.all(Object.values(cacheKeys).map(key => redis.del(key)));
+      }
+      await Promise.all([
+        setCalendarCache(cacheKeys.ics, artifacts.icsData),
+        setCalendarCache(cacheKeys.googleIcs, artifacts.googleIcsData),
+        setCalendarCache(cacheKeys.json, artifacts.jsonData)
+      ]);
+    }
+    return {
+      success: true,
+      personId,
+      personName,
+      regenMode: selectedRegenMode,
+      eventCount: allCalendarEvents.length,
+      ...artifacts,
+      allCalendarEvents
+    };
+  } catch (error) {
+    console.error('[calendar-postgres] Personal projection failed:', error.code || 'UNKNOWN');
+    return { success: false, personId, reason: 'postgres_feed_failed', error: error.message };
+  }
+}
+
+async function comparePersonalCalendarShadow(personId, notionEvents = []) {
+  try {
+    const payload = await fetchPostgresCalendarFeed('personal', personId);
+    const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
+    const comparison = compareCalendarEventSets(notionEvents, postgresEvents);
+    console.log('[calendar-shadow] personal', JSON.stringify(comparison));
+  } catch (error) {
+    console.warn('[calendar-shadow] personal comparison failed:', error.code || 'UNKNOWN');
+  }
+}
+
+async function regenerateCalendarForPerson(personId, options = {}) {
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    return regenerateCalendarForPersonFromPostgres(personId, options);
+  }
+  const result = await regenerateCalendarForPersonFromNotion(personId, options);
+  const selectedRegenMode = parseRegenMode(options.regenMode) || REGEN_MODE_FULL;
+  if (
+    CALENDAR_FEED_SOURCE === 'shadow'
+    && selectedRegenMode === REGEN_MODE_FULL
+    && result.success
+  ) {
+    void comparePersonalCalendarShadow(personId, result.allCalendarEvents || []);
+  }
+  return result;
+}
+
 // Helper function to regenerate all calendars using batched parallel processing
 async function regenerateAllCalendars() {
   const startTime = Date.now();
   
   try {
+    if (CALENDAR_FEED_SOURCE === 'postgres') {
+      const peoplePayload = await fetchPostgresCalendarFeed('people');
+      const people = Array.isArray(peoplePayload.people) ? peoplePayload.people : [];
+      const concurrency = Math.max(1, DEFAULT_REGEN_CONCURRENCY);
+      const results = await mapWithConcurrency(people, concurrency, (person) =>
+        regenerateCalendarForPerson(person.notionPageId || person.personnelId, {
+          trigger: 'bulk_regen_postgres'
+        })
+      );
+      const totalSuccess = results.filter(result => result.success).length;
+      const totalSkipped = results.filter(result => result.reason === 'no_events').length;
+      return {
+        success: true,
+        source: 'postgres',
+        total: people.length,
+        concurrency,
+        successCount: totalSuccess,
+        failCount: results.length - totalSuccess - totalSkipped,
+        skippedCount: totalSkipped,
+        results,
+        timeSeconds: Math.round((Date.now() - startTime) / 1000)
+      };
+    }
     if (isNotionCircuitOpen()) {
       const waitMs = Math.max(0, notionCircuitOpenUntil - Date.now());
       return { success: false, error: `Notion circuit open (${waitMs}ms remaining)`, timeSeconds: 0 };
@@ -3696,6 +3841,10 @@ async function waitForManualRegensToDrain(context = 'background cycle') {
 }
 
 function startBackgroundJob() {
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    console.log('📅 Notion calendar sweep disabled in Postgres source mode; feeds refresh on demand.');
+    return;
+  }
   console.log(`🔄 Starting background calendar refresh job (run to completion, then wait ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes)`);
   console.log(`   Processing all people with bounded workers (concurrency=${BACKGROUND_REGEN_CONCURRENCY}) each cycle`);
   console.log(`   Waiting ${BACKGROUND_INITIAL_DELAY_MS}ms before the first cycle so dependencies can finish connecting`);
@@ -3775,7 +3924,7 @@ function startBackgroundJob() {
         try {
           verboseLog('🔄 Refreshing admin calendar...');
           const adminEvents = await withTimeout(
-            getAdminCalendarData(),
+            getConfiguredAdminCalendarData(),
             CALENDAR_FETCH_TIMEOUT_MS,
             `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
           );
@@ -3795,6 +3944,7 @@ function startBackgroundJob() {
               const endDate = event.end instanceof Date ? event.end : new Date(event.end);
               
               calendar.createEvent({
+                id: event.uid || undefined,
                 start: startDate,
                 end: endDate,
                 summary: event.title,
@@ -3807,7 +3957,7 @@ function startBackgroundJob() {
             });
             
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache('calendar:admin:ics', icsData);
+            await setCalendarCache(buildSharedCalendarCacheKey('admin', 'ics'), icsData);
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -3815,7 +3965,7 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache('calendar:admin:json', jsonData);
+            await setCalendarCache(buildSharedCalendarCacheKey('admin', 'json'), jsonData);
             
             console.log(`✅ Admin calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -3830,7 +3980,7 @@ function startBackgroundJob() {
         try {
           verboseLog('🔄 Refreshing travel calendar...');
           const travelEvents = await withTimeout(
-            getTravelCalendarData(),
+            getConfiguredTravelCalendarData(),
             CALENDAR_FETCH_TIMEOUT_MS,
             `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
           );
@@ -3850,6 +4000,7 @@ function startBackgroundJob() {
               const endDate = event.end instanceof Date ? event.end : new Date(event.end);
               
               calendar.createEvent({
+                id: event.uid || undefined,
                 start: startDate,
                 end: endDate,
                 summary: event.title,
@@ -3862,7 +4013,7 @@ function startBackgroundJob() {
             });
             
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache('calendar:travel:ics', icsData);
+            await setCalendarCache(buildSharedCalendarCacheKey('travel', 'ics'), icsData);
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -3870,7 +4021,7 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache('calendar:travel:json', jsonData);
+            await setCalendarCache(buildSharedCalendarCacheKey('travel', 'json'), jsonData);
             
             console.log(`✅ Travel calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -3885,7 +4036,7 @@ function startBackgroundJob() {
         try {
           verboseLog('🔄 Refreshing blockout calendar...');
           const blockoutEvents = await withTimeout(
-            getBlockoutCalendarData(),
+            getConfiguredBlockoutCalendarData(),
             CALENDAR_FETCH_TIMEOUT_MS,
             `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
           );
@@ -3900,6 +4051,7 @@ function startBackgroundJob() {
               const startDate = event.start instanceof Date ? event.start : new Date(event.start);
               const endDate = event.end instanceof Date ? event.end : new Date(event.end);
               calendar.createEvent({
+                id: event.uid || undefined,
                 start: startDate,
                 end: endDate,
                 summary: event.title,
@@ -3911,13 +4063,13 @@ function startBackgroundJob() {
               });
             });
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache('calendar:blockout:ics', icsData);
+            await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'ics'), icsData);
             const jsonData = JSON.stringify({
               calendar_name: 'Blockout Calendar',
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache('calendar:blockout:json', jsonData);
+            await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'json'), jsonData);
             console.log(`✅ Blockout calendar cached (${allCalendarEvents.length} events)`);
           }
         } catch (blockoutError) {
@@ -4240,6 +4392,7 @@ function processAdminEvents(eventsArray) {
         }
 
         allCalendarEvents.push({
+          ...calendarOccurrence(event),
           start: eventTimes.start,
           end: eventTimes.end,
           title: title,
@@ -4284,6 +4437,7 @@ function processAdminEvents(eventsArray) {
             }
 
             allCalendarEvents.push({
+              ...calendarOccurrence(rehearsal),
               type: 'rehearsal',
               title: title,
               start: rehearsalTimes.start,
@@ -4573,6 +4727,7 @@ function processTravelEvents(travelGroupsArray) {
             const url = flight.flight_url || flight.notion_url || '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(flight),
               start: depStart,
               end: depEnd,
               title: title,
@@ -4646,6 +4801,7 @@ function processTravelEvents(travelGroupsArray) {
             const url = flight.flight_url || flight.notion_url || '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(flight),
               start: retStart,
               end: retEnd,
               title: title,
@@ -4788,6 +4944,7 @@ function processTravelEvents(travelGroupsArray) {
             const url = hotel.hotel_url || hotel.notion_url || '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(hotel),
               start: checkIn,
               end: checkOutForEvent,
               title: title,
@@ -4849,6 +5006,7 @@ function processTravelEvents(travelGroupsArray) {
             const url = hotel.hotel_url || hotel.notion_url || '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(hotel, 'checkout_uid', 'checkout_occurrence_key'),
               start: checkOut,
               end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
               title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
@@ -4938,6 +5096,7 @@ function processTravelEvents(travelGroupsArray) {
               '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(transport),
               start: pickupTime,
               end: new Date(pickupTime.getTime() + 30 * 60 * 1000), // 30 minute event
               title: transport.transportation_name || transport.title || `Transportation Pickup: ${transport.pickup_name || 'Pickup'}`,
@@ -5014,6 +5173,7 @@ function processTravelEvents(travelGroupsArray) {
               '';
 
             allCalendarEvents.push({
+              ...calendarOccurrence(transport, 'dropoff_uid', 'dropoff_occurrence_key'),
               start: dropOffTime,
               end: new Date(dropOffTime.getTime() + 30 * 60 * 1000), // 30 minute event
               title: transport.transportation_name
@@ -5114,6 +5274,7 @@ function processBlockoutEvents(eventsArray) {
           const title = `Blockout: ${event.personnel_name}`;
 
           allCalendarEvents.push({
+            ...calendarOccurrence(event),
             start: startDate,
             end: endDate,
             title: title,
@@ -5130,6 +5291,50 @@ function processBlockoutEvents(eventsArray) {
   });
 
   return allCalendarEvents;
+}
+
+async function compareSharedCalendarShadow(kind, notionRaw, processor, payloadField) {
+  try {
+    const payload = await fetchPostgresCalendarFeed(kind);
+    const postgresRaw = payload?.[payloadField] || [];
+    const comparison = compareCalendarEventSets(processor(notionRaw), processor(postgresRaw));
+    console.log(`[calendar-shadow] ${kind}`, JSON.stringify(comparison));
+  } catch (error) {
+    console.warn(`[calendar-shadow] ${kind} comparison failed:`, error.code || 'UNKNOWN');
+  }
+}
+
+async function getConfiguredAdminCalendarData() {
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    return (await fetchPostgresCalendarFeed('admin')).events || [];
+  }
+  const events = await getAdminCalendarData();
+  if (CALENDAR_FEED_SOURCE === 'shadow') {
+    void compareSharedCalendarShadow('admin', events, processAdminEvents, 'events');
+  }
+  return events;
+}
+
+async function getConfiguredTravelCalendarData() {
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    return (await fetchPostgresCalendarFeed('travel')).travelGroups || [];
+  }
+  const groups = await getTravelCalendarData();
+  if (CALENDAR_FEED_SOURCE === 'shadow') {
+    void compareSharedCalendarShadow('travel', groups, processTravelEvents, 'travelGroups');
+  }
+  return groups;
+}
+
+async function getConfiguredBlockoutCalendarData() {
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    return (await fetchPostgresCalendarFeed('blockout')).events || [];
+  }
+  const events = await getBlockoutCalendarData();
+  if (CALENDAR_FEED_SOURCE === 'shadow') {
+    void compareSharedCalendarShadow('blockout', events, processBlockoutEvents, 'events');
+  }
+  return events;
 }
 
 // Debug endpoint for blockout calendar
@@ -6165,6 +6370,7 @@ function buildSharedCalendarIcsData({ name, description, events, alarmsForEvent 
     const endDate = event.end instanceof Date ? event.end : new Date(event.end);
 
     calendar.createEvent({
+      id: event.uid || undefined,
       start: startDate,
       end: endDate,
       summary: event.title,
@@ -8107,7 +8313,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
-    const cacheKey = `calendar:admin:${format}`;
+    const cacheKey = buildSharedCalendarCacheKey('admin', format);
     
     // Check cache first (unless fresh requested)
     if (redis && cacheEnabled && !forceFresh) {
@@ -8138,7 +8344,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     }
     
     // Check if admin calendar is configured
-    if (!ADMIN_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !ADMIN_CALENDAR_PAGE_ID) {
       const errorMsg = { 
         error: 'Admin calendar not configured',
         message: 'ADMIN_CALENDAR_PAGE_ID environment variable not set'
@@ -8155,7 +8361,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     let adminEvents;
     try {
       adminEvents = await withTimeout(
-        getAdminCalendarData(),
+        getConfiguredAdminCalendarData(),
         CALENDAR_FETCH_TIMEOUT_MS,
         `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
       );
@@ -8178,6 +8384,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     } catch (error) {
       console.error('Error fetching admin calendar data:', error);
       const isTransientNotionFailure =
+        CALENDAR_FEED_SOURCE === 'postgres' ||
         error.message?.includes('504') ||
         error.message?.includes('timeout') ||
         error.message?.includes('Gateway Timeout') ||
@@ -8203,8 +8410,8 @@ async function handleAdminCalendar(req, res, forcedFormat) {
 
           if (format !== 'json') {
             const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
-              jsonCacheKey: 'calendar:admin:json',
-              icsCacheKey: 'calendar:admin:ics',
+              jsonCacheKey: buildSharedCalendarCacheKey('admin', 'json'),
+              icsCacheKey: buildSharedCalendarCacheKey('admin', 'ics'),
               name: 'Admin Calendar',
               description: 'All upcoming events',
               filename: 'admin-calendar.ics'
@@ -8267,6 +8474,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
         
         calendar.createEvent({
+          id: event.uid || undefined,
           start: startDate,
           end: endDate,
           summary: event.title,
@@ -8309,7 +8517,7 @@ app.get('/admin/calendar', (req, res) => handleAdminCalendar(req, res));
 // Admin calendar regeneration endpoint (clears cache and regenerates)
 app.get('/admin/calendar/regen', async (req, res) => {
   try {
-    if (!ADMIN_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !ADMIN_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
         error: 'Admin calendar not configured',
         message: 'ADMIN_CALENDAR_PAGE_ID environment variable not set'
@@ -8320,7 +8528,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
 
     // Fetch fresh data
     const adminEvents = await withTimeout(
-      getAdminCalendarData(),
+      getConfiguredAdminCalendarData(),
       CALENDAR_FETCH_TIMEOUT_MS,
       `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
     );
@@ -8338,6 +8546,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
       const endDate = event.end instanceof Date ? event.end : new Date(event.end);
       
       calendar.createEvent({
+        id: event.uid || undefined,
         start: startDate,
         end: endDate,
         summary: event.title,
@@ -8361,8 +8570,8 @@ app.get('/admin/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache('calendar:admin:ics', icsData);
-        await setCalendarCache('calendar:admin:json', jsonData);
+        await setCalendarCache(buildSharedCalendarCacheKey('admin', 'ics'), icsData);
+        await setCalendarCache(buildSharedCalendarCacheKey('admin', 'json'), jsonData);
         console.log(`💾 Admin calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -8382,8 +8591,8 @@ app.get('/admin/calendar/regen', async (req, res) => {
     console.error('Admin calendar regen error:', error);
     try {
       const hasCachedCalendar = await hasUsableSharedCalendarCache({
-        jsonCacheKey: 'calendar:admin:json',
-        icsCacheKey: 'calendar:admin:ics',
+        jsonCacheKey: buildSharedCalendarCacheKey('admin', 'json'),
+        icsCacheKey: buildSharedCalendarCacheKey('admin', 'ics'),
         name: 'Admin Calendar',
         description: 'All upcoming events'
       });
@@ -8414,7 +8623,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
-    const cacheKey = `calendar:travel:${format}`;
+    const cacheKey = buildSharedCalendarCacheKey('travel', format);
     
     // Check cache first (unless fresh requested)
     if (redis && cacheEnabled && !forceFresh) {
@@ -8445,7 +8654,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     }
     
     // Check if travel calendar is configured
-    if (!TRAVEL_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !TRAVEL_CALENDAR_PAGE_ID) {
       const errorMsg = { 
         error: 'Travel calendar not configured',
         message: 'TRAVEL_CALENDAR_PAGE_ID environment variable not set'
@@ -8462,7 +8671,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     let travelEvents;
     try {
       travelEvents = await withTimeout(
-        getTravelCalendarData(),
+        getConfiguredTravelCalendarData(),
         CALENDAR_FETCH_TIMEOUT_MS,
         `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
       );
@@ -8484,6 +8693,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       
       // If Notion API times out, try to return cached data as fallback
       const isTimeout =
+        CALENDAR_FEED_SOURCE === 'postgres' ||
         error.message?.includes('504') ||
         error.message?.includes('timeout') ||
         error.message?.includes('Gateway Timeout') ||
@@ -8510,8 +8720,8 @@ async function handleTravelCalendar(req, res, forcedFormat) {
 
           if (format !== 'json') {
             const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
-              jsonCacheKey: 'calendar:travel:json',
-              icsCacheKey: 'calendar:travel:ics',
+              jsonCacheKey: buildSharedCalendarCacheKey('travel', 'json'),
+              icsCacheKey: buildSharedCalendarCacheKey('travel', 'ics'),
               name: 'Travel Calendar',
               description: 'All travel events',
               filename: 'travel-calendar.ics'
@@ -8574,6 +8784,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
         
         calendar.createEvent({
+          id: event.uid || undefined,
           start: startDate,
           end: endDate,
           summary: event.title,
@@ -8616,7 +8827,7 @@ app.get('/travel/calendar', (req, res) => handleTravelCalendar(req, res));
 // Travel calendar regeneration endpoint (clears cache and regenerates)
 app.get('/travel/calendar/regen', async (req, res) => {
   try {
-    if (!TRAVEL_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !TRAVEL_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
         error: 'Travel calendar not configured',
         message: 'TRAVEL_CALENDAR_PAGE_ID environment variable not set'
@@ -8627,7 +8838,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
 
     // Fetch fresh data
     const travelEvents = await withTimeout(
-      getTravelCalendarData(),
+      getConfiguredTravelCalendarData(),
       CALENDAR_FETCH_TIMEOUT_MS,
       `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
     );
@@ -8645,6 +8856,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
       const endDate = event.end instanceof Date ? event.end : new Date(event.end);
       
       calendar.createEvent({
+        id: event.uid || undefined,
         start: startDate,
         end: endDate,
         summary: event.title,
@@ -8668,8 +8880,8 @@ app.get('/travel/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache('calendar:travel:ics', icsData);
-        await setCalendarCache('calendar:travel:json', jsonData);
+        await setCalendarCache(buildSharedCalendarCacheKey('travel', 'ics'), icsData);
+        await setCalendarCache(buildSharedCalendarCacheKey('travel', 'json'), jsonData);
         console.log(`💾 Travel calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -8689,8 +8901,8 @@ app.get('/travel/calendar/regen', async (req, res) => {
     console.error('Travel calendar regen error:', error);
     try {
       const hasCachedCalendar = await hasUsableSharedCalendarCache({
-        jsonCacheKey: 'calendar:travel:json',
-        icsCacheKey: 'calendar:travel:ics',
+        jsonCacheKey: buildSharedCalendarCacheKey('travel', 'json'),
+        icsCacheKey: buildSharedCalendarCacheKey('travel', 'ics'),
         name: 'Travel Calendar',
         description: 'All travel events'
       });
@@ -8721,7 +8933,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = req.query.fresh === 'true';
-    const cacheKey = `calendar:blockout:${format}`;
+    const cacheKey = buildSharedCalendarCacheKey('blockout', format);
     
     // Check cache first (unless fresh requested)
     if (redis && cacheEnabled && !forceFresh) {
@@ -8752,7 +8964,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     }
     
     // Check if blockout calendar is configured
-    if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !BLOCKOUT_CALENDAR_PAGE_ID) {
       const errorMsg = { 
         error: 'Blockout calendar not configured',
         message: 'BLOCKOUT_CALENDAR_PAGE_ID environment variable not set'
@@ -8769,7 +8981,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     let blockoutEvents;
     try {
       blockoutEvents = await withTimeout(
-        getBlockoutCalendarData(),
+        getConfiguredBlockoutCalendarData(),
         CALENDAR_FETCH_TIMEOUT_MS,
         `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
       );
@@ -8791,6 +9003,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
       
       // If Notion API times out, try to return cached data as fallback
       const isTimeout =
+        CALENDAR_FEED_SOURCE === 'postgres' ||
         error.message?.includes('504') ||
         error.message?.includes('timeout') ||
         error.message?.includes('Gateway Timeout') ||
@@ -8817,8 +9030,8 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
 
           if (format !== 'json') {
             const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
-              jsonCacheKey: 'calendar:blockout:json',
-              icsCacheKey: 'calendar:blockout:ics',
+              jsonCacheKey: buildSharedCalendarCacheKey('blockout', 'json'),
+              icsCacheKey: buildSharedCalendarCacheKey('blockout', 'ics'),
               name: 'Blockout Calendar',
               description: 'All blockout events',
               filename: 'blockout-calendar.ics',
@@ -8882,6 +9095,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
         const endDate = event.end instanceof Date ? event.end : new Date(event.end);
         
         calendar.createEvent({
+          id: event.uid || undefined,
           start: startDate,
           end: endDate,
           summary: event.title,
@@ -8924,7 +9138,7 @@ app.get('/blockout/calendar', (req, res) => handleBlockoutCalendar(req, res));
 // Blockout calendar regeneration endpoint (clears cache and regenerates)
 app.get('/blockout/calendar/regen', async (req, res) => {
   try {
-    if (!BLOCKOUT_CALENDAR_PAGE_ID) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !BLOCKOUT_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
         error: 'Blockout calendar not configured',
         message: 'BLOCKOUT_CALENDAR_PAGE_ID environment variable not set'
@@ -8935,7 +9149,7 @@ app.get('/blockout/calendar/regen', async (req, res) => {
 
     // Fetch fresh data
     const blockoutEvents = await withTimeout(
-      getBlockoutCalendarData(),
+      getConfiguredBlockoutCalendarData(),
       CALENDAR_FETCH_TIMEOUT_MS,
       `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
     );
@@ -8953,6 +9167,7 @@ app.get('/blockout/calendar/regen', async (req, res) => {
       const endDate = event.end instanceof Date ? event.end : new Date(event.end);
       
       calendar.createEvent({
+        id: event.uid || undefined,
         start: startDate,
         end: endDate,
         summary: event.title,
@@ -8976,8 +9191,8 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache('calendar:blockout:ics', icsData);
-        await setCalendarCache('calendar:blockout:json', jsonData);
+        await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'ics'), icsData);
+        await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'json'), jsonData);
         console.log(`💾 Blockout calendar cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -8995,8 +9210,8 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     console.error('Error regenerating blockout calendar:', error);
     try {
       const hasCachedCalendar = await hasUsableSharedCalendarCache({
-        jsonCacheKey: 'calendar:blockout:json',
-        icsCacheKey: 'calendar:blockout:ics',
+        jsonCacheKey: buildSharedCalendarCacheKey('blockout', 'json'),
+        icsCacheKey: buildSharedCalendarCacheKey('blockout', 'ics'),
         name: 'Blockout Calendar',
         description: 'All blockout events',
         alarmsForEvent: (event) => getAlarmsForEvent(event.type, event.title)
@@ -9126,7 +9341,7 @@ app.get('/calendar/:personId', async (req, res) => {
     const cacheFormat = shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json';
     const cacheKey = buildCalendarCacheKey(personId, cacheFormat, regenMode);
     
-    if (forceFresh && redis && cacheEnabled) {
+    if (forceFresh && CALENDAR_FEED_SOURCE !== 'postgres' && redis && cacheEnabled) {
       const icsKey = buildCalendarCacheKey(personId, 'ics', regenMode);
       const googleIcsKey = buildCalendarCacheKey(personId, 'google_ics', regenMode);
       const jsonKey = buildCalendarCacheKey(personId, 'json', regenMode);
@@ -9165,7 +9380,7 @@ app.get('/calendar/:personId', async (req, res) => {
     }
     
     // Check if Calendar Data database is configured
-    if (!CALENDAR_DATA_DB) {
+    if (CALENDAR_FEED_SOURCE !== 'postgres' && !CALENDAR_DATA_DB) {
       return res.status(500).json({ 
         error: 'Calendar Data database not configured',
         message: 'Please set CALENDAR_DATA_DATABASE_ID environment variable'
@@ -9178,6 +9393,19 @@ app.get('/calendar/:personId', async (req, res) => {
       calendarDataPageId
     });
     if (!result.success) {
+      if (CALENDAR_FEED_SOURCE === 'postgres' && redis && cacheEnabled) {
+        const lastKnownGood = await redis.get(cacheKey);
+        if (lastKnownGood) {
+          console.warn('[calendar-postgres] Serving last-known-good personal calendar');
+          res.setHeader('X-Downbeat-Calendar-Stale', 'true');
+          if (shouldReturnICS) {
+            res.setHeader('Content-Type', 'text/calendar');
+            res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
+            return res.send(lastKnownGood);
+          }
+          return res.json(JSON.parse(lastKnownGood));
+        }
+      }
       const statusCode = result.reason === 'no_events' ? 404 : 500;
       return res.status(statusCode).json({
         error: result.reason === 'no_events' ? 'No events found' : 'Error generating calendar',
@@ -9221,5 +9449,7 @@ startBackgroundJob();
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
-  console.log(`Background job active - updating all people after each cycle completes, then waiting ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`);
+  if (CALENDAR_FEED_SOURCE !== 'postgres') {
+    console.log(`Background job active - updating all people after each cycle completes, then waiting ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`);
+  }
 });
