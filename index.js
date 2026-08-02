@@ -101,9 +101,12 @@ const activeShadowComparisons = new Set();
 let activeShadowAudit = null;
 let shadowAuditState = {
   status: 'idle',
+  phase: 'idle',
   startedAt: null,
   completedAt: null,
   errorCode: null,
+  totalPersonalComparisons: 0,
+  completedPersonalComparisons: 0,
 };
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
@@ -3942,6 +3945,55 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
   }
 }
 
+async function compareCalendarShadowSweepResults(results = []) {
+  const comparable = [...new Map(
+    (Array.isArray(results) ? results : [])
+      .filter((result) => result?.success && result?.personId)
+      .map((result) => [result.personId, result])
+  ).values()];
+  shadowAuditState = {
+    ...shadowAuditState,
+    phase: 'personal_comparison',
+    totalPersonalComparisons: comparable.length,
+    completedPersonalComparisons: 0,
+  };
+  await mapWithConcurrency(
+    comparable,
+    Math.max(1, DEFAULT_REGEN_CONCURRENCY),
+    async (result) => {
+      try {
+        const raw = redis && cacheEnabled
+          ? await redis.get(buildCalendarCacheKey(result.personId, 'json'))
+          : null;
+        if (!raw) {
+          await recordCalendarShadowResult(
+            'personal',
+            result.personId,
+            null,
+            'SHADOW_BASELINE_CACHE_MISSING'
+          );
+          return;
+        }
+        const payload = JSON.parse(raw);
+        await comparePersonalCalendarShadow(result.personId, payload.events || []);
+      } catch (error) {
+        await recordCalendarShadowResult(
+          'personal',
+          result.personId,
+          null,
+          error.code || 'SHADOW_BASELINE_READ_FAILED'
+        );
+      } finally {
+        shadowAuditState = {
+          ...shadowAuditState,
+          completedPersonalComparisons:
+            Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
+        };
+      }
+    }
+  );
+}
+
 async function regenerateCalendarForPerson(personId, options = {}) {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
     return regenerateCalendarForPersonFromPostgres(personId, options);
@@ -6259,6 +6311,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   const startedAt = new Date().toISOString();
   shadowAuditState = {
     status: 'running',
+    phase: 'notion_regeneration',
     startedAt,
     completedAt: null,
     errorCode: null,
@@ -6266,6 +6319,8 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
   activeShadowAudit = (async () => {
     const personalSweep = await regenerateAllCalendars();
+    await compareCalendarShadowSweepResults(personalSweep?.results || []);
+    shadowAuditState = { ...shadowAuditState, phase: 'global_comparison' };
     await Promise.allSettled([
       getConfiguredAdminCalendarData(),
       getConfiguredTravelCalendarData(),
@@ -6274,16 +6329,22 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     await waitForCalendarShadowComparisons();
     shadowAuditState = {
       status: personalSweep?.success === false ? 'failed' : 'complete',
+      phase: 'complete',
       startedAt,
       completedAt: new Date().toISOString(),
       errorCode: personalSweep?.success === false ? 'PERSONAL_SWEEP_FAILED' : null,
+      totalPersonalComparisons: shadowAuditState.totalPersonalComparisons || 0,
+      completedPersonalComparisons: shadowAuditState.completedPersonalComparisons || 0,
     };
   })().catch((error) => {
     shadowAuditState = {
       status: 'failed',
+      phase: 'failed',
       startedAt,
       completedAt: new Date().toISOString(),
       errorCode: error.code || 'UNKNOWN',
+      totalPersonalComparisons: shadowAuditState.totalPersonalComparisons || 0,
+      completedPersonalComparisons: shadowAuditState.completedPersonalComparisons || 0,
     };
     console.error('[calendar-shadow] audit run failed:', error.code || error.message || 'UNKNOWN');
   }).finally(() => {
