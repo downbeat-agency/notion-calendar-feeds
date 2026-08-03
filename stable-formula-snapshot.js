@@ -13,7 +13,7 @@ function signature(value) {
 
 export async function readStableFormulaSnapshot(readOnce, options = {}) {
   if (typeof readOnce !== 'function') throw new TypeError('readOnce must be a function');
-  const attempts = Math.max(3, Math.min(Number(options.attempts) || 3, 6));
+  const attempts = Math.max(2, Math.min(Number(options.attempts) || 3, 6));
   const scoreSnapshot = typeof options.scoreSnapshot === 'function'
     ? options.scoreSnapshot
     : () => 0;

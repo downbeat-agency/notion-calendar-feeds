@@ -60,3 +60,12 @@ test('formula stability can sample all attempts concurrently', async () => {
   assert.equal(pauseCalls, 0);
   assert.deepEqual(result, { events: ['complete'], events2: [] });
 });
+
+test('formula stability can require two matching reads when independently witnessed', async () => {
+  const complete = { events: ['complete'], events2: [] };
+  const result = await readStableFormulaSnapshot(
+    reader([complete, complete]),
+    { attempts: 2, scoreSnapshot: score }
+  );
+  assert.deepEqual(result, complete);
+});

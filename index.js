@@ -1408,7 +1408,7 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5, opti
       return { events: events || '[]', events2: events2 || '[]' };
     },
     {
-      attempts: NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS,
+      attempts: hasMembershipWitness ? 2 : NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS,
       scoreSnapshot: ({ events, events2 }) => {
         const firstShard = parseJsonFormulaArray(
           { formula: { string: events } },
