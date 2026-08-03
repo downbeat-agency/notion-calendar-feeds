@@ -9,8 +9,10 @@ import { parseNotionFormulaJsonArray } from './admin-json.js';
 import {
   calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
+  configuredCalendarHistoryCutoverDate,
   configuredCalendarFeedSource,
   fetchPostgresCalendarFeed,
+  mergeCalendarEventsAcrossHistoryCutover,
 } from './postgres-calendar-source.js';
 
 // Server refresh - October 1, 2025
@@ -84,12 +86,16 @@ const ADMIN_EVENTS_1_PROPERTY_ID = process.env.ADMIN_EVENTS_1_PROPERTY_ID || nul
 const ADMIN_EVENTS_2_PROPERTY_ID = process.env.ADMIN_EVENTS_2_PROPERTY_ID || null;
 const TRAVEL_ADMIN_PROPERTY_ID = process.env.TRAVEL_ADMIN_PROPERTY_ID || '%3B%3CuW';
 const CALENDAR_FEED_SOURCE = configuredCalendarFeedSource();
+const CALENDAR_FEED_HISTORY_CUTOVER_DATE = configuredCalendarHistoryCutoverDate();
 
 console.log(`📅 Calendar feed source mode: ${CALENDAR_FEED_SOURCE}`);
 if (CALENDAR_FEED_SOURCE === 'shadow') {
   console.log('   Serving Notion calendars while comparing Postgres projections in the background');
 } else if (CALENDAR_FEED_SOURCE === 'postgres') {
   console.log('   Serving Postgres projections through the existing subscription URLs and renderer');
+}
+if (CALENDAR_FEED_SOURCE !== 'notion') {
+  console.log(`   Legacy history remains frozen before ${CALENDAR_FEED_HISTORY_CUTOVER_DATE}`);
 }
 
 // Cache TTL in seconds (30 minutes by default)
@@ -746,6 +752,77 @@ function buildCalendarCacheKey(personId, formatKey, regenMode = REGEN_MODE_FULL)
 function buildSharedCalendarCacheKey(kind, formatKey) {
   const prefix = CALENDAR_FEED_SOURCE === 'postgres' ? 'calendar:postgres' : 'calendar';
   return `${prefix}:${kind}:${formatKey}`;
+}
+
+function frozenPersonalHistoryCacheKey(personId) {
+  return `calendar:legacy-history:v1:${CALENDAR_FEED_HISTORY_CUTOVER_DATE}:${personId}`;
+}
+
+function calendarEventsForRegenMode(events, regenMode) {
+  const rows = Array.isArray(events) ? events : [];
+  if (regenMode === REGEN_MODE_EVENTS_ONLY) {
+    return rows.filter((event) => event?.type === 'main_event');
+  }
+  if (regenMode === REGEN_MODE_NON_EVENTS_ONLY) {
+    return rows.filter((event) => event?.type !== 'main_event');
+  }
+  return rows;
+}
+
+async function freezePersonalCalendarHistory(personId, legacyEvents = []) {
+  if (!redis || !cacheEnabled) return { available: false, events: [] };
+  const events = mergeCalendarEventsAcrossHistoryCutover(
+    legacyEvents,
+    [],
+    CALENDAR_FEED_HISTORY_CUTOVER_DATE
+  ).map(publicCalendarEvent);
+  const payload = {
+    schemaVersion: 1,
+    cutoverDate: CALENDAR_FEED_HISTORY_CUTOVER_DATE,
+    frozenAt: new Date().toISOString(),
+    events,
+  };
+  // This is the compatibility snapshot that keeps already-published history
+  // stable after the normal Notion cache expires. It intentionally has no TTL.
+  await redis.set(frozenPersonalHistoryCacheKey(personId), JSON.stringify(payload));
+  return { available: true, events };
+}
+
+async function loadFrozenPersonalCalendarHistory(personId) {
+  if (!redis || !cacheEnabled) {
+    const error = new Error('Legacy calendar history cache is unavailable.');
+    error.code = 'LEGACY_CALENDAR_HISTORY_UNAVAILABLE';
+    throw error;
+  }
+  const frozenKey = frozenPersonalHistoryCacheKey(personId);
+  const frozenRaw = await redis.get(frozenKey);
+  if (frozenRaw) {
+    try {
+      const payload = JSON.parse(frozenRaw);
+      if (
+        payload?.cutoverDate === CALENDAR_FEED_HISTORY_CUTOVER_DATE
+        && Array.isArray(payload?.events)
+      ) {
+        return payload.events;
+      }
+    } catch {
+      // Fall through to the expiring Notion cache and replace a malformed snapshot.
+    }
+  }
+  const legacyRaw = await redis.get(`calendar:${personId}:json`);
+  if (legacyRaw) {
+    try {
+      const payload = JSON.parse(legacyRaw);
+      if (Array.isArray(payload?.events)) {
+        return (await freezePersonalCalendarHistory(personId, payload.events)).events;
+      }
+    } catch {
+      // Fail closed below rather than publishing a calendar without its history.
+    }
+  }
+  const error = new Error('Legacy calendar history has not been frozen for this subscriber.');
+  error.code = 'LEGACY_CALENDAR_HISTORY_MISSING';
+  throw error;
 }
 
 async function validatePostgresCacheRevision(revisionCacheKey) {
@@ -3992,7 +4069,16 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
   try {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const calendarData = selectPostgresCalendarDataMode(payload.calendarData || {}, selectedRegenMode);
-    const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
+    const postgresCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
+    const legacyHistory = calendarEventsForRegenMode(
+      await loadFrozenPersonalCalendarHistory(personId),
+      selectedRegenMode
+    );
+    const allCalendarEvents = mergeCalendarEventsAcrossHistoryCutover(
+      legacyHistory,
+      postgresCalendarEvents,
+      CALENDAR_FEED_HISTORY_CUTOVER_DATE
+    );
     if (allCalendarEvents.length === 0) {
       return { success: false, personId, reason: 'no_events' };
     }
@@ -4001,7 +4087,7 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
     const artifacts = buildCalendarArtifacts(personName, allCalendarEvents, {
       totalMainEvents,
       regenMode: selectedRegenMode,
-      dataSource: 'postgres'
+      dataSource: 'postgres_with_frozen_legacy_history'
     });
     const cacheKeys = {
       ics: buildCalendarCacheKey(personId, 'ics', selectedRegenMode),
@@ -4040,7 +4126,17 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
   try {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
-    const comparison = compareCalendarEventSets(notionEvents, postgresEvents);
+    try {
+      await freezePersonalCalendarHistory(personId, notionEvents);
+    } catch (error) {
+      console.warn('[calendar-shadow] Legacy history freeze failed:', error.code || 'REDIS_ERROR');
+    }
+    const cutoverEvents = mergeCalendarEventsAcrossHistoryCutover(
+      notionEvents,
+      postgresEvents,
+      CALENDAR_FEED_HISTORY_CUTOVER_DATE
+    );
+    const comparison = compareCalendarEventSets(notionEvents, cutoverEvents);
     await recordCalendarShadowResult('personal', personId, comparison);
     return { status: 'compared' };
   } catch (error) {

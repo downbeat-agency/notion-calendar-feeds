@@ -24,10 +24,19 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /CALENDAR_FEED_SOURCE === 'postgres'/u);
   assert.match(source, /fetchPostgresCalendarFeed\('personal', personId\)/u);
   assert.match(source, /buildCalendarEventsFromCalendarData\(calendarData\)/u);
+  assert.match(source, /loadFrozenPersonalCalendarHistory\(personId\)/u);
+  assert.match(source, /mergeCalendarEventsAcrossHistoryCutover\(/u);
   assert.match(source, /id: event\.uid \|\| undefined/u);
-  assert.match(source, /dataSource: 'postgres'/u);
+  assert.match(source, /dataSource: 'postgres_with_frozen_legacy_history'/u);
   assert.match(source, /events: allCalendarEvents\.map\(publicCalendarEvent\)/u);
   assert.match(source, /delete publicEvent\.comparisonIdentity/u);
+});
+
+test('Postgres cutover freezes legacy personal history without writing payroll data', () => {
+  assert.match(source, /calendar:legacy-history:v1:/u);
+  assert.match(source, /await redis\.set\(frozenPersonalHistoryCacheKey\(personId\)/u);
+  assert.match(source, /LEGACY_CALENDAR_HISTORY_MISSING/u);
+  assert.doesNotMatch(source, /insert into payroll_entries|update payroll_entries/u);
 });
 
 test('Postgres mode does not run the Notion fleet sweep', () => {
