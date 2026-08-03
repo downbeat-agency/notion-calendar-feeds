@@ -39,6 +39,12 @@ test('Postgres cutover freezes legacy personal history without writing payroll d
   assert.doesNotMatch(source, /insert into payroll_entries|update payroll_entries/u);
 });
 
+test('Notion baseline regeneration repairs formula JSON before freezing history', () => {
+  assert.match(source, /return parseNotionFormulaJsonArray\(raw \|\| '\[\]'\)/u);
+  assert.match(source, /parseJsonFormulaArray\(calendarData\.Flights, 'Flights'\)/u);
+  assert.match(source, /parseJsonFormulaArray\(\s*calendarData\['Event Notes Reminders'\]/u);
+});
+
 test('Postgres mode does not run the Notion fleet sweep', () => {
   assert.match(
     source,

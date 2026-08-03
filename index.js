@@ -1431,8 +1431,7 @@ async function getCalendarDataFromDatabaseQueryStyle(personId, maxRetries = 5) {
 function parseJsonFormulaArray(propertyValue, propertyLabel) {
   const raw = propertyValue?.formula?.string ?? extractPropertyStringFromItem(propertyValue) ?? '[]';
   try {
-    const parsed = JSON.parse(raw || '[]');
-    return Array.isArray(parsed) ? parsed : [];
+    return parseNotionFormulaJsonArray(raw || '[]');
   } catch (e) {
     console.error(`Error parsing ${propertyLabel} JSON:`, raw?.substring?.(0, 100) || '');
     throw new Error(`${propertyLabel} JSON parse error: ${e.message}`);
@@ -1931,47 +1930,15 @@ function processCalendarDataProperties(calendarData) {
   
   events = parseMergedEventsProperties(calendarData);
   
-  try {
-    flights = JSON.parse(calendarData.Flights?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Flights JSON:', calendarData.Flights?.formula?.string?.substring(0, 100));
-    throw new Error(`Flights JSON parse error: ${e.message}`);
-  }
-  
-  try {
-    transportation = JSON.parse(calendarData.Transportation?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Transportation JSON:', calendarData.Transportation?.formula?.string?.substring(0, 100));
-    throw new Error(`Transportation JSON parse error: ${e.message}`);
-  }
-  
-  try {
-    hotels = JSON.parse(calendarData.Hotels?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Hotels JSON:', calendarData.Hotels?.formula?.string?.substring(0, 100));
-    throw new Error(`Hotels JSON parse error: ${e.message}`);
-  }
-  
-  try {
-    rehearsals = JSON.parse(calendarData.Rehearsals?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Rehearsals JSON:', calendarData.Rehearsals?.formula?.string?.substring(0, 100));
-    throw new Error(`Rehearsals JSON parse error: ${e.message}`);
-  }
-  
-  try {
-    teamCalendar = JSON.parse(calendarData['Team Calendar']?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Team Calendar JSON:', calendarData['Team Calendar']?.formula?.string?.substring(0, 100));
-    throw new Error(`Team Calendar JSON parse error: ${e.message}`);
-  }
-
-  try {
-    eventNotesReminders = JSON.parse(calendarData['Event Notes Reminders']?.formula?.string || '[]');
-  } catch (e) {
-    console.error('Error parsing Event Notes Reminders JSON:', calendarData['Event Notes Reminders']?.formula?.string?.substring(0, 100));
-    throw new Error(`Event Notes Reminders JSON parse error: ${e.message}`);
-  }
+  flights = parseJsonFormulaArray(calendarData.Flights, 'Flights');
+  transportation = parseJsonFormulaArray(calendarData.Transportation, 'Transportation');
+  hotels = parseJsonFormulaArray(calendarData.Hotels, 'Hotels');
+  rehearsals = parseJsonFormulaArray(calendarData.Rehearsals, 'Rehearsals');
+  teamCalendar = parseJsonFormulaArray(calendarData['Team Calendar'], 'Team Calendar');
+  eventNotesReminders = parseJsonFormulaArray(
+    calendarData['Event Notes Reminders'],
+    'Event Notes Reminders'
+  );
 
   // Normalize Team Calendar keys (handle variations like DCOS vs dcos, Title vs title, etc.)
   teamCalendar = teamCalendar.map(original => {
