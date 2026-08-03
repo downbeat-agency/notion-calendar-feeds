@@ -10,6 +10,7 @@ import {
   loadCalendarShadowBaseline,
   persistCalendarShadowBaseline,
 } from './calendar-shadow-baseline.js';
+import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
   calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
@@ -436,6 +437,9 @@ const ENABLE_CALENDAR_DB_FALLBACK = String(process.env.ENABLE_CALENDAR_DB_FALLBA
 const DEFAULT_REGEN_CONCURRENCY = Number(process.env.REGEN_WORKER_CONCURRENCY || 6);
 const BACKGROUND_REGEN_CONCURRENCY = Number(process.env.BACKGROUND_REGEN_CONCURRENCY || 1);
 const CALENDAR_DATA_SWEEP_PAGE_SIZE = Number(process.env.CALENDAR_DATA_SWEEP_PAGE_SIZE || 1);
+const NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS = Number(
+  process.env.NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS || 3
+);
 const BACKGROUND_INITIAL_DELAY_MS = Number(process.env.BACKGROUND_INITIAL_DELAY_MS || 5000);
 const BACKGROUND_REFRESH_COOLDOWN_MS = Number(process.env.BACKGROUND_REFRESH_COOLDOWN_MS || 10 * 60 * 1000);
 
@@ -1279,17 +1283,37 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   };
 }
 
+async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
+  const ids = await getCalendarDataPropertyIdMap(maxRetries);
+  return readStableFormulaSnapshot(
+    async () => {
+      const [events, events2] = await Promise.all([
+        fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
+        fetchPagePropertyString(pageId, ids.Events2, maxRetries, notionEvents),
+      ]);
+      return { events: events || '[]', events2: events2 || '[]' };
+    },
+    {
+      attempts: NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS,
+      scoreSnapshot: ({ events, events2 }) => parseMergedEventsProperties({
+        Events: { formula: { string: events } },
+        'Events 2': { formula: { string: events2 } },
+      }).length,
+      pause: () => sleep(NOTION_MIN_INTERVAL_MS),
+    }
+  );
+}
+
 /** Fetch only Events property (for events_only split regen). Uses NOTION_API_KEY. */
 async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
-  const [eventsStr, events2Str, nameStr] = await Promise.all([
-    fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
-    fetchPagePropertyString(pageId, ids.Events2, maxRetries, notionEvents),
+  const [stableEvents, nameStr] = await Promise.all([
+    getStableCalendarEventFormulaStrings(pageId, maxRetries),
     fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux)
   ]);
   return {
-    Events: { formula: { string: eventsStr || '[]' } },
-    'Events 2': { formula: { string: events2Str || '[]' } },
+    Events: { formula: { string: stableEvents.events } },
+    'Events 2': { formula: { string: stableEvents.events2 } },
     Name: { formula: { string: nameStr || '' } },
   };
 }

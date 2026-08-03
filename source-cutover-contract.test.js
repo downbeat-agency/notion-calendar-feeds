@@ -43,6 +43,8 @@ test('Notion baseline regeneration repairs formula JSON before freezing history'
   assert.match(source, /return parseNotionFormulaJsonArray\(raw \|\| '\[\]'\)/u);
   assert.match(source, /parseJsonFormulaArray\(calendarData\.Flights, 'Flights'\)/u);
   assert.match(source, /parseJsonFormulaArray\(\s*calendarData\['Event Notes Reminders'\]/u);
+  assert.match(source, /readStableFormulaSnapshot\(/u);
+  assert.match(source, /NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS/u);
 });
 
 test('Postgres mode does not run the Notion fleet sweep', () => {
