@@ -1295,10 +1295,24 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
     },
     {
       attempts: NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS,
-      scoreSnapshot: ({ events, events2 }) => parseMergedEventsProperties({
-        Events: { formula: { string: events } },
-        'Events 2': { formula: { string: events2 } },
-      }).length,
+      scoreSnapshot: ({ events, events2 }) => {
+        const firstShard = parseJsonFormulaArray(
+          { formula: { string: events } },
+          'Events'
+        );
+        const secondShard = parseJsonFormulaArray(
+          { formula: { string: events2 } },
+          'Events 2'
+        );
+        // Events 2 is an overflow shard. Seeing overflow rows while the first
+        // shard is empty is a transient Notion formula read, not a valid feed.
+        if (firstShard.length === 0 && secondShard.length > 0) {
+          const error = new Error('Calendar Events first shard is temporarily empty.');
+          error.code = 'NOTION_CALENDAR_EVENT_SHARD_INCOMPLETE';
+          throw error;
+        }
+        return firstShard.length + secondShard.length;
+      },
       pause: () => sleep(NOTION_MIN_INTERVAL_MS),
     }
   );
