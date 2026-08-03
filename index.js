@@ -1879,6 +1879,7 @@ async function processCalendarDataRowsPaginated(options = {}) {
   const {
     trigger = 'unknown',
     concurrency = 1,
+    allowEmptyBaselines = false,
     maxRetries = 5,
     pageSize = CALENDAR_DATA_SWEEP_PAGE_SIZE,
     waitContext = null,
@@ -1897,6 +1898,7 @@ async function processCalendarDataRowsPaginated(options = {}) {
       return processCalendarDataIndexEntries(cachedEntries, {
         trigger,
         concurrency,
+        allowEmptyBaselines,
         waitContext,
         source: 'redis_index',
         pageCount: Number(cachedIndex?.pageCount) || 0,
@@ -1914,6 +1916,7 @@ async function processCalendarDataRowsPaginated(options = {}) {
         return processCalendarDataIndexEntries(indexedEntries, {
           trigger,
           concurrency,
+          allowEmptyBaselines,
           waitContext,
           source: builtIndex.source,
           pageCount: Number(builtIndex?.pageCount) || 0,
@@ -4251,6 +4254,32 @@ async function compareDurablePersonalCalendarShadow(personId) {
   }
 }
 
+async function compareDurableSharedCalendarShadow(kind, processor, payloadField) {
+  try {
+    const notionEvents = await loadCalendarShadowBaselineEvents(
+      kind,
+      kind,
+      buildSharedCalendarCacheKey(kind, 'json')
+    );
+    const payload = await fetchPostgresCalendarFeed(kind);
+    const postgresRaw = payload?.[payloadField] || [];
+    const comparison = compareCalendarEventSets(notionEvents, processor(postgresRaw));
+    await recordCalendarShadowResult(kind, kind, comparison);
+    return { status: 'compared' };
+  } catch (error) {
+    if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(error.code)) {
+      return { status: 'baseline_unavailable' };
+    }
+    await recordCalendarShadowResult(
+      kind,
+      kind,
+      null,
+      error.code || 'SHADOW_BASELINE_READ_FAILED'
+    );
+    return { status: 'error' };
+  }
+}
+
 async function regenerateCalendarForPerson(personId, options = {}) {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
     return regenerateCalendarForPersonFromPostgres(personId, options);
@@ -4410,6 +4439,7 @@ function startBackgroundJob() {
       const { results, totalRows, pageCount } = await processCalendarDataRowsPaginated({
         trigger: 'background_cycle',
         concurrency: BACKGROUND_REGEN_CONCURRENCY,
+        allowEmptyBaselines: CALENDAR_FEED_SOURCE === 'shadow',
         maxRetries: 5,
         waitContext: `background cycle ${cycleId}`
       });
@@ -6588,7 +6618,7 @@ app.get('/regenerate/:personId/status', async (req, res) => {
 });
 
 // Regeneration endpoint - regenerate all calendars
-app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, async (_req, res) => {
+app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, async (req, res) => {
   if (CALENDAR_FEED_SOURCE !== 'shadow') {
     return res.status(409).json({ error: 'Calendar service is not in shadow mode.' });
   }
@@ -6596,6 +6626,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     return res.status(202).json({ success: true, alreadyRunning: true });
   }
   const startedAt = new Date().toISOString();
+  const refreshBaselines = req.query.refresh !== 'false';
   let expectedPersonalComparisons = 0;
   try {
     const cachedAuditIndex = await getCachedJson(CALENDAR_DATA_INDEX_CACHE_KEY);
@@ -6617,10 +6648,13 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     baselineUnavailableGlobalComparisons: 0,
     refreshedPersonalBaselines: 0,
     failedPersonalBaselineRefreshes: 0,
+    refreshBaselines,
   };
   res.status(202).json({
     success: true,
-    message: 'Calendar shadow baseline refresh and audit started.',
+    message: refreshBaselines
+      ? 'Calendar shadow baseline refresh and audit started.'
+      : 'Calendar shadow audit started from durable baselines.',
   });
   let auditManualRegenRegistered = false;
   activeShadowAudit = (async () => {
@@ -6638,6 +6672,56 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
 
     const indexedEntries = await ensureCalendarShadowAuditIndex();
     const auditEntries = uniqueCalendarDataIndexEntriesByPerson(indexedEntries);
+    if (!refreshBaselines) {
+      shadowAuditState = {
+        ...shadowAuditState,
+        phase: 'durable_personal_comparison',
+        totalPersonalComparisons: auditEntries.length,
+      };
+      let completedPersonalComparisons = 0;
+      const comparisonConcurrency = Math.max(
+        1,
+        Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 4, 12)
+      );
+      const personalResults = await mapWithConcurrency(
+        auditEntries,
+        comparisonConcurrency,
+        async (entry) => {
+          const result = await compareDurablePersonalCalendarShadow(entry.personId);
+          completedPersonalComparisons += 1;
+          shadowAuditState = {
+            ...shadowAuditState,
+            completedPersonalComparisons,
+          };
+          return result;
+        }
+      );
+      shadowAuditState = { ...shadowAuditState, phase: 'durable_global_comparison' };
+      const globalResults = await Promise.all([
+        compareDurableSharedCalendarShadow('admin', processAdminEvents, 'events'),
+        compareDurableSharedCalendarShadow('travel', processTravelEvents, 'travelGroups'),
+        compareDurableSharedCalendarShadow('blockout', processBlockoutEvents, 'events'),
+      ]);
+      shadowAuditState = {
+        status: 'complete',
+        phase: 'complete',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        errorCode: null,
+        totalPersonalComparisons: auditEntries.length,
+        completedPersonalComparisons,
+        refreshedPersonalBaselines: 0,
+        failedPersonalBaselineRefreshes: 0,
+        refreshBaselines,
+        baselineUnavailablePersonalComparisons: personalResults.filter(
+          (result) => result?.status === 'baseline_unavailable'
+        ).length,
+        baselineUnavailableGlobalComparisons: globalResults.filter(
+          (result) => result?.status === 'baseline_unavailable'
+        ).length,
+      };
+      return;
+    }
     shadowAuditState = {
       ...shadowAuditState,
       phase: 'refreshing_personal_baselines',

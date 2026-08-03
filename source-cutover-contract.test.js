@@ -81,6 +81,9 @@ test('full shadow audits refresh durable Notion baselines before comparison', ()
   assert.match(source, /persistCalendarShadowBaseline\(redis/u);
   assert.match(source, /loadCalendarShadowBaseline\(redis, kind, selector\)/u);
   assert.match(source, /trigger: 'shadow_baseline_audit'/u);
+  assert.match(source, /const refreshBaselines = req\.query\.refresh !== 'false'/u);
+  assert.match(source, /phase: 'durable_personal_comparison'/u);
+  assert.match(source, /allowEmptyBaselines: CALENDAR_FEED_SOURCE === 'shadow'/u);
   assert.match(source, /saveCalendarShadowBaseline\(\s*'personal'/u);
   assert.match(source, /activeManualRegens \+= 1/u);
   assert.match(source, /activeManualRegens = Math\.max\(0, activeManualRegens - 1\)/u);
