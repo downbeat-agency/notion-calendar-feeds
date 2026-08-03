@@ -1,6 +1,8 @@
-// Version 3 also requires an independent Calendar Data occurrence-set witness,
-// so a repeatedly false-empty formula render cannot satisfy a new audit.
-const SHADOW_BASELINE_SCHEMA_VERSION = 3;
+// Version 4 requires an independently stabilized Payroll Personnel membership
+// witness for personal event baselines. This invalidates v3 baselines that may
+// have been captured while both Calendar Data formula integrations rendered a
+// matching, but incomplete, result under load.
+const SHADOW_BASELINE_SCHEMA_VERSION = 4;
 const VALID_BASELINE_KINDS = new Set(['personal', 'admin', 'travel', 'blockout']);
 
 function baselineError(message, code) {

@@ -7,10 +7,17 @@ import { createHash } from 'node:crypto';
 import path from 'path';
 import { parseNotionFormulaJsonArray } from './admin-json.js';
 import {
+  buildCalendarEventMembershipSnapshot,
+  calendarEventMembershipMap,
+} from './calendar-event-membership.js';
+import {
   loadCalendarShadowBaseline,
   persistCalendarShadowBaseline,
 } from './calendar-shadow-baseline.js';
-import { assertCalendarEventSnapshotCoverage } from './calendar-event-snapshot.js';
+import {
+  assertCalendarEventSnapshotCoverage,
+  assertCalendarEventSnapshotExpectedIds,
+} from './calendar-event-snapshot.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
   calendarFeedServiceRequestIsAuthorized,
@@ -85,6 +92,15 @@ app.use(express.static('public'));
 // Use environment variable for Personnel database ID
 const PERSONNEL_DB = process.env.PERSONNEL_DATABASE_ID;
 const CALENDAR_DATA_DB = process.env.CALENDAR_DATA_DATABASE_ID;
+const PAYROLL_PERSONNEL_DB = process.env.PAYROLL_PERSONNEL_DATABASE_ID
+  || '0fe5a34d-07e4-438a-af78-4caa27407e68';
+const EVENTS_DB = process.env.EVENTS_DATABASE_ID
+  || '3dec3113-f747-49db-b666-8ba1f06c1d3e';
+const PAYROLL_PERSONNEL_WITNESS_PROPERTY_IDS = Object.freeze({
+  Personnel: '%60UFJ',
+  Event: 'd%3ECG',
+});
+const EVENT_DATE_PROPERTY_ID = 'nEFA';
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
 const BLOCKOUT_CALENDAR_PAGE_ID = process.env.BLOCKOUT_CALENDAR_PAGE_ID;
@@ -110,7 +126,7 @@ const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
 const SHADOW_PARITY_REDIS_KEY = 'calendar:shadow:parity:v2';
 const SHADOW_PARITY_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SHADOW_BASELINE_REFRESH_CONCURRENCY = Number(
-  process.env.SHADOW_BASELINE_REFRESH_CONCURRENCY || 4
+  process.env.SHADOW_BASELINE_REFRESH_CONCURRENCY || 2
 );
 const SHADOW_BASELINE_UNAVAILABLE_CODES = new Set([
   'SHADOW_AUDIT_CACHE_UNAVAILABLE',
@@ -132,6 +148,8 @@ let shadowAuditState = {
   baselineUnavailableGlobalComparisons: 0,
   refreshedPersonalBaselines: 0,
   failedPersonalBaselineRefreshes: 0,
+  eventMembershipWitnessRows: 0,
+  eventMembershipWitnessLinks: 0,
 };
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
@@ -1284,8 +1302,103 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
   };
 }
 
-async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
+function currentCalendarYearStart() {
+  const year = new Intl.DateTimeFormat('en-US', {
+    timeZone: GOOGLE_CALENDAR_TIMEZONE,
+    year: 'numeric',
+  }).format(new Date());
+  return `${year}-01-01`;
+}
+
+async function fetchCalendarEventMembershipWitnessOnce(personnelIds, maxRetries = 5) {
+  const currentEventIds = new Set();
+  let cursor;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await retryNotionCall(
+      () => notionAux.databases.query({
+        database_id: EVENTS_DB,
+        page_size: 100,
+        filter_properties: [EVENT_DATE_PROPERTY_ID],
+        filter: {
+          property: 'Event Date',
+          date: { on_or_after: currentCalendarYearStart() },
+        },
+        ...(cursor ? { start_cursor: cursor } : {}),
+      }),
+      maxRetries
+    );
+    for (const eventPage of response.results || []) {
+      const eventId = normalizeNotionPageId(eventPage?.id);
+      if (eventId) currentEventIds.add(eventId);
+    }
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+    if (hasMore && !cursor) {
+      const error = new Error('Notion event membership witness pagination ended early.');
+      error.code = 'NOTION_CALENDAR_MEMBERSHIP_PAGINATION_INVALID';
+      throw error;
+    }
+  }
+
+  const payrollRows = [];
+  cursor = undefined;
+  hasMore = true;
+  while (hasMore) {
+    const response = await retryNotionCall(
+      () => notionAux.databases.query({
+        database_id: PAYROLL_PERSONNEL_DB,
+        page_size: 100,
+        filter_properties: Object.values(PAYROLL_PERSONNEL_WITNESS_PROPERTY_IDS),
+        filter: {
+          and: [
+            { property: 'Event', relation: { is_not_empty: true } },
+            { property: 'Rehearsal Position', relation: { is_empty: true } },
+          ],
+        },
+        ...(cursor ? { start_cursor: cursor } : {}),
+      }),
+      maxRetries
+    );
+    payrollRows.push(...(response.results || []).filter((row) => {
+      const firstEventId = normalizeNotionPageId(row?.properties?.Event?.relation?.[0]?.id);
+      return firstEventId && currentEventIds.has(firstEventId);
+    }));
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+    if (hasMore && !cursor) {
+      const error = new Error('Notion payroll membership witness pagination ended early.');
+      error.code = 'NOTION_CALENDAR_MEMBERSHIP_PAGINATION_INVALID';
+      throw error;
+    }
+  }
+
+  const snapshot = buildCalendarEventMembershipSnapshot(payrollRows, personnelIds);
+  return {
+    ...snapshot,
+    currentEventCount: currentEventIds.size,
+  };
+}
+
+async function getStableCalendarEventMembershipWitness(personnelIds, maxRetries = 5) {
+  return readStableFormulaSnapshot(
+    () => fetchCalendarEventMembershipWitnessOnce(personnelIds, maxRetries),
+    {
+      attempts: 3,
+      scoreSnapshot: (snapshot) => snapshot.membershipCount,
+      pause: () => sleep(NOTION_MIN_INTERVAL_MS),
+    }
+  );
+}
+
+async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5, options = {}) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
+  const hasMembershipWitness = Array.isArray(options.expectedEventIds);
+  const parsedRows = ({ events, events2 }) => [
+    ...parseJsonFormulaArray({ formula: { string: events } }, 'Events'),
+    ...parseJsonFormulaArray({ formula: { string: events2 } }, 'Events 2'),
+  ];
   const stableSnapshotPromise = readStableFormulaSnapshot(
     async () => {
       const [events, events2] = await Promise.all([
@@ -1312,12 +1425,28 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
           error.code = 'NOTION_CALENDAR_EVENT_SHARD_INCOMPLETE';
           throw error;
         }
+        if (hasMembershipWitness) {
+          assertCalendarEventSnapshotExpectedIds(
+            [...firstShard, ...secondShard],
+            options.expectedEventIds
+          );
+        }
         return firstShard.length + secondShard.length;
       },
-      parallel: true,
+      // Full audits favor certainty over speed. Sequential reads avoid asking
+      // Notion to render the same expensive relation formula six times at once.
+      parallel: !hasMembershipWitness,
       pause: () => sleep(NOTION_MIN_INTERVAL_MS),
     }
   );
+  if (hasMembershipWitness) {
+    const stableSnapshot = await stableSnapshotPromise;
+    assertCalendarEventSnapshotExpectedIds(
+      parsedRows(stableSnapshot),
+      options.expectedEventIds
+    );
+    return stableSnapshot;
+  }
   if (CALENDAR_FEED_SOURCE !== 'shadow' || !process.env.NOTION_API_KEY2) {
     return stableSnapshotPromise;
   }
@@ -1349,10 +1478,6 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
     stableSnapshotPromise,
     referenceSnapshotPromise,
   ]);
-  const parsedRows = ({ events, events2 }) => [
-    ...parseJsonFormulaArray({ formula: { string: events } }, 'Events'),
-    ...parseJsonFormulaArray({ formula: { string: events2 } }, 'Events 2'),
-  ];
   assertCalendarEventSnapshotCoverage(
     parsedRows(stableSnapshot),
     parsedRows(referenceSnapshot)
@@ -1361,10 +1486,10 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
 }
 
 /** Fetch only Events property (for events_only split regen). Uses NOTION_API_KEY. */
-async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5) {
+async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5, options = {}) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
   const [stableEvents, nameStr] = await Promise.all([
-    getStableCalendarEventFormulaStrings(pageId, maxRetries),
+    getStableCalendarEventFormulaStrings(pageId, maxRetries, options),
     fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux)
   ]);
   return {
@@ -1819,6 +1944,7 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     source = 'redis_index',
     pageCount = 0,
     onResult = null,
+    eventMembershipByPerson = null,
   } = options;
 
   const normalizedEntries = normalizeCalendarDataIndexEntries(entries);
@@ -1826,8 +1952,22 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     if (waitContext) {
       await waitForManualRegensToDrain(waitContext);
     }
+    const normalizedPersonId = normalizeNotionPageId(entry.personId);
+    let expectedEventIds;
+    if (eventMembershipByPerson instanceof Map) {
+      if (!eventMembershipByPerson.has(normalizedPersonId)) {
+        const error = new Error(`Calendar membership witness is missing personnel ${normalizedPersonId}.`);
+        error.code = 'NOTION_CALENDAR_MEMBERSHIP_PERSON_MISSING';
+        throw error;
+      }
+      expectedEventIds = eventMembershipByPerson.get(normalizedPersonId);
+    }
     const [eventsResult, nonEventsResult] = await Promise.all([
-      regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', { trigger, composeFull: false }),
+      regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', {
+        trigger,
+        composeFull: false,
+        expectedEventIds,
+      }),
       regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false })
     ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
@@ -3657,7 +3797,7 @@ async function tryComposeFullCalendarFromSplitCaches(personId) {
 
 /** Run split regen (events_only or non_events_only) and optionally compose full cache when both exist. */
 async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, regenMode, options = {}) {
-  const { trigger = 'unknown', composeFull = true } = options;
+  const { trigger = 'unknown', composeFull = true, expectedEventIds } = options;
   if (!calendarDataPageId || !['events_only', 'non_events_only'].includes(regenMode)) {
     return { success: false, personId, error: 'Invalid regenMode or missing calendarDataPageId' };
   }
@@ -3667,7 +3807,11 @@ async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, re
     }
     let partialData;
     if (regenMode === 'events_only') {
-      const props = await getCalendarDataPagePropertiesEventsOnly(calendarDataPageId, 6);
+      const props = await getCalendarDataPagePropertiesEventsOnly(
+        calendarDataPageId,
+        6,
+        { expectedEventIds }
+      );
       partialData = processCalendarDataEventsOnly(props);
       if (!partialData || !partialData.events?.length) {
         partialData = { personName: partialData?.personName || 'Unknown', events: [] };
@@ -6728,6 +6872,8 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     baselineUnavailableGlobalComparisons: 0,
     refreshedPersonalBaselines: 0,
     failedPersonalBaselineRefreshes: 0,
+    eventMembershipWitnessRows: 0,
+    eventMembershipWitnessLinks: 0,
     refreshBaselines,
   };
   res.status(202).json({
@@ -6761,7 +6907,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       let completedPersonalComparisons = 0;
       const comparisonConcurrency = Math.max(
         1,
-        Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 4, 12)
+        Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 2, 12)
       );
       const personalResults = await mapWithConcurrency(
         auditEntries,
@@ -6804,12 +6950,22 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     }
     shadowAuditState = {
       ...shadowAuditState,
-      phase: 'refreshing_personal_baselines',
+      phase: 'building_event_membership_witness',
       totalPersonalComparisons: auditEntries.length,
+    };
+    const eventMembershipWitness = await getStableCalendarEventMembershipWitness(
+      auditEntries.map((entry) => entry.personId)
+    );
+    const eventMembershipByPerson = calendarEventMembershipMap(eventMembershipWitness);
+    shadowAuditState = {
+      ...shadowAuditState,
+      phase: 'refreshing_personal_baselines',
+      eventMembershipWitnessRows: eventMembershipWitness.sourceRowCount,
+      eventMembershipWitnessLinks: eventMembershipWitness.membershipCount,
     };
     const refreshConcurrency = Math.max(
       1,
-      Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 4, 6)
+      Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 2, 6)
     );
     const personalResults = [];
     let completedPersonalComparisons = 0;
@@ -6821,6 +6977,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
         trigger: 'shadow_baseline_audit',
         concurrency: refreshConcurrency,
         allowEmptyBaselines: true,
+        eventMembershipByPerson,
         source: 'shadow_audit_index',
         onResult: async (refreshResult) => {
           if (refreshResult.success) refreshedPersonalBaselines += 1;
@@ -6869,6 +7026,8 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       completedPersonalComparisons,
       refreshedPersonalBaselines,
       failedPersonalBaselineRefreshes,
+      eventMembershipWitnessRows: eventMembershipWitness.sourceRowCount,
+      eventMembershipWitnessLinks: eventMembershipWitness.membershipCount,
       baselineUnavailablePersonalComparisons: personalResults.filter(
         (result) => result?.status === 'baseline_unavailable'
       ).length,

@@ -90,4 +90,8 @@ test('full shadow audits refresh durable Notion baselines before comparison', ()
   assert.match(source, /saveCalendarShadowBaseline\(\s*'personal'/u);
   assert.match(source, /activeManualRegens \+= 1/u);
   assert.match(source, /activeManualRegens = Math\.max\(0, activeManualRegens - 1\)/u);
+  assert.match(source, /phase: 'building_event_membership_witness'/u);
+  assert.match(source, /getStableCalendarEventMembershipWitness\(/u);
+  assert.match(source, /assertCalendarEventSnapshotExpectedIds\(/u);
+  assert.match(source, /eventMembershipByPerson/u);
 });

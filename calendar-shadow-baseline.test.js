@@ -27,7 +27,7 @@ test('shadow baselines use a durable Redis write and retain the captured events'
   });
 
   const key = calendarShadowBaselineKey('personal', 'person-id');
-  assert.match(key, /:v3:personal:person-id$/u);
+  assert.match(key, /:v4:personal:person-id$/u);
   assert.equal(redis.values.has(key), true);
   const loaded = await loadCalendarShadowBaseline(redis, 'personal', 'PERSON-ID');
   assert.equal(loaded.capturedAt, capturedAt);
