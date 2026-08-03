@@ -10,6 +10,7 @@ import {
   loadCalendarShadowBaseline,
   persistCalendarShadowBaseline,
 } from './calendar-shadow-baseline.js';
+import { assertCalendarEventSnapshotCoverage } from './calendar-event-snapshot.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
   calendarFeedServiceRequestIsAuthorized,
@@ -1285,7 +1286,7 @@ async function getCalendarDataPagePropertiesLean(pageId, maxRetries = 5) {
 
 async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
-  return readStableFormulaSnapshot(
+  const stableSnapshotPromise = readStableFormulaSnapshot(
     async () => {
       const [events, events2] = await Promise.all([
         fetchPagePropertyString(pageId, ids.Events, maxRetries, notionEvents),
@@ -1317,6 +1318,46 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
       pause: () => sleep(NOTION_MIN_INTERVAL_MS),
     }
   );
+  if (CALENDAR_FEED_SOURCE !== 'shadow' || !process.env.NOTION_API_KEY2) {
+    return stableSnapshotPromise;
+  }
+
+  const referenceSnapshotPromise = (async () => {
+    try {
+      const page = await retryNotionCall(
+        () => notionAux.pages.retrieve({
+          page_id: pageId,
+          filter_properties: [ids.Events, ids.Events2].filter(Boolean),
+        }),
+        maxRetries
+      );
+      return {
+        events: page?.properties?.Events?.formula?.string || '[]',
+        events2: page?.properties?.['Events 2']?.formula?.string || '[]',
+      };
+    } catch (error) {
+      console.warn(`⚠️  Filtered Calendar Data event witness failed for ${pageId}; using property reads: ${error.message}`);
+      const [events, events2] = await Promise.all([
+        fetchPagePropertyString(pageId, ids.Events, maxRetries, notionAux),
+        fetchPagePropertyString(pageId, ids.Events2, maxRetries, notionAux),
+      ]);
+      return { events: events || '[]', events2: events2 || '[]' };
+    }
+  })();
+
+  const [stableSnapshot, referenceSnapshot] = await Promise.all([
+    stableSnapshotPromise,
+    referenceSnapshotPromise,
+  ]);
+  const parsedRows = ({ events, events2 }) => [
+    ...parseJsonFormulaArray({ formula: { string: events } }, 'Events'),
+    ...parseJsonFormulaArray({ formula: { string: events2 } }, 'Events 2'),
+  ];
+  assertCalendarEventSnapshotCoverage(
+    parsedRows(stableSnapshot),
+    parsedRows(referenceSnapshot)
+  );
+  return stableSnapshot;
 }
 
 /** Fetch only Events property (for events_only split regen). Uses NOTION_API_KEY. */

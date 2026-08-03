@@ -1,7 +1,6 @@
-// Version 2 is the first baseline generation captured only after the Calendar
-// Data event shards pass the stable/full-snapshot checks. Keeping it in the
-// Redis key prevents an older partial formula read from satisfying a new audit.
-const SHADOW_BASELINE_SCHEMA_VERSION = 2;
+// Version 3 also requires an independent Calendar Data occurrence-set witness,
+// so a repeatedly false-empty formula render cannot satisfy a new audit.
+const SHADOW_BASELINE_SCHEMA_VERSION = 3;
 const VALID_BASELINE_KINDS = new Set(['personal', 'admin', 'travel', 'blockout']);
 
 function baselineError(message, code) {
