@@ -69,3 +69,12 @@ test('formula stability can require two matching reads when independently witnes
   );
   assert.deepEqual(result, complete);
 });
+
+test('formula stability can accept one independently witnessed empty read', async () => {
+  const empty = { events: [], events2: [] };
+  const result = await readStableFormulaSnapshot(
+    reader([empty]),
+    { attempts: 1, requiredHits: 1, scoreSnapshot: score }
+  );
+  assert.deepEqual(result, empty);
+});

@@ -13,7 +13,11 @@ function signature(value) {
 
 export async function readStableFormulaSnapshot(readOnce, options = {}) {
   if (typeof readOnce !== 'function') throw new TypeError('readOnce must be a function');
-  const attempts = Math.max(2, Math.min(Number(options.attempts) || 3, 6));
+  const attempts = Math.max(1, Math.min(Number(options.attempts) || 3, 6));
+  const requiredHits = Math.max(
+    1,
+    Math.min(Number(options.requiredHits) || 2, attempts)
+  );
   const scoreSnapshot = typeof options.scoreSnapshot === 'function'
     ? options.scoreSnapshot
     : () => 0;
@@ -48,7 +52,7 @@ export async function readStableFormulaSnapshot(readOnce, options = {}) {
   }
 
   const stable = [...observations.values()]
-    .filter((observation) => observation.hits >= 2)
+    .filter((observation) => observation.hits >= requiredHits)
     .filter((observation) => observation.score === maximumObservedScore)
     .sort((left, right) => right.hits - left.hits)[0];
   if (!stable) throw unstableSnapshotError(lastError);

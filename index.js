@@ -1395,6 +1395,7 @@ async function getStableCalendarEventMembershipWitness(personnelIds, maxRetries 
 async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5, options = {}) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
   const hasMembershipWitness = Array.isArray(options.expectedEventIds);
+  const hasEmptyMembershipWitness = hasMembershipWitness && options.expectedEventIds.length === 0;
   const parsedRows = ({ events, events2 }) => [
     ...parseJsonFormulaArray({ formula: { string: events } }, 'Events'),
     ...parseJsonFormulaArray({ formula: { string: events2 } }, 'Events 2'),
@@ -1408,7 +1409,10 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5, opti
       return { events: events || '[]', events2: events2 || '[]' };
     },
     {
-      attempts: hasMembershipWitness ? 2 : NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS,
+      attempts: hasEmptyMembershipWitness
+        ? 1
+        : (hasMembershipWitness ? 2 : NOTION_EVENT_FORMULA_STABILITY_ATTEMPTS),
+      requiredHits: hasEmptyMembershipWitness ? 1 : 2,
       scoreSnapshot: ({ events, events2 }) => {
         const firstShard = parseJsonFormulaArray(
           { formula: { string: events } },
