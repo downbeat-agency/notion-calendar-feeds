@@ -7,10 +7,15 @@ import { createHash } from 'node:crypto';
 import path from 'path';
 import { parseNotionFormulaJsonArray } from './admin-json.js';
 import {
+  loadCalendarShadowBaseline,
+  persistCalendarShadowBaseline,
+} from './calendar-shadow-baseline.js';
+import {
   calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
   configuredCalendarHistoryCutoverDate,
   configuredCalendarFeedSource,
+  diagnoseCalendarEventSets,
   fetchPostgresCalendarFeed,
   mergeCalendarEventsAcrossHistoryCutover,
 } from './postgres-calendar-source.js';
@@ -102,8 +107,8 @@ if (CALENDAR_FEED_SOURCE !== 'notion') {
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 1800;
 const SHADOW_PARITY_REDIS_KEY = 'calendar:shadow:parity:v2';
 const SHADOW_PARITY_TTL_SECONDS = 7 * 24 * 60 * 60;
-const SHADOW_AUDIT_COMPARISON_CONCURRENCY = Number(
-  process.env.SHADOW_AUDIT_COMPARISON_CONCURRENCY || 4
+const SHADOW_BASELINE_REFRESH_CONCURRENCY = Number(
+  process.env.SHADOW_BASELINE_REFRESH_CONCURRENCY || 4
 );
 const SHADOW_BASELINE_UNAVAILABLE_CODES = new Set([
   'SHADOW_AUDIT_CACHE_UNAVAILABLE',
@@ -123,6 +128,8 @@ let shadowAuditState = {
   completedPersonalComparisons: 0,
   baselineUnavailablePersonalComparisons: 0,
   baselineUnavailableGlobalComparisons: 0,
+  refreshedPersonalBaselines: 0,
+  failedPersonalBaselineRefreshes: 0,
 };
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
@@ -758,6 +765,21 @@ function frozenPersonalHistoryCacheKey(personId) {
   return `calendar:legacy-history:v1:${CALENDAR_FEED_HISTORY_CUTOVER_DATE}:${personId}`;
 }
 
+async function saveCalendarShadowBaseline(kind, selector, events, sourcePageId = null) {
+  if (CALENDAR_FEED_SOURCE !== 'shadow') return null;
+  if (!redis || !cacheEnabled) {
+    const error = new Error('Calendar shadow baseline cache is unavailable.');
+    error.code = 'SHADOW_AUDIT_CACHE_UNAVAILABLE';
+    throw error;
+  }
+  return persistCalendarShadowBaseline(redis, {
+    kind,
+    selector,
+    events: Array.isArray(events) ? events : [],
+    sourcePageId,
+  });
+}
+
 function calendarEventsForRegenMode(events, regenMode) {
   const rows = Array.isArray(events) ? events : [];
   if (regenMode === REGEN_MODE_EVENTS_ONLY) {
@@ -1076,6 +1098,38 @@ app.delete('/api/internal/calendar-shadow-report', requireCalendarFeedServiceKey
   shadowParityMemory.clear();
   if (redis && cacheEnabled) await redis.del(SHADOW_PARITY_REDIS_KEY);
   res.json({ success: true });
+});
+
+app.get('/api/internal/calendar-shadow-diff/:personId', requireCalendarFeedServiceKey, async (req, res) => {
+  if (CALENDAR_FEED_SOURCE !== 'shadow') {
+    return res.status(409).json({ error: 'Calendar service is not in shadow mode.' });
+  }
+  const personId = normalizeNotionPageId(req.params.personId);
+  if (!personId) return res.status(400).json({ error: 'A valid personnel page ID is required.' });
+  try {
+    const notionEvents = await loadCalendarShadowBaselineEvents(
+      'personal',
+      personId,
+      buildCalendarCacheKey(personId, 'json')
+    );
+    const payload = await fetchPostgresCalendarFeed('personal', personId);
+    const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
+    const cutoverEvents = mergeCalendarEventsAcrossHistoryCutover(
+      notionEvents,
+      postgresEvents,
+      CALENDAR_FEED_HISTORY_CUTOVER_DATE
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({
+      selectorHash: shadowSelectorHash('personal', personId),
+      ...diagnoseCalendarEventSets(notionEvents, cutoverEvents),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Calendar shadow diagnostic failed.',
+      code: error.code || 'UNKNOWN',
+    });
+  }
 });
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -1655,7 +1709,9 @@ async function regenerateFromCalendarDataPage(calendarDataPage, options = {}) {
       regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger, composeFull: false })
     ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
-    const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
+    const composed = splitsOk
+      ? await composeSplitCacheForPerson(linkedPersonId, { sourcePageId: pageId })
+      : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
     return {
       success,
@@ -1678,6 +1734,7 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
   const {
     trigger = 'unknown',
     concurrency = 1,
+    allowEmptyBaselines = false,
     waitContext = null,
     source = 'redis_index',
     pageCount = 0,
@@ -1694,7 +1751,12 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
       regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false })
     ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
-    const composed = splitsOk ? await composeSplitCacheForPerson(entry.personId) : false;
+    const composed = splitsOk
+      ? await composeSplitCacheForPerson(entry.personId, {
+          sourcePageId: entry.pageId,
+          allowEmptyBaseline: allowEmptyBaselines,
+        })
+      : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
     const rowResult = {
       success,
@@ -3558,7 +3620,9 @@ async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, re
       await setCalendarCache(cacheKey, JSON.stringify(cachePayload));
       verboseLog(`✅ Cached ${regenMode} for ${personId} (${allCalendarEvents.length} items)`);
     }
-    const composed = composeFull ? await composeSplitCacheForPerson(personId) : false;
+    const composed = composeFull
+      ? await composeSplitCacheForPerson(personId, { sourcePageId: calendarDataPageId })
+      : false;
     return { success: true, personId, personName, eventCount: allCalendarEvents.length, composed };
   } catch (error) {
     console.error(`❌ Split regen ${regenMode} failed for ${personId}:`, error.message);
@@ -3587,7 +3651,7 @@ function getSplitRegenError(eventsResult, nonEventsResult) {
 }
 
 /** Compose full calendar cache from events + non_events split caches. Returns true if composed. */
-async function composeSplitCacheForPerson(personId) {
+async function composeSplitCacheForPerson(personId, options = {}) {
   if (!redis || !cacheEnabled) return false;
   const eventsRaw = await redis.get(`calendar:${personId}:events`);
   const nonEventsRaw = await redis.get(`calendar:${personId}:non_events`);
@@ -3597,36 +3661,33 @@ async function composeSplitCacheForPerson(personId) {
   const personName = eventsPayload.personName !== 'Unknown' ? eventsPayload.personName : nonEventsPayload.personName;
   const allCalendarEvents = [...(eventsPayload.events || []), ...(nonEventsPayload.events || [])]
     .sort((a, b) => (new Date(a.start)).getTime() - (new Date(b.start)).getTime());
-  if (allCalendarEvents.length === 0) return false;
-  const firstName = personName.split(' ')[0];
-  const calendar = ical({ name: `Downbeat iCal (${firstName})`, description: `Professional events calendar for ${personName}`, ttl: 300 });
-  allCalendarEvents.forEach(event => {
-    const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-    const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-    calendar.createEvent({ id: event.uid || undefined, start: startDate, end: endDate, summary: event.title, description: event.description, location: event.location, url: event.url || '', floating: true, alarms: getAlarmsForEvent(event.type, event.title) });
-  });
-  const icsData = serializeCalendar(calendar);
-  const googleIcsData = serializeGoogleCalendar(calendar);
-  const jsonResponse = {
-    personName,
-    totalMainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
-    totalCalendarEvents: allCalendarEvents.length,
+  if (allCalendarEvents.length === 0) {
+    if (options.allowEmptyBaseline) {
+      await saveCalendarShadowBaseline(
+        'personal',
+        personId,
+        [],
+        options.sourcePageId || null
+      );
+      return true;
+    }
+    return false;
+  }
+  const artifacts = buildCalendarArtifacts(personName, allCalendarEvents, {
+    regenMode: REGEN_MODE_FULL,
     dataSource: 'split_cache_merge',
-    regenMode: 'full',
-    breakdown: {
-      mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
-      flights: allCalendarEvents.filter(e => ['flight_departure', 'flight_return', 'flight_departure_layover', 'flight_return_layover'].includes(e.type)).length,
-      rehearsals: allCalendarEvents.filter(e => e.type === 'rehearsal').length,
-      hotels: allCalendarEvents.filter(e => e.type === 'hotel').length,
-      groundTransport: allCalendarEvents.filter(e => ['ground_transport_pickup', 'ground_transport_dropoff', 'ground_transport_meeting', 'ground_transport'].includes(e.type)).length,
-      teamCalendar: allCalendarEvents.filter(e => e.type === 'team_calendar').length,
-      eventReminders: allCalendarEvents.filter(e => e.type === 'event_note_reminder').length
-    },
-    events: allCalendarEvents
-  };
-  await setCalendarCache(`calendar:${personId}:ics`, icsData);
-  await setCalendarCache(`calendar:${personId}:google_ics`, googleIcsData);
-  await setCalendarCache(`calendar:${personId}:json`, JSON.stringify(jsonResponse));
+  });
+  await Promise.all([
+    setCalendarCache(`calendar:${personId}:ics`, artifacts.icsData),
+    setCalendarCache(`calendar:${personId}:google_ics`, artifacts.googleIcsData),
+    setCalendarCache(`calendar:${personId}:json`, artifacts.jsonData),
+    saveCalendarShadowBaseline(
+      'personal',
+      personId,
+      allCalendarEvents,
+      options.sourcePageId || null
+    ),
+  ]);
   verboseLog(`✅ Composed full cache for ${personId} (${allCalendarEvents.length} events from split)`);
   return true;
 }
@@ -3917,7 +3978,7 @@ async function regenerateCalendarForPersonFromNotion(personId, options = {}) {
       if (!redis || !cacheEnabled) {
         return { success: bothOk, personId, personName: eventsResult.personName || nonEventsResult.personName, regenMode: REGEN_MODE_FULL, eventCount: (eventsResult.eventCount || 0) + (nonEventsResult.eventCount || 0) };
       }
-      const composed = await composeSplitCacheForPerson(personId);
+      const composed = await composeSplitCacheForPerson(personId, { sourcePageId: resolvedPageId });
       if (!composed) {
         return { success: false, personId, error: 'Split compose did not produce full cache', reason: 'split_regen_failed' };
       }
@@ -4113,7 +4174,7 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
 }
 
 async function compareCalendarShadowSweepResult(result) {
-  if (!result?.personId) return;
+  if (!result?.personId) return { status: 'error' };
   if (!result.success) {
     await recordCalendarShadowResult(
       'personal',
@@ -4121,31 +4182,9 @@ async function compareCalendarShadowSweepResult(result) {
       null,
       'NOTION_BASELINE_REGEN_FAILED'
     );
-    return;
+    return { status: 'error' };
   }
-  try {
-    const raw = redis && cacheEnabled
-      ? await redis.get(buildCalendarCacheKey(result.personId, 'json'))
-      : null;
-    if (!raw) {
-      await recordCalendarShadowResult(
-        'personal',
-        result.personId,
-        null,
-        'SHADOW_BASELINE_CACHE_MISSING'
-      );
-      return;
-    }
-    const payload = JSON.parse(raw);
-    await comparePersonalCalendarShadow(result.personId, payload.events || []);
-  } catch (error) {
-    await recordCalendarShadowResult(
-      'personal',
-      result.personId,
-      null,
-      error.code || 'SHADOW_BASELINE_READ_FAILED'
-    );
-  }
+  return compareDurablePersonalCalendarShadow(result.personId);
 }
 
 async function ensureCalendarShadowAuditIndex() {
@@ -4165,32 +4204,36 @@ async function ensureCalendarShadowAuditIndex() {
   return builtEntries;
 }
 
-async function loadCalendarShadowCachedEvents(cacheKey) {
+async function loadCalendarShadowBaselineEvents(kind, selector, legacyCacheKey = null) {
   if (!redis || !cacheEnabled) {
     const error = new Error('Calendar shadow cache is unavailable.');
     error.code = 'SHADOW_AUDIT_CACHE_UNAVAILABLE';
     throw error;
   }
-  const raw = await redis.get(cacheKey);
-  if (!raw) {
-    const error = new Error('Calendar shadow baseline cache is missing.');
-    error.code = 'SHADOW_BASELINE_CACHE_MISSING';
-    throw error;
-  }
   try {
-    const payload = JSON.parse(raw);
-    if (!Array.isArray(payload?.events)) throw new Error('events must be an array');
-    return payload.events;
-  } catch {
-    const error = new Error('Calendar shadow baseline cache is invalid.');
-    error.code = 'SHADOW_BASELINE_CACHE_INVALID';
-    throw error;
+    return (await loadCalendarShadowBaseline(redis, kind, selector)).events;
+  } catch (baselineError) {
+    if (!SHADOW_BASELINE_UNAVAILABLE_CODES.has(baselineError.code) || !legacyCacheKey) {
+      throw baselineError;
+    }
+    const legacyRaw = await redis.get(legacyCacheKey);
+    if (!legacyRaw) throw baselineError;
+    try {
+      const legacyPayload = JSON.parse(legacyRaw);
+      if (!Array.isArray(legacyPayload?.events)) throw new Error('events must be an array');
+      await saveCalendarShadowBaseline(kind, selector, legacyPayload.events);
+      return legacyPayload.events;
+    } catch {
+      throw baselineError;
+    }
   }
 }
 
-async function compareCachedPersonalCalendarShadow(personId) {
+async function compareDurablePersonalCalendarShadow(personId) {
   try {
-    const notionEvents = await loadCalendarShadowCachedEvents(
+    const notionEvents = await loadCalendarShadowBaselineEvents(
+      'personal',
+      personId,
       buildCalendarCacheKey(personId, 'json')
     );
     return await comparePersonalCalendarShadow(personId, notionEvents);
@@ -4201,30 +4244,6 @@ async function compareCachedPersonalCalendarShadow(personId) {
     await recordCalendarShadowResult(
       'personal',
       personId,
-      null,
-      error.code || 'SHADOW_BASELINE_READ_FAILED'
-    );
-    return { status: 'error' };
-  }
-}
-
-async function compareCachedSharedCalendarShadow(kind, processor, payloadField) {
-  try {
-    const notionEvents = await loadCalendarShadowCachedEvents(
-      buildSharedCalendarCacheKey(kind, 'json')
-    );
-    const payload = await fetchPostgresCalendarFeed(kind);
-    const postgresRaw = payload?.[payloadField] || [];
-    const comparison = compareCalendarEventSets(notionEvents, processor(postgresRaw));
-    await recordCalendarShadowResult(kind, kind, comparison);
-    return { status: 'compared' };
-  } catch (error) {
-    if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(error.code)) {
-      return { status: 'baseline_unavailable' };
-    }
-    await recordCalendarShadowResult(
-      kind,
-      kind,
       null,
       error.code || 'SHADOW_BASELINE_READ_FAILED'
     );
@@ -5796,12 +5815,35 @@ function processBlockoutEvents(eventsArray) {
 
 async function compareSharedCalendarShadow(kind, notionRaw, processor, payloadField) {
   try {
+    const notionEvents = processor(notionRaw);
+    await saveCalendarShadowBaseline(kind, kind, notionEvents);
     const payload = await fetchPostgresCalendarFeed(kind);
     const postgresRaw = payload?.[payloadField] || [];
-    const comparison = compareCalendarEventSets(processor(notionRaw), processor(postgresRaw));
+    const comparison = compareCalendarEventSets(notionEvents, processor(postgresRaw));
     await recordCalendarShadowResult(kind, kind, comparison);
+    return { status: 'compared' };
   } catch (error) {
     await recordCalendarShadowResult(kind, kind, null, error.code || 'UNKNOWN');
+    return { status: 'error' };
+  }
+}
+
+async function refreshAndCompareSharedCalendarShadow(kind, loader, processor, payloadField) {
+  try {
+    const notionRaw = await withTimeout(
+      loader(),
+      CALENDAR_FETCH_TIMEOUT_MS,
+      `${kind} calendar baseline refresh timed out after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    );
+    return compareSharedCalendarShadow(kind, notionRaw || [], processor, payloadField);
+  } catch (error) {
+    await recordCalendarShadowResult(
+      kind,
+      kind,
+      null,
+      error.code || 'NOTION_BASELINE_REGEN_FAILED'
+    );
+    return { status: 'error' };
   }
 }
 
@@ -6486,7 +6528,9 @@ app.get('/calendar-data/regenerate', async (req, res) => {
       regenerateCalendarForPersonSplitWithTimeout(linkedPersonId, pageId, 'non_events_only', { trigger: 'manual_regen_calendar_data', composeFull: false })
     ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
-    const composed = splitsOk ? await composeSplitCacheForPerson(linkedPersonId) : false;
+    const composed = splitsOk
+      ? await composeSplitCacheForPerson(linkedPersonId, { sourcePageId: pageId })
+      : false;
     const success = splitsOk && (composed || !redis || !cacheEnabled);
     const errorMsg = !splitsOk
       ? getSplitRegenError(eventsResult, nonEventsResult)
@@ -6571,38 +6615,84 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     completedPersonalComparisons: 0,
     baselineUnavailablePersonalComparisons: 0,
     baselineUnavailableGlobalComparisons: 0,
+    refreshedPersonalBaselines: 0,
+    failedPersonalBaselineRefreshes: 0,
   };
-  res.status(202).json({ success: true, message: 'Calendar shadow audit started.' });
+  res.status(202).json({
+    success: true,
+    message: 'Calendar shadow baseline refresh and audit started.',
+  });
+  let auditManualRegenRegistered = false;
   activeShadowAudit = (async () => {
+    if (isBackgroundCycleRunning || activeBackgroundCycles > 0) {
+      shadowAuditState = { ...shadowAuditState, phase: 'waiting_for_background_cycle' };
+      while (isBackgroundCycleRunning || activeBackgroundCycles > 0) {
+        await sleep(1000);
+      }
+    }
+    activeManualRegens += 1;
+    auditManualRegenRegistered = true;
+    await waitForCalendarShadowComparisons();
+    shadowParityMemory.clear();
+    if (redis && cacheEnabled) await redis.del(SHADOW_PARITY_REDIS_KEY);
+
     const indexedEntries = await ensureCalendarShadowAuditIndex();
     const auditEntries = uniqueCalendarDataIndexEntriesByPerson(indexedEntries);
     shadowAuditState = {
       ...shadowAuditState,
-      phase: 'cached_personal_comparison',
+      phase: 'refreshing_personal_baselines',
       totalPersonalComparisons: auditEntries.length,
     };
-    const comparisonConcurrency = Math.max(
+    const refreshConcurrency = Math.max(
       1,
-      Math.min(Number(SHADOW_AUDIT_COMPARISON_CONCURRENCY) || 4, 12)
+      Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 4, 6)
     );
-    const personalResults = await mapWithConcurrency(
+    const personalResults = [];
+    let completedPersonalComparisons = 0;
+    let refreshedPersonalBaselines = 0;
+    let failedPersonalBaselineRefreshes = 0;
+    await processCalendarDataIndexEntries(
       auditEntries,
-      comparisonConcurrency,
-      async (entry) => {
-        const result = await compareCachedPersonalCalendarShadow(entry.personId);
-        shadowAuditState = {
-          ...shadowAuditState,
-          completedPersonalComparisons:
-            Number(shadowAuditState.completedPersonalComparisons || 0) + 1,
-        };
-        return result;
+      {
+        trigger: 'shadow_baseline_audit',
+        concurrency: refreshConcurrency,
+        allowEmptyBaselines: true,
+        source: 'shadow_audit_index',
+        onResult: async (refreshResult) => {
+          if (refreshResult.success) refreshedPersonalBaselines += 1;
+          else failedPersonalBaselineRefreshes += 1;
+          const comparisonResult = await compareCalendarShadowSweepResult(refreshResult);
+          personalResults.push(comparisonResult);
+          completedPersonalComparisons += 1;
+          shadowAuditState = {
+            ...shadowAuditState,
+            completedPersonalComparisons,
+            refreshedPersonalBaselines,
+            failedPersonalBaselineRefreshes,
+          };
+        },
       }
     );
-    shadowAuditState = { ...shadowAuditState, phase: 'cached_global_comparison' };
+    shadowAuditState = { ...shadowAuditState, phase: 'refreshing_global_baselines' };
     const globalResults = await Promise.all([
-      compareCachedSharedCalendarShadow('admin', processAdminEvents, 'events'),
-      compareCachedSharedCalendarShadow('travel', processTravelEvents, 'travelGroups'),
-      compareCachedSharedCalendarShadow('blockout', processBlockoutEvents, 'events'),
+      refreshAndCompareSharedCalendarShadow(
+        'admin',
+        getAdminCalendarData,
+        processAdminEvents,
+        'events'
+      ),
+      refreshAndCompareSharedCalendarShadow(
+        'travel',
+        getTravelCalendarData,
+        processTravelEvents,
+        'travelGroups'
+      ),
+      refreshAndCompareSharedCalendarShadow(
+        'blockout',
+        getBlockoutCalendarData,
+        processBlockoutEvents,
+        'events'
+      ),
     ]);
     await waitForCalendarShadowComparisons();
     shadowAuditState = {
@@ -6611,8 +6701,10 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       startedAt,
       completedAt: new Date().toISOString(),
       errorCode: null,
-      totalPersonalComparisons: personalResults.length,
-      completedPersonalComparisons: shadowAuditState.completedPersonalComparisons || 0,
+      totalPersonalComparisons: auditEntries.length,
+      completedPersonalComparisons,
+      refreshedPersonalBaselines,
+      failedPersonalBaselineRefreshes,
       baselineUnavailablePersonalComparisons: personalResults.filter(
         (result) => result?.status === 'baseline_unavailable'
       ).length,
@@ -6632,6 +6724,9 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     };
     console.error('[calendar-shadow] audit run failed:', error.code || error.message || 'UNKNOWN');
   }).finally(() => {
+    if (auditManualRegenRegistered) {
+      activeManualRegens = Math.max(0, activeManualRegens - 1);
+    }
     activeShadowAudit = null;
   });
 });

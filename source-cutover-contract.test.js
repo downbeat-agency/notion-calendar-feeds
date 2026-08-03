@@ -62,15 +62,26 @@ test('shadow parity report and audit runner require service authentication', () 
   for (const route of [
     '/api/internal/calendar-shadow-report',
     '/api/internal/calendar-shadow-run',
+    '/api/internal/calendar-shadow-diff/:personId',
   ]) {
     const routeIndex = source.indexOf(`'${route}'`);
     assert.notEqual(routeIndex, -1);
     assert.match(source.slice(routeIndex, routeIndex + 150), /requireCalendarFeedServiceKey/u);
   }
-  assert.match(source, /compareCachedPersonalCalendarShadow\(entry\.personId\)/u);
-  assert.match(source, /compareCachedSharedCalendarShadow\('admin'/u);
-  assert.match(source, /phase: 'cached_personal_comparison'/u);
+  assert.match(source, /processCalendarDataIndexEntries\(/u);
+  assert.match(source, /compareCalendarShadowSweepResult\(refreshResult\)/u);
+  assert.match(source, /refreshAndCompareSharedCalendarShadow\(/u);
+  assert.match(source, /phase: 'refreshing_personal_baselines'/u);
   assert.match(source, /SHADOW_BASELINE_CACHE_MISSING/u);
   assert.match(source, /pageSize: 100,\s+pagesPerRun: 1000/u);
   assert.match(source, /summary\.pairsByMethod\[method\]/u);
+});
+
+test('full shadow audits refresh durable Notion baselines before comparison', () => {
+  assert.match(source, /persistCalendarShadowBaseline\(redis/u);
+  assert.match(source, /loadCalendarShadowBaseline\(redis, kind, selector\)/u);
+  assert.match(source, /trigger: 'shadow_baseline_audit'/u);
+  assert.match(source, /saveCalendarShadowBaseline\(\s*'personal'/u);
+  assert.match(source, /activeManualRegens \+= 1/u);
+  assert.match(source, /activeManualRegens = Math\.max\(0, activeManualRegens - 1\)/u);
 });

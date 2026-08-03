@@ -440,17 +440,62 @@ export function pairCalendarEvents(notionEvents, postgresEvents) {
   );
   pairByKey(notionEntries, postgresEntries, typed((event) => comparableField(event, 'start')), 'start', pairs, pairsByMethod);
 
+  const unpairedNotion = notionEntries
+    .filter((entry) => !entry.matched)
+    .map((entry) => entry.event);
+  const unpairedPostgres = postgresEntries
+    .filter((entry) => !entry.matched)
+    .map((entry) => entry.event);
   return {
     pairs,
     pairsByMethod,
-    unpairedNotionCount: notionEntries.filter((entry) => !entry.matched).length,
-    unpairedPostgresCount: postgresEntries.filter((entry) => !entry.matched).length,
-    unpairedNotionByType: eventTypeCounts(
-      notionEntries.filter((entry) => !entry.matched).map((entry) => entry.event)
-    ),
-    unpairedPostgresByType: eventTypeCounts(
-      postgresEntries.filter((entry) => !entry.matched).map((entry) => entry.event)
-    ),
+    unpairedNotion,
+    unpairedPostgres,
+    unpairedNotionCount: unpairedNotion.length,
+    unpairedPostgresCount: unpairedPostgres.length,
+    unpairedNotionByType: eventTypeCounts(unpairedNotion),
+    unpairedPostgresByType: eventTypeCounts(unpairedPostgres),
+  };
+}
+
+function diagnosticEvent(event = {}) {
+  const type = clean(event.type, 100) || 'unknown';
+  const sourceIdentity = mainEventComparisonIdentity(event)
+    || canonicalNotionUrlIdentity(event.url)
+    || embeddedNotionUrlIdentity(event.description)
+    || null;
+  return {
+    type,
+    start: iso(event.start),
+    end: iso(event.end),
+    sourceIdentity,
+    fingerprint: eventFingerprint(event),
+  };
+}
+
+export function diagnoseCalendarEventSets(notionEvents = [], postgresEvents = []) {
+  const paired = pairCalendarEvents(notionEvents, postgresEvents);
+  const pairedFieldDrift = paired.pairs.flatMap(([notionEvent, postgresEvent, method]) => {
+    const exactFields = COMPARED_EVENT_FIELDS.filter((field) =>
+      comparableField(notionEvent, field) !== comparableField(postgresEvent, field)
+    );
+    const semanticFields = COMPARED_EVENT_FIELDS.filter((field) =>
+      semanticallyComparableField(notionEvent, field)
+        !== semanticallyComparableField(postgresEvent, field)
+    );
+    if (exactFields.length === 0) return [];
+    return [{
+      method,
+      notion: diagnosticEvent(notionEvent),
+      postgres: diagnosticEvent(postgresEvent),
+      exactFields,
+      semanticFields,
+    }];
+  });
+  return {
+    unpairedNotion: paired.unpairedNotion.map(diagnosticEvent),
+    unpairedPostgres: paired.unpairedPostgres.map(diagnosticEvent),
+    pairedFieldDrift,
   };
 }
 

@@ -5,6 +5,7 @@ import {
   compareCalendarEventSets,
   configuredCalendarHistoryCutoverDate,
   configuredCalendarFeedSource,
+  diagnoseCalendarEventSets,
   fetchPostgresCalendarFeed,
   mergeCalendarEventsAcrossHistoryCutover,
 } from './postgres-calendar-source.js';
@@ -335,4 +336,28 @@ test('shadow comparison pairs main events by canonical source identity before ti
   assert.equal(comparison.unpairedNotionCount, 0);
   assert.equal(comparison.unpairedPostgresCount, 0);
   assert.doesNotMatch(JSON.stringify(comparison), new RegExp(eventPageId, 'u'));
+});
+
+test('authenticated drill-down diagnostics expose record identity and fields but not content', () => {
+  const eventPageId = '25f39e4a65a980688175d789a9befcdd';
+  const notion = [{
+    type: 'main_event',
+    title: 'Private legacy title',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T12:00:00Z',
+    description: `Timeline: https://music.downbeat.agency/timeline/${eventPageId}\nTotal Pay: $500`,
+  }];
+  const postgres = [{
+    type: 'main_event',
+    title: 'Private current title',
+    start: '2026-08-01T10:00:00Z',
+    end: '2026-08-01T12:00:00Z',
+    description: 'Total Pay: $600',
+    comparisonIdentity: `event:${eventPageId}`,
+  }];
+  const diagnostic = diagnoseCalendarEventSets(notion, postgres);
+  assert.equal(diagnostic.pairedFieldDrift.length, 1);
+  assert.equal(diagnostic.pairedFieldDrift[0].notion.sourceIdentity, `event:${eventPageId}`);
+  assert.deepEqual(diagnostic.pairedFieldDrift[0].semanticFields.sort(), ['description', 'pay', 'title']);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /Private legacy|Private current|\$500|\$600/u);
 });
