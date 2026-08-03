@@ -34,3 +34,29 @@ test('formula stability accepts a consistently empty calendar', async () => {
   });
   assert.deepEqual(result, empty);
 });
+
+test('formula stability can sample all attempts concurrently', async () => {
+  let inFlight = 0;
+  let maximumInFlight = 0;
+  let pauseCalls = 0;
+
+  const result = await readStableFormulaSnapshot(
+    async () => {
+      inFlight += 1;
+      maximumInFlight = Math.max(maximumInFlight, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight -= 1;
+      return { events: ['complete'], events2: [] };
+    },
+    {
+      attempts: 3,
+      parallel: true,
+      scoreSnapshot: score,
+      pause: async () => { pauseCalls += 1; },
+    }
+  );
+
+  assert.equal(maximumInFlight, 3);
+  assert.equal(pauseCalls, 0);
+  assert.deepEqual(result, { events: ['complete'], events2: [] });
+});

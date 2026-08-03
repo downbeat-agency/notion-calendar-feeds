@@ -18,11 +18,12 @@ export async function readStableFormulaSnapshot(readOnce, options = {}) {
     ? options.scoreSnapshot
     : () => 0;
   const pause = typeof options.pause === 'function' ? options.pause : async () => {};
+  const parallel = options.parallel === true;
   const observations = new Map();
   let maximumObservedScore = Number.NEGATIVE_INFINITY;
   let lastError = null;
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  const observeOnce = async () => {
     try {
       const snapshot = await readOnce();
       const score = Number(scoreSnapshot(snapshot));
@@ -35,7 +36,15 @@ export async function readStableFormulaSnapshot(readOnce, options = {}) {
     } catch (error) {
       lastError = error;
     }
-    if (attempt + 1 < attempts) await pause();
+  };
+
+  if (parallel) {
+    await Promise.all(Array.from({ length: attempts }, () => observeOnce()));
+  } else {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await observeOnce();
+      if (attempt + 1 < attempts) await pause();
+    }
   }
 
   const stable = [...observations.values()]

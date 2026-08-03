@@ -1313,6 +1313,7 @@ async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5) {
         }
         return firstShard.length + secondShard.length;
       },
+      parallel: true,
       pause: () => sleep(NOTION_MIN_INTERVAL_MS),
     }
   );
