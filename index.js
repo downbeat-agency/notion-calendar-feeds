@@ -11,9 +11,16 @@ import {
   calendarEventMembershipMap,
 } from './calendar-event-membership.js';
 import {
+  assertCalendarRehearsalSnapshotExpectedIds,
+  buildCalendarRehearsalMembershipSnapshot,
+  calendarRehearsalMembershipMap,
+  personalCalendarRecentDateStart,
+} from './calendar-rehearsal-membership.js';
+import {
   loadCalendarShadowBaseline,
   persistCalendarShadowBaseline,
 } from './calendar-shadow-baseline.js';
+import { summarizeCalendarShadowEntries } from './calendar-shadow-summary.js';
 import {
   assertCalendarEventSnapshotCoverage,
   assertCalendarEventSnapshotExpectedIds,
@@ -100,6 +107,13 @@ const PAYROLL_PERSONNEL_WITNESS_PROPERTY_IDS = Object.freeze({
   Personnel: '%60UFJ',
   Event: 'd%3ECG',
 });
+const PAYROLL_PERSONNEL_REHEARSAL_WITNESS_PROPERTY_IDS = Object.freeze({
+  Personnel: '%60UFJ',
+  Rehearsals: 'hH%5EF',
+  RehearsalDateTime: 'BD%40%5E',
+  RehearsalStatus: 'E%5Bys',
+  Status: 'RyhU',
+});
 const EVENT_DATE_PROPERTY_ID = 'nEFA';
 const ADMIN_CALENDAR_PAGE_ID = process.env.ADMIN_CALENDAR_PAGE_ID;
 const TRAVEL_CALENDAR_PAGE_ID = process.env.TRAVEL_CALENDAR_PAGE_ID;
@@ -150,6 +164,8 @@ let shadowAuditState = {
   failedPersonalBaselineRefreshes: 0,
   eventMembershipWitnessRows: 0,
   eventMembershipWitnessLinks: 0,
+  rehearsalMembershipWitnessRows: 0,
+  rehearsalMembershipWitnessLinks: 0,
 };
 const CALENDAR_DATA_INDEX_CACHE_KEY = 'calendar:index:calendar_data_rows:v1';
 const CALENDAR_DATA_INDEX_STATE_CACHE_KEY = 'calendar:index:calendar_data_rows:build_state:v1';
@@ -983,118 +999,6 @@ async function loadCalendarShadowEntries() {
     || left.selector.localeCompare(right.selector));
 }
 
-function summarizeCalendarShadowEntries(entries) {
-  const summary = {
-    comparisons: entries.length,
-    matches: 0,
-    mismatches: 0,
-    semanticMatches: 0,
-    semanticMismatches: 0,
-    errors: 0,
-    baselineUnavailable: 0,
-    notionEvents: 0,
-    postgresEvents: 0,
-    missingFromPostgres: 0,
-    extraInPostgres: 0,
-    pairedEvents: 0,
-    pairsByMethod: {},
-    exactPairedEvents: 0,
-    semanticPairedEvents: 0,
-    unpairedNotion: 0,
-    unpairedPostgres: 0,
-    unpairedNotionByType: {},
-    unpairedPostgresByType: {},
-    fieldMismatchCounts: {},
-    semanticFieldMismatchCounts: {},
-    fieldMismatchCountsByType: {},
-    semanticFieldMismatchCountsByType: {},
-    byKind: {},
-  };
-  for (const entry of entries) {
-    const kindSummary = summary.byKind[entry.kind] || {
-      comparisons: 0,
-      matches: 0,
-      mismatches: 0,
-      semanticMatches: 0,
-      semanticMismatches: 0,
-      errors: 0,
-      baselineUnavailable: 0,
-    };
-    kindSummary.comparisons += 1;
-    if (entry.errorCode || !entry.comparison) {
-      if (SHADOW_BASELINE_UNAVAILABLE_CODES.has(entry.errorCode)) {
-        summary.baselineUnavailable += 1;
-        kindSummary.baselineUnavailable += 1;
-      } else {
-        summary.errors += 1;
-        kindSummary.errors += 1;
-      }
-      summary.byKind[entry.kind] = kindSummary;
-      continue;
-    }
-    if (entry.comparison.matches) {
-      summary.matches += 1;
-      kindSummary.matches += 1;
-    } else {
-      summary.mismatches += 1;
-      kindSummary.mismatches += 1;
-    }
-    if (entry.comparison.semanticMatches) {
-      summary.semanticMatches += 1;
-      kindSummary.semanticMatches += 1;
-    } else {
-      summary.semanticMismatches += 1;
-      kindSummary.semanticMismatches += 1;
-    }
-    summary.notionEvents += Number(entry.comparison.notionCount) || 0;
-    summary.postgresEvents += Number(entry.comparison.postgresCount) || 0;
-    summary.missingFromPostgres += Number(entry.comparison.missingFromPostgresCount) || 0;
-    summary.extraInPostgres += Number(entry.comparison.extraInPostgresCount) || 0;
-    summary.pairedEvents += Number(entry.comparison.pairedCount) || 0;
-    for (const [method, count] of Object.entries(entry.comparison.pairsByMethod || {})) {
-      summary.pairsByMethod[method] = (summary.pairsByMethod[method] || 0)
-        + (Number(count) || 0);
-    }
-    summary.exactPairedEvents += Number(entry.comparison.exactPairCount) || 0;
-    summary.semanticPairedEvents += Number(entry.comparison.semanticPairCount) || 0;
-    summary.unpairedNotion += Number(entry.comparison.unpairedNotionCount) || 0;
-    summary.unpairedPostgres += Number(entry.comparison.unpairedPostgresCount) || 0;
-    for (const [type, count] of Object.entries(entry.comparison.unpairedNotionByType || {})) {
-      summary.unpairedNotionByType[type] = (summary.unpairedNotionByType[type] || 0)
-        + (Number(count) || 0);
-    }
-    for (const [type, count] of Object.entries(entry.comparison.unpairedPostgresByType || {})) {
-      summary.unpairedPostgresByType[type] = (summary.unpairedPostgresByType[type] || 0)
-        + (Number(count) || 0);
-    }
-    for (const [field, count] of Object.entries(entry.comparison.fieldMismatchCounts || {})) {
-      summary.fieldMismatchCounts[field] = (summary.fieldMismatchCounts[field] || 0) + (Number(count) || 0);
-    }
-    for (const [field, count] of Object.entries(entry.comparison.semanticFieldMismatchCounts || {})) {
-      summary.semanticFieldMismatchCounts[field] = (summary.semanticFieldMismatchCounts[field] || 0)
-        + (Number(count) || 0);
-    }
-    for (const [type, counts] of Object.entries(entry.comparison.fieldMismatchCountsByType || {})) {
-      const target = summary.fieldMismatchCountsByType[type] || {};
-      for (const [field, count] of Object.entries(counts || {})) {
-        target[field] = (target[field] || 0) + (Number(count) || 0);
-      }
-      summary.fieldMismatchCountsByType[type] = target;
-    }
-    for (const [type, counts] of Object.entries(
-      entry.comparison.semanticFieldMismatchCountsByType || {}
-    )) {
-      const target = summary.semanticFieldMismatchCountsByType[type] || {};
-      for (const [field, count] of Object.entries(counts || {})) {
-        target[field] = (target[field] || 0) + (Number(count) || 0);
-      }
-      summary.semanticFieldMismatchCountsByType[type] = target;
-    }
-    summary.byKind[entry.kind] = kindSummary;
-  }
-  return summary;
-}
-
 function requireCalendarFeedServiceKey(req, res, next) {
   if (!calendarFeedServiceRequestIsAuthorized(req)) {
     return res.status(401).json({ error: 'Invalid calendar feed service key' });
@@ -1112,7 +1016,9 @@ app.get('/api/internal/calendar-shadow-report', requireCalendarFeedServiceKey, a
       ...shadowAuditState,
       activeComparisons: activeShadowComparisons.size,
     },
-    summary: summarizeCalendarShadowEntries(entries),
+    summary: summarizeCalendarShadowEntries(entries, {
+      baselineUnavailableCodes: SHADOW_BASELINE_UNAVAILABLE_CODES,
+    }),
     ...(req.query.details === 'true' ? { entries } : {}),
   });
 });
@@ -1392,6 +1298,93 @@ async function getStableCalendarEventMembershipWitness(personnelIds, maxRetries 
   );
 }
 
+async function fetchCalendarRehearsalMembershipWitnessOnce(personnelIds, maxRetries = 5) {
+  const payrollRows = [];
+  let cursor;
+  let hasMore = true;
+  while (hasMore) {
+    const response = await retryNotionCall(
+      () => notionAux.databases.query({
+        database_id: PAYROLL_PERSONNEL_DB,
+        page_size: 100,
+        filter_properties: Object.values(
+          PAYROLL_PERSONNEL_REHEARSAL_WITNESS_PROPERTY_IDS
+        ),
+        filter: {
+          and: [
+            { property: 'Rehearsal Position', relation: { is_not_empty: true } },
+            { property: 'Rehearsals', relation: { is_not_empty: true } },
+          ],
+        },
+        ...(cursor ? { start_cursor: cursor } : {}),
+      }),
+      maxRetries
+    );
+    payrollRows.push(...(response.results || []));
+    hasMore = !!response.has_more;
+    cursor = response.next_cursor || undefined;
+    if (hasMore && !cursor) {
+      const error = new Error('Notion rehearsal membership witness pagination ended early.');
+      error.code = 'NOTION_CALENDAR_REHEARSAL_MEMBERSHIP_PAGINATION_INVALID';
+      throw error;
+    }
+  }
+
+  return buildCalendarRehearsalMembershipSnapshot(payrollRows, personnelIds, {
+    dateFrom: personalCalendarRecentDateStart(),
+  });
+}
+
+async function getStableCalendarRehearsalMembershipWitness(personnelIds, maxRetries = 5) {
+  return readStableFormulaSnapshot(
+    () => fetchCalendarRehearsalMembershipWitnessOnce(personnelIds, maxRetries),
+    {
+      attempts: 3,
+      requiredHits: 2,
+      scoreSnapshot: (snapshot) => snapshot.membershipCount,
+      pause: () => sleep(NOTION_MIN_INTERVAL_MS),
+    }
+  );
+}
+
+async function getStableCalendarRehearsalFormulaString(
+  pageId,
+  expectedRehearsalIds,
+  maxRetries = 5
+) {
+  const ids = await getCalendarDataPropertyIdMap(maxRetries);
+  const expected = Array.isArray(expectedRehearsalIds) ? expectedRehearsalIds : null;
+  const hasExpectedRehearsals = expected && expected.length > 0;
+  const parseRows = (rehearsals) => parseJsonFormulaArray(
+    { formula: { string: rehearsals || '[]' } },
+    'Rehearsals'
+  );
+  const snapshot = await readStableFormulaSnapshot(
+    async () => ({
+      rehearsals: await fetchPagePropertyString(
+        pageId,
+        ids.Rehearsals,
+        maxRetries,
+        notionAux
+      ) || '[]',
+    }),
+    {
+      attempts: hasExpectedRehearsals ? 3 : 1,
+      requiredHits: hasExpectedRehearsals ? 2 : 1,
+      scoreSnapshot: ({ rehearsals }) => {
+        const rows = parseRows(rehearsals);
+        if (expected) assertCalendarRehearsalSnapshotExpectedIds(rows, expected);
+        return rows.length;
+      },
+      pause: () => sleep(NOTION_MIN_INTERVAL_MS),
+    }
+  );
+  if (expected) {
+    assertCalendarRehearsalSnapshotExpectedIds(parseRows(snapshot.rehearsals), expected);
+  }
+  return snapshot.rehearsals;
+}
+
 async function getStableCalendarEventFormulaStrings(pageId, maxRetries = 5, options = {}) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
   const hasMembershipWitness = Array.isArray(options.expectedEventIds);
@@ -1504,14 +1497,27 @@ async function getCalendarDataPagePropertiesEventsOnly(pageId, maxRetries = 5, o
 }
 
 /** Fetch only non-events properties (Flights, Hotels, Rehearsals, etc.) for non_events_only split regen. Uses NOTION_API_KEY2. */
-async function getCalendarDataPagePropertiesNonEventsOnly(pageId, maxRetries = 5) {
+async function getCalendarDataPagePropertiesNonEventsOnly(
+  pageId,
+  maxRetries = 5,
+  options = {}
+) {
   const ids = await getCalendarDataPropertyIdMap(maxRetries);
+  const expectedRehearsalIds = Array.isArray(options.expectedRehearsalIds)
+    ? options.expectedRehearsalIds
+    : null;
   const [nameStr, flightsStr, transportationStr, hotelsStr, rehearsalsStr, teamCalendarStr, eventNotesRemindersStr] = await Promise.all([
     fetchPagePropertyString(pageId, ids.Name, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Flights, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Transportation, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.Hotels, maxRetries, notionAux),
-    fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries, notionAux),
+    expectedRehearsalIds
+      ? getStableCalendarRehearsalFormulaString(
+          pageId,
+          expectedRehearsalIds,
+          maxRetries
+        )
+      : fetchPagePropertyString(pageId, ids.Rehearsals, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.TeamCalendar, maxRetries, notionAux),
     fetchPagePropertyString(pageId, ids.EventNotesReminders, maxRetries, notionAux),
   ]);
@@ -1949,6 +1955,7 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     pageCount = 0,
     onResult = null,
     eventMembershipByPerson = null,
+    rehearsalMembershipByPerson = null,
   } = options;
 
   const normalizedEntries = normalizeCalendarDataIndexEntries(entries);
@@ -1958,6 +1965,7 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
     }
     const normalizedPersonId = normalizeNotionPageId(entry.personId);
     let expectedEventIds;
+    let expectedRehearsalIds;
     if (eventMembershipByPerson instanceof Map) {
       if (!eventMembershipByPerson.has(normalizedPersonId)) {
         const error = new Error(`Calendar membership witness is missing personnel ${normalizedPersonId}.`);
@@ -1966,13 +1974,28 @@ async function processCalendarDataIndexEntries(entries, options = {}) {
       }
       expectedEventIds = eventMembershipByPerson.get(normalizedPersonId);
     }
+    if (rehearsalMembershipByPerson instanceof Map) {
+      if (!rehearsalMembershipByPerson.has(normalizedPersonId)) {
+        const error = new Error(
+          `Rehearsal membership witness is missing personnel ${normalizedPersonId}.`
+        );
+        error.code = 'NOTION_CALENDAR_REHEARSAL_MEMBERSHIP_PERSON_MISSING';
+        throw error;
+      }
+      expectedRehearsalIds = rehearsalMembershipByPerson.get(normalizedPersonId);
+    }
     const [eventsResult, nonEventsResult] = await Promise.all([
       regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'events_only', {
         trigger,
         composeFull: false,
         expectedEventIds,
       }),
-      regenerateCalendarForPersonSplitWithTimeout(entry.personId, entry.pageId, 'non_events_only', { trigger, composeFull: false })
+      regenerateCalendarForPersonSplitWithTimeout(
+        entry.personId,
+        entry.pageId,
+        'non_events_only',
+        { trigger, composeFull: false, expectedRehearsalIds }
+      )
     ]);
     const splitsOk = eventsResult.success && nonEventsResult.success;
     const composed = splitsOk
@@ -3801,7 +3824,12 @@ async function tryComposeFullCalendarFromSplitCaches(personId) {
 
 /** Run split regen (events_only or non_events_only) and optionally compose full cache when both exist. */
 async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, regenMode, options = {}) {
-  const { trigger = 'unknown', composeFull = true, expectedEventIds } = options;
+  const {
+    trigger = 'unknown',
+    composeFull = true,
+    expectedEventIds,
+    expectedRehearsalIds,
+  } = options;
   if (!calendarDataPageId || !['events_only', 'non_events_only'].includes(regenMode)) {
     return { success: false, personId, error: 'Invalid regenMode or missing calendarDataPageId' };
   }
@@ -3821,7 +3849,11 @@ async function regenerateCalendarForPersonSplit(personId, calendarDataPageId, re
         partialData = { personName: partialData?.personName || 'Unknown', events: [] };
       }
     } else {
-      const props = await getCalendarDataPagePropertiesNonEventsOnly(calendarDataPageId, 6);
+      const props = await getCalendarDataPagePropertiesNonEventsOnly(
+        calendarDataPageId,
+        6,
+        { expectedRehearsalIds }
+      );
       partialData = processCalendarDataNonEventsOnly(props);
       if (!partialData) {
         partialData = { personName: 'Unknown', events: [], flights: [], rehearsals: [], hotels: [], ground_transport: [], team_calendar: [], event_note_reminders: [] };
@@ -6878,6 +6910,8 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     failedPersonalBaselineRefreshes: 0,
     eventMembershipWitnessRows: 0,
     eventMembershipWitnessLinks: 0,
+    rehearsalMembershipWitnessRows: 0,
+    rehearsalMembershipWitnessLinks: 0,
     refreshBaselines,
   };
   res.status(202).json({
@@ -6963,18 +6997,62 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
     const eventMembershipByPerson = calendarEventMembershipMap(eventMembershipWitness);
     shadowAuditState = {
       ...shadowAuditState,
+      phase: 'building_rehearsal_membership_witness',
+      eventMembershipWitnessRows: eventMembershipWitness.sourceRowCount,
+      eventMembershipWitnessLinks: eventMembershipWitness.membershipCount,
+    };
+    const rehearsalMembershipWitness = await getStableCalendarRehearsalMembershipWitness(
+      auditEntries.map((entry) => entry.personId)
+    );
+    const rehearsalMembershipByPerson = calendarRehearsalMembershipMap(
+      rehearsalMembershipWitness
+    );
+    shadowAuditState = {
+      ...shadowAuditState,
       phase: 'refreshing_personal_baselines',
       eventMembershipWitnessRows: eventMembershipWitness.sourceRowCount,
       eventMembershipWitnessLinks: eventMembershipWitness.membershipCount,
+      rehearsalMembershipWitnessRows: rehearsalMembershipWitness.sourceRowCount,
+      rehearsalMembershipWitnessLinks: rehearsalMembershipWitness.membershipCount,
     };
     const refreshConcurrency = Math.max(
       1,
       Math.min(Number(SHADOW_BASELINE_REFRESH_CONCURRENCY) || 2, 6)
     );
-    const personalResults = [];
+    const personalResultsByPerson = new Map();
+    const failedAuditEntries = [];
     let completedPersonalComparisons = 0;
     let refreshedPersonalBaselines = 0;
     let failedPersonalBaselineRefreshes = 0;
+    const handlePersonalBaselineResult = async (refreshResult, { retry = false } = {}) => {
+      const personId = normalizeNotionPageId(refreshResult?.personId);
+      if (!retry) {
+        completedPersonalComparisons += 1;
+        if (refreshResult.success) {
+          refreshedPersonalBaselines += 1;
+        } else {
+          failedPersonalBaselineRefreshes += 1;
+          failedAuditEntries.push({
+            personId: refreshResult.personId,
+            pageId: refreshResult.pageId,
+          });
+        }
+      } else if (refreshResult.success) {
+        refreshedPersonalBaselines += 1;
+        failedPersonalBaselineRefreshes = Math.max(
+          0,
+          failedPersonalBaselineRefreshes - 1
+        );
+      }
+      const comparisonResult = await compareCalendarShadowSweepResult(refreshResult);
+      if (personId) personalResultsByPerson.set(personId, comparisonResult);
+      shadowAuditState = {
+        ...shadowAuditState,
+        completedPersonalComparisons,
+        refreshedPersonalBaselines,
+        failedPersonalBaselineRefreshes,
+      };
+    };
     await processCalendarDataIndexEntries(
       auditEntries,
       {
@@ -6982,22 +7060,33 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
         concurrency: refreshConcurrency,
         allowEmptyBaselines: true,
         eventMembershipByPerson,
+        rehearsalMembershipByPerson,
         source: 'shadow_audit_index',
-        onResult: async (refreshResult) => {
-          if (refreshResult.success) refreshedPersonalBaselines += 1;
-          else failedPersonalBaselineRefreshes += 1;
-          const comparisonResult = await compareCalendarShadowSweepResult(refreshResult);
-          personalResults.push(comparisonResult);
-          completedPersonalComparisons += 1;
-          shadowAuditState = {
-            ...shadowAuditState,
-            completedPersonalComparisons,
-            refreshedPersonalBaselines,
-            failedPersonalBaselineRefreshes,
-          };
-        },
+        onResult: handlePersonalBaselineResult,
       }
     );
+    if (failedAuditEntries.length > 0) {
+      shadowAuditState = {
+        ...shadowAuditState,
+        phase: 'retrying_failed_personal_baselines',
+      };
+      await processCalendarDataIndexEntries(
+        failedAuditEntries,
+        {
+          trigger: 'shadow_baseline_audit_retry',
+          concurrency: 1,
+          allowEmptyBaselines: true,
+          eventMembershipByPerson,
+          rehearsalMembershipByPerson,
+          source: 'shadow_audit_retry',
+          onResult: (refreshResult) => handlePersonalBaselineResult(
+            refreshResult,
+            { retry: true }
+          ),
+        }
+      );
+    }
+    const personalResults = [...personalResultsByPerson.values()];
     shadowAuditState = { ...shadowAuditState, phase: 'refreshing_global_baselines' };
     const globalResults = await Promise.all([
       refreshAndCompareSharedCalendarShadow(
@@ -7032,6 +7121,8 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
       failedPersonalBaselineRefreshes,
       eventMembershipWitnessRows: eventMembershipWitness.sourceRowCount,
       eventMembershipWitnessLinks: eventMembershipWitness.membershipCount,
+      rehearsalMembershipWitnessRows: rehearsalMembershipWitness.sourceRowCount,
+      rehearsalMembershipWitnessLinks: rehearsalMembershipWitness.membershipCount,
       baselineUnavailablePersonalComparisons: personalResults.filter(
         (result) => result?.status === 'baseline_unavailable'
       ).length,

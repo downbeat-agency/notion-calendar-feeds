@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+const shadowSummarySource = readFileSync(
+  new URL('./calendar-shadow-summary.js', import.meta.url),
+  'utf8'
+);
 
 test('legacy subscription URLs remain registered during the source cutover', () => {
   for (const route of [
@@ -75,9 +79,16 @@ test('shadow parity report and audit runner require service authentication', () 
   assert.match(source, /compareCalendarShadowSweepResult\(refreshResult\)/u);
   assert.match(source, /refreshAndCompareSharedCalendarShadow\(/u);
   assert.match(source, /phase: 'refreshing_personal_baselines'/u);
+  assert.match(source, /phase: 'building_rehearsal_membership_witness'/u);
+  assert.match(source, /phase: 'retrying_failed_personal_baselines'/u);
+  assert.match(source, /trigger: 'shadow_baseline_audit_retry'/u);
+  assert.match(source, /getStableCalendarRehearsalMembershipWitness/u);
+  assert.match(source, /expectedRehearsalIds/u);
   assert.match(source, /SHADOW_BASELINE_CACHE_MISSING/u);
   assert.match(source, /pageSize: 100,\s+pagesPerRun: 1000/u);
-  assert.match(source, /summary\.pairsByMethod\[method\]/u);
+  assert.match(source, /summarizeCalendarShadowEntries\(entries/u);
+  assert.match(shadowSummarySource, /target\.pairsByMethod/u);
+  assert.match(shadowSummarySource, /summary\.byKind\[kind\]/u);
 });
 
 test('full shadow audits refresh durable Notion baselines before comparison', () => {
