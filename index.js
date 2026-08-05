@@ -32,13 +32,26 @@ import {
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
+  buildCalendarArtifactMetadata,
+  calendarArtifactMetadataKey,
+  calendarArtifactMetadataMatches,
+  calendarRequestIsNotModified,
+  createCalendarSingleFlight,
+  parseCalendarArtifactMetadata,
+  resolveCalendarRendererVersion,
+} from './calendar-cache-policy.js';
+import { createCalendarObservability } from './calendar-observability.js';
+import {
+  configuredCalendarTimeMode,
+  serializeCalendarWithTimePolicy,
+  serializeGoogleCalendarWithTimePolicy,
+} from './calendar-ics-policy.js';
+import {
   calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
-  configuredCalendarHistoryCutoverDate,
   configuredCalendarFeedSource,
   diagnoseCalendarEventSets,
   fetchPostgresCalendarFeed,
-  mergeCalendarEventsAcrossHistoryCutover,
 } from './postgres-calendar-source.js';
 
 // Server refresh - October 1, 2025
@@ -128,16 +141,20 @@ const ADMIN_EVENTS_1_PROPERTY_ID = process.env.ADMIN_EVENTS_1_PROPERTY_ID || nul
 const ADMIN_EVENTS_2_PROPERTY_ID = process.env.ADMIN_EVENTS_2_PROPERTY_ID || null;
 const TRAVEL_ADMIN_PROPERTY_ID = process.env.TRAVEL_ADMIN_PROPERTY_ID || '%3B%3CuW';
 const CALENDAR_FEED_SOURCE = configuredCalendarFeedSource();
-const CALENDAR_FEED_HISTORY_CUTOVER_DATE = configuredCalendarHistoryCutoverDate();
+const CALENDAR_TIME_MODE = configuredCalendarTimeMode();
+const CALENDAR_RENDERER_VERSION = resolveCalendarRendererVersion(process.env);
+const CALENDAR_SLOW_BUILD_MS = Number(process.env.CALENDAR_SLOW_BUILD_MS || 5_000);
+const calendarObservability = createCalendarObservability();
+const runCalendarBuild = createCalendarSingleFlight({
+  onCoalesced: () => calendarObservability.record('coalescedRequest', { kind: 'calendar' }),
+});
 
 console.log(`📅 Calendar feed source mode: ${CALENDAR_FEED_SOURCE}`);
+console.log(`   Renderer version: ${CALENDAR_RENDERER_VERSION}; time mode: ${CALENDAR_TIME_MODE}`);
 if (CALENDAR_FEED_SOURCE === 'shadow') {
   console.log('   Serving Notion calendars while comparing Postgres projections in the background');
 } else if (CALENDAR_FEED_SOURCE === 'postgres') {
   console.log('   Serving Postgres projections through the existing subscription URLs and renderer');
-}
-if (CALENDAR_FEED_SOURCE !== 'notion') {
-  console.log(`   Legacy history remains frozen before ${CALENDAR_FEED_HISTORY_CUTOVER_DATE}`);
 }
 
 // Cache TTL in seconds (30 minutes by default)
@@ -537,62 +554,12 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-const GOOGLE_CALENDAR_TIMEZONE = 'America/Los_Angeles';
-const GOOGLE_VTIMEZONE_BLOCK = [
-  'BEGIN:VTIMEZONE',
-  `TZID:${GOOGLE_CALENDAR_TIMEZONE}`,
-  `X-LIC-LOCATION:${GOOGLE_CALENDAR_TIMEZONE}`,
-  'BEGIN:DAYLIGHT',
-  'TZOFFSETFROM:-0800',
-  'TZOFFSETTO:-0700',
-  'TZNAME:PDT',
-  'DTSTART:19700308T020000',
-  'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU',
-  'END:DAYLIGHT',
-  'BEGIN:STANDARD',
-  'TZOFFSETFROM:-0700',
-  'TZOFFSETTO:-0800',
-  'TZNAME:PST',
-  'DTSTART:19701101T020000',
-  'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU',
-  'END:STANDARD',
-  'END:VTIMEZONE'
-].join('\r\n');
-
-function addCalendarTimezoneMetadata(icsData) {
-  if (typeof icsData !== 'string' || icsData.includes('X-WR-TIMEZONE:')) {
-    return icsData;
-  }
-
-  return icsData.replace(
-    /(VERSION:2\.0\r?\n)/,
-    `$1X-WR-TIMEZONE:${GOOGLE_CALENDAR_TIMEZONE}\r\n`
-  );
-}
-
 function serializeCalendar(calendar) {
-  return addCalendarTimezoneMetadata(calendar.toString());
+  return serializeCalendarWithTimePolicy(calendar, { mode: CALENDAR_TIME_MODE });
 }
 
 function serializeGoogleCalendar(calendar) {
-  if (!calendar) {
-    return '';
-  }
-
-  let icsData = addCalendarTimezoneMetadata(calendar.toString());
-
-  icsData = icsData
-    .replace(/\r?\nDTSTART:(\d{8}T\d{6})/g, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
-    .replace(/\r?\nDTEND:(\d{8}T\d{6})/g, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
-
-  if (!icsData.includes('BEGIN:VTIMEZONE')) {
-    icsData = icsData.replace(
-      /(X-WR-TIMEZONE:[^\r\n]+\r?\n)/,
-      `$1${GOOGLE_VTIMEZONE_BLOCK}\r\n`
-    );
-  }
-
-  return icsData;
+  return serializeGoogleCalendarWithTimePolicy(calendar, { mode: CALENDAR_TIME_MODE });
 }
 
 function getRetryAfterMs(error) {
@@ -805,10 +772,6 @@ function buildSharedCalendarCacheKey(kind, formatKey) {
   return `${prefix}:${kind}:${formatKey}`;
 }
 
-function frozenPersonalHistoryCacheKey(personId) {
-  return `calendar:legacy-history:v1:${CALENDAR_FEED_HISTORY_CUTOVER_DATE}:${personId}`;
-}
-
 async function saveCalendarShadowBaseline(kind, selector, events, sourcePageId = null) {
   if (CALENDAR_FEED_SOURCE !== 'shadow') return null;
   if (!redis || !cacheEnabled) {
@@ -824,113 +787,140 @@ async function saveCalendarShadowBaseline(kind, selector, events, sourcePageId =
   });
 }
 
-function calendarEventsForRegenMode(events, regenMode) {
-  const rows = Array.isArray(events) ? events : [];
-  if (regenMode === REGEN_MODE_EVENTS_ONLY) {
-    return rows.filter((event) => event?.type === 'main_event');
-  }
-  if (regenMode === REGEN_MODE_NON_EVENTS_ONLY) {
-    return rows.filter((event) => event?.type !== 'main_event');
-  }
-  return rows;
+async function readCalendarArtifactMetadata(cacheKey) {
+  if (!redis || !cacheEnabled) return null;
+  return parseCalendarArtifactMetadata(
+    await redis.get(calendarArtifactMetadataKey(cacheKey))
+  );
 }
 
-async function freezePersonalCalendarHistory(personId, legacyEvents = []) {
-  if (!redis || !cacheEnabled) return { available: false, events: [] };
-  const events = mergeCalendarEventsAcrossHistoryCutover(
-    legacyEvents,
-    [],
-    CALENDAR_FEED_HISTORY_CUTOVER_DATE
-  ).map(publicCalendarEvent);
-  const payload = {
-    schemaVersion: 1,
-    cutoverDate: CALENDAR_FEED_HISTORY_CUTOVER_DATE,
-    frozenAt: new Date().toISOString(),
-    events,
-  };
-  // This is the compatibility snapshot that keeps already-published history
-  // stable after the normal Notion cache expires. It intentionally has no TTL.
-  await redis.set(frozenPersonalHistoryCacheKey(personId), JSON.stringify(payload));
-  return { available: true, events };
-}
-
-async function loadFrozenPersonalCalendarHistory(personId) {
-  if (!redis || !cacheEnabled) {
-    const error = new Error('Legacy calendar history cache is unavailable.');
-    error.code = 'LEGACY_CALENDAR_HISTORY_UNAVAILABLE';
-    throw error;
-  }
-  const frozenKey = frozenPersonalHistoryCacheKey(personId);
-  const frozenRaw = await redis.get(frozenKey);
-  if (frozenRaw) {
-    try {
-      const payload = JSON.parse(frozenRaw);
-      if (
-        payload?.cutoverDate === CALENDAR_FEED_HISTORY_CUTOVER_DATE
-        && Array.isArray(payload?.events)
-      ) {
-        return payload.events;
-      }
-    } catch {
-      // Fall through to the expiring Notion cache and replace a malformed snapshot.
-    }
-  }
-  const legacyRaw = await redis.get(`calendar:${personId}:json`);
-  if (legacyRaw) {
-    try {
-      const payload = JSON.parse(legacyRaw);
-      if (Array.isArray(payload?.events)) {
-        return (await freezePersonalCalendarHistory(personId, payload.events)).events;
-      }
-    } catch {
-      // Fail closed below rather than publishing a calendar without its history.
-    }
-  }
-  const error = new Error('Legacy calendar history has not been frozen for this subscriber.');
-  error.code = 'LEGACY_CALENDAR_HISTORY_MISSING';
-  throw error;
-}
-
-async function validatePostgresCacheRevision(revisionCacheKey) {
-  if (CALENDAR_FEED_SOURCE !== 'postgres' || !redis || !cacheEnabled) {
-    return { matches: true, sourceRevision: null, unavailable: false };
-  }
-  try {
-    const [payload, cachedRevision] = await Promise.all([
-      fetchPostgresCalendarFeed('version'),
-      redis.get(revisionCacheKey),
+async function cacheCalendarArtifact(cacheKey, content, options = {}) {
+  const metadata = buildCalendarArtifactMetadata({
+    content,
+    sourceRevision: options.sourceRevision,
+    sourceUpdatedAt: options.sourceUpdatedAt,
+    rendererVersion: CALENDAR_RENDERER_VERSION,
+    eventCount: options.eventCount,
+  });
+  if (redis && cacheEnabled) {
+    await Promise.all([
+      setCalendarCache(cacheKey, content),
+      setCalendarCache(calendarArtifactMetadataKey(cacheKey), JSON.stringify(metadata)),
     ]);
-    const sourceRevision = String(payload.sourceRevision || '');
+  }
+  return metadata;
+}
+
+async function validatePostgresCacheRevision(cacheKey) {
+  if (CALENDAR_FEED_SOURCE !== 'postgres' || !redis || !cacheEnabled) {
     return {
-      matches: Boolean(sourceRevision && cachedRevision === sourceRevision),
-      sourceRevision,
+      matches: true,
+      sourceRevision: null,
       unavailable: false,
+      metadata: await readCalendarArtifactMetadata(cacheKey),
+    };
+  }
+  const metadata = await readCalendarArtifactMetadata(cacheKey);
+  try {
+    const payload = await fetchPostgresCalendarFeed('version');
+    const sourceRevision = String(payload.sourceRevision || '');
+    const matches = Boolean(sourceRevision && calendarArtifactMetadataMatches(metadata, {
+      sourceRevision,
+      rendererVersion: CALENDAR_RENDERER_VERSION,
+    }));
+    if (!matches) {
+      calendarObservability.record('revisionMismatch', { kind: 'cache' });
+    }
+    return {
+      matches,
+      sourceRevision,
+      sourceUpdatedAt: payload.sourceUpdatedAt || null,
+      unavailable: false,
+      metadata,
     };
   } catch (error) {
     console.warn('[calendar-postgres] Source revision check failed:', error.code || 'UNKNOWN');
-    return { matches: true, sourceRevision: null, unavailable: true };
+    calendarObservability.record('projectionFailure', {
+      kind: 'version-check',
+      errorCode: error.code || 'UNKNOWN',
+    });
+    return {
+      matches: calendarArtifactMetadataMatches(metadata, {
+        rendererVersion: CALENDAR_RENDERER_VERSION,
+      }),
+      sourceRevision: null,
+      unavailable: true,
+      metadata,
+    };
   }
 }
 
-async function cachePostgresSourceRevision(revisionCacheKey, sourceRevision) {
-  if (
-    CALENDAR_FEED_SOURCE === 'postgres'
-    && redis
-    && cacheEnabled
-    && sourceRevision != null
-    && String(sourceRevision)
-  ) {
-    await setCalendarCache(revisionCacheKey, String(sourceRevision));
+function sendCalendarArtifact(req, res, content, options = {}) {
+  const metadata = options.metadata || buildCalendarArtifactMetadata({
+    content,
+    sourceRevision: options.sourceRevision,
+    sourceUpdatedAt: options.sourceUpdatedAt,
+    rendererVersion: CALENDAR_RENDERER_VERSION,
+    eventCount: options.eventCount,
+  });
+  res.setHeader('ETag', metadata.etag);
+  res.setHeader('Last-Modified', new Date(metadata.generatedAt).toUTCString());
+  res.setHeader('X-Downbeat-Calendar-Renderer', CALENDAR_RENDERER_VERSION);
+  if (options.contentType) res.setHeader('Content-Type', options.contentType);
+  if (options.filename) {
+    res.setHeader('Content-Disposition', `attachment; filename="${options.filename}"`);
   }
+  if (calendarRequestIsNotModified(req.headers || {}, metadata)) {
+    calendarObservability.record('conditionalHit', { kind: options.kind || 'calendar' });
+    return res.status(304).end();
+  }
+  return res.send(content);
+}
+
+function runMonitoredCalendarBuild(key, kind, builder) {
+  return runCalendarBuild(key, async () => {
+    const started = Date.now();
+    try {
+      const result = await builder();
+      const durationMs = Date.now() - started;
+      if (durationMs >= CALENDAR_SLOW_BUILD_MS) {
+        calendarObservability.record('slowBuild', { kind, durationMs });
+      }
+      if (result?.success === false) {
+        calendarObservability.record('projectionFailure', {
+          kind,
+          errorCode: result.reason || 'CALENDAR_BUILD_FAILED',
+          durationMs,
+        });
+      } else {
+        calendarObservability.record('projectionSuccess', { kind, durationMs });
+      }
+      return result;
+    } catch (error) {
+      calendarObservability.record('projectionFailure', {
+        kind,
+        errorCode: error?.code || 'CALENDAR_BUILD_FAILED',
+        durationMs: Date.now() - started,
+      });
+      throw error;
+    }
+  });
 }
 
 function attachPostgresSourceRevision(data, payload) {
   if (data && typeof data === 'object') {
-    Object.defineProperty(data, 'sourceRevision', {
-      configurable: true,
-      enumerable: false,
-      value: payload?.sourceRevision || null,
-    });
+    for (const [property, value] of Object.entries({
+      sourceRevision: payload?.sourceRevision || null,
+      sourceUpdatedAt: payload?.sourceUpdatedAt || null,
+      snapshotRetryCount: payload?.snapshotRetryCount || 0,
+      snapshotSuperseded: payload?.snapshotSuperseded === true,
+    })) {
+      Object.defineProperty(data, property, {
+        configurable: true,
+        enumerable: false,
+        value,
+      });
+    }
   }
   return data;
 }
@@ -1011,6 +1001,10 @@ function requireCalendarFeedServiceKey(req, res, next) {
   return next();
 }
 
+function authorizedCalendarFreshRequest(req) {
+  return req.query?.fresh === 'true' && calendarFeedServiceRequestIsAuthorized(req);
+}
+
 app.get('/api/internal/calendar-shadow-report', requireCalendarFeedServiceKey, async (req, res) => {
   const entries = await loadCalendarShadowEntries();
   res.setHeader('Cache-Control', 'private, no-store');
@@ -1048,15 +1042,10 @@ app.get('/api/internal/calendar-shadow-diff/:personId', requireCalendarFeedServi
     );
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
-    const cutoverEvents = mergeCalendarEventsAcrossHistoryCutover(
-      notionEvents,
-      postgresEvents,
-      CALENDAR_FEED_HISTORY_CUTOVER_DATE
-    );
     res.setHeader('Cache-Control', 'private, no-store');
     return res.json({
       selectorHash: shadowSelectorHash('personal', personId),
-      ...diagnoseCalendarEventSets(notionEvents, cutoverEvents),
+      ...diagnoseCalendarEventSets(notionEvents, postgresEvents),
     });
   } catch (error) {
     return res.status(500).json({
@@ -1064,6 +1053,19 @@ app.get('/api/internal/calendar-shadow-diff/:personId', requireCalendarFeedServi
       code: error.code || 'UNKNOWN',
     });
   }
+});
+
+app.get('/api/internal/calendar-health', requireCalendarFeedServiceKey, (_req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    status: 'ok',
+    sourceMode: CALENDAR_FEED_SOURCE,
+    timeMode: CALENDAR_TIME_MODE,
+    rendererVersion: CALENDAR_RENDERER_VERSION,
+    cacheEnabled,
+    activeBuilds: runCalendarBuild.activeCount(),
+    monitoring: calendarObservability.snapshot(),
+  });
 });
 
 function withTimeout(promise, timeoutMs, timeoutMessage) {
@@ -3724,6 +3726,23 @@ function normalizeCalendarEventDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function parseFloatingCalendarDate(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/u);
+  if (!match) return null;
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return parsed.toISOString().slice(0, 10) === match[0] ? parsed : null;
+}
+
+function shiftFloatingCalendarDate(value, days) {
+  const parsed = normalizeCalendarEventDate(value);
+  if (!parsed) return null;
+  return new Date(Date.UTC(
+    parsed.getUTCFullYear(),
+    parsed.getUTCMonth(),
+    parsed.getUTCDate() + days
+  ));
+}
+
 function getCalendarEventBreakdown(allCalendarEvents) {
   return {
     mainEvents: allCalendarEvents.filter(e => e.type === 'main_event').length,
@@ -3764,6 +3783,7 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
       location: event.location,
       url: event.url || '',
       floating: true,
+      allDay: event.allDay === true,
       alarms: getAlarmsForEvent(event.type, event.title)
     });
   });
@@ -4167,11 +4187,13 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       const eventTimes = parseUnifiedDateTime(teamEvent.date);
       if (eventTimes) {
         const isOOO = teamEvent.title?.trim().toUpperCase() === 'OOO';
+        const isAllDay = teamEvent.all_day === true;
         const isMeeting = teamEvent.title?.trim().toUpperCase().includes('MEETING');
         const emoji = isOOO ? '⛔️' : isMeeting ? '💼' : '📅';
-        let endDate = eventTimes.end;
-        if (isOOO) { endDate = new Date(eventTimes.end); endDate.setDate(endDate.getDate() + 1); }
-        allCalendarEvents.push({ ...calendarOccurrence(teamEvent), type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: teamEvent.notion_link || '', mainEvent: '' });
+        const endDate = isAllDay
+          ? shiftFloatingCalendarDate(eventTimes.end, 1)
+          : eventTimes.end;
+        allCalendarEvents.push({ ...calendarOccurrence(teamEvent), type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, allDay: isAllDay, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: teamEvent.notion_link || '', mainEvent: '' });
       }
     }
   });
@@ -4367,16 +4389,7 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
   try {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const calendarData = selectPostgresCalendarDataMode(payload.calendarData || {}, selectedRegenMode);
-    const postgresCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
-    const legacyHistory = calendarEventsForRegenMode(
-      await loadFrozenPersonalCalendarHistory(personId),
-      selectedRegenMode
-    );
-    const allCalendarEvents = mergeCalendarEventsAcrossHistoryCutover(
-      legacyHistory,
-      postgresCalendarEvents,
-      CALENDAR_FEED_HISTORY_CUTOVER_DATE
-    );
+    const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
     if (allCalendarEvents.length === 0) {
       return { success: false, personId, reason: 'no_events' };
     }
@@ -4385,24 +4398,36 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
     const artifacts = buildCalendarArtifacts(personName, allCalendarEvents, {
       totalMainEvents,
       regenMode: selectedRegenMode,
-      dataSource: 'postgres_with_frozen_legacy_history'
+      dataSource: 'postgres'
     });
     const cacheKeys = {
       ics: buildCalendarCacheKey(personId, 'ics', selectedRegenMode),
       googleIcs: buildCalendarCacheKey(personId, 'google_ics', selectedRegenMode),
       json: buildCalendarCacheKey(personId, 'json', selectedRegenMode),
-      sourceRevision: buildCalendarCacheKey(personId, 'source_revision', selectedRegenMode)
     };
     if (redis && cacheEnabled) {
       if (clearCache) {
-        await Promise.all(Object.values(cacheKeys).map(key => redis.del(key)));
+        await Promise.all(Object.values(cacheKeys).flatMap((key) => [
+          redis.del(key),
+          redis.del(calendarArtifactMetadataKey(key)),
+        ]));
       }
-      await Promise.all([
-        setCalendarCache(cacheKeys.ics, artifacts.icsData),
-        setCalendarCache(cacheKeys.googleIcs, artifacts.googleIcsData),
-        setCalendarCache(cacheKeys.json, artifacts.jsonData),
-        cachePostgresSourceRevision(cacheKeys.sourceRevision, payload.sourceRevision)
-      ]);
+    }
+    const metadataOptions = {
+      sourceRevision: payload.sourceRevision,
+      sourceUpdatedAt: payload.sourceUpdatedAt,
+      eventCount: allCalendarEvents.length,
+    };
+    const [icsMetadata, googleIcsMetadata, jsonMetadata] = await Promise.all([
+      cacheCalendarArtifact(cacheKeys.ics, artifacts.icsData, metadataOptions),
+      cacheCalendarArtifact(cacheKeys.googleIcs, artifacts.googleIcsData, metadataOptions),
+      cacheCalendarArtifact(cacheKeys.json, artifacts.jsonData, metadataOptions),
+    ]);
+    if (payload.snapshotRetryCount > 0) {
+      calendarObservability.record('snapshotRetry', { kind: 'personal' });
+    }
+    if (payload.snapshotSuperseded === true) {
+      calendarObservability.record('snapshotSuperseded', { kind: 'personal' });
     }
     return {
       success: true,
@@ -4411,6 +4436,12 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
       regenMode: selectedRegenMode,
       eventCount: allCalendarEvents.length,
       sourceRevision: payload.sourceRevision || null,
+      sourceUpdatedAt: payload.sourceUpdatedAt || null,
+      artifactMetadata: {
+        ics: icsMetadata,
+        google_ics: googleIcsMetadata,
+        json: jsonMetadata,
+      },
       ...artifacts,
       allCalendarEvents
     };
@@ -4424,17 +4455,7 @@ async function comparePersonalCalendarShadow(personId, notionEvents = []) {
   try {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const postgresEvents = buildCalendarEventsFromCalendarData(payload.calendarData || {});
-    try {
-      await freezePersonalCalendarHistory(personId, notionEvents);
-    } catch (error) {
-      console.warn('[calendar-shadow] Legacy history freeze failed:', error.code || 'REDIS_ERROR');
-    }
-    const cutoverEvents = mergeCalendarEventsAcrossHistoryCutover(
-      notionEvents,
-      postgresEvents,
-      CALENDAR_FEED_HISTORY_CUTOVER_DATE
-    );
-    const comparison = compareCalendarEventSets(notionEvents, cutoverEvents);
+    const comparison = compareCalendarEventSets(notionEvents, postgresEvents);
     await recordCalendarShadowResult('personal', personId, comparison);
     return { status: 'compared' };
   } catch (error) {
@@ -4549,7 +4570,12 @@ async function compareDurableSharedCalendarShadow(kind, processor, payloadField)
 
 async function regenerateCalendarForPerson(personId, options = {}) {
   if (CALENDAR_FEED_SOURCE === 'postgres') {
-    return regenerateCalendarForPersonFromPostgres(personId, options);
+    const regenMode = parseRegenMode(options.regenMode) || REGEN_MODE_FULL;
+    return runMonitoredCalendarBuild(
+      `personal:${normalizeNotionPageId(personId) || personId}:${regenMode}`,
+      'personal',
+      () => regenerateCalendarForPersonFromPostgres(personId, options)
+    );
   }
   const result = await regenerateCalendarForPersonFromNotion(personId, options);
   const selectedRegenMode = parseRegenMode(options.regenMode) || REGEN_MODE_FULL;
@@ -4769,12 +4795,17 @@ function startBackgroundJob() {
                 location: event.location,
                 url: event.url || '',
                 floating: true,
+                allDay: event.allDay === true,
                 alarms: []  // No alarms for admin calendar
               });
             });
             
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache(buildSharedCalendarCacheKey('admin', 'ics'), icsData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('admin', 'ics'), icsData, {
+              sourceRevision: adminEvents?.sourceRevision,
+              sourceUpdatedAt: adminEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -4782,7 +4813,11 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache(buildSharedCalendarCacheKey('admin', 'json'), jsonData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('admin', 'json'), jsonData, {
+              sourceRevision: adminEvents?.sourceRevision,
+              sourceUpdatedAt: adminEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             
             console.log(`✅ Admin calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -4825,12 +4860,17 @@ function startBackgroundJob() {
                 location: event.location,
                 url: event.url || '',
                 floating: true,
+                allDay: event.allDay === true,
                 alarms: []  // No alarms for travel calendar
               });
             });
             
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache(buildSharedCalendarCacheKey('travel', 'ics'), icsData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'ics'), icsData, {
+              sourceRevision: travelEvents?.sourceRevision,
+              sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             
             // Also cache JSON
             const jsonData = JSON.stringify({
@@ -4838,7 +4878,11 @@ function startBackgroundJob() {
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache(buildSharedCalendarCacheKey('travel', 'json'), jsonData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'json'), jsonData, {
+              sourceRevision: travelEvents?.sourceRevision,
+              sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             
             console.log(`✅ Travel calendar cached (${allCalendarEvents.length} events)`);
           }
@@ -4876,17 +4920,26 @@ function startBackgroundJob() {
                 location: event.location,
                 url: event.url || '',
                 floating: true,
+                allDay: event.allDay === true,
                 alarms: getAlarmsForEvent(event.type, event.title)
               });
             });
             const icsData = serializeCalendar(calendar);
-            await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'ics'), icsData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('blockout', 'ics'), icsData, {
+              sourceRevision: blockoutEvents?.sourceRevision,
+              sourceUpdatedAt: blockoutEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             const jsonData = JSON.stringify({
               calendar_name: 'Blockout Calendar',
               total_events: allCalendarEvents.length,
               events: allCalendarEvents
             }, null, 2);
-            await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'json'), jsonData);
+            await cacheCalendarArtifact(buildSharedCalendarCacheKey('blockout', 'json'), jsonData, {
+              sourceRevision: blockoutEvents?.sourceRevision,
+              sourceUpdatedAt: blockoutEvents?.sourceUpdatedAt,
+              eventCount: allCalendarEvents.length,
+            });
             console.log(`✅ Blockout calendar cached (${allCalendarEvents.length} events)`);
           }
         } catch (blockoutError) {
@@ -6071,15 +6124,11 @@ function processBlockoutEvents(eventsArray) {
     if (event.personnel_name && event.date_start && event.date_end) {
       try {
         // Parse dates (format: YYYY-MM-DD)
-        const startDate = new Date(event.date_start + 'T00:00:00');
-        const endDate = new Date(event.date_end + 'T23:59:59');
+        const startDate = parseFloatingCalendarDate(event.date_start);
+        const inclusiveEndDate = parseFloatingCalendarDate(event.date_end);
+        const endDate = shiftFloatingCalendarDate(inclusiveEndDate, 1);
         
-        // If end date is same as start date, make it a single day event
-        if (event.date_start === event.date_end) {
-          endDate.setHours(23, 59, 59);
-        }
-        
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           // Description: Only include reason if available
           // (Personnel name is in title, Notion URL is in URL field)
           let description = '';
@@ -6098,7 +6147,8 @@ function processBlockoutEvents(eventsArray) {
             description: description,
             location: '',
             url: event.notion_url || '',
-            type: 'blockout_event'
+            type: 'blockout_event',
+            allDay: true
           });
         }
       } catch (dateError) {
@@ -6187,7 +6237,7 @@ async function getConfiguredBlockoutCalendarData() {
 }
 
 // Debug endpoint for blockout calendar
-app.get('/debug/blockout', async (req, res) => {
+app.get('/debug/blockout', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     if (!BLOCKOUT_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
@@ -6253,28 +6303,11 @@ app.get('/debug/blockout', async (req, res) => {
 // Health check endpoint
 app.get('/', (_req, res) => {
   res.json({
-    status: `Calendar Feed Server Running (Cache ${cacheEnabled ? 'Enabled' : 'Disabled'})`,
-    version: 'tz-fix-v9-calltime-facevalue',
-    endpoints: {
-      subscribe: '/subscribe/:personId',
-      calendar: '/calendar/:personId',
-      ics: '/calendar/:personId?format=ics',
-      debug: '/debug/simple-test/:personId',
-      debug_calendar_data: '/debug/calendar-data/:personId',
-      cache_clear: '/cache/clear/:personId',
-      cache_clear_all: '/cache/clear-all',
-      regenerate_one: '/regenerate/:personId',
-      regenerate_all: '/regenerate-all'
-    },
-    cache: {
-      ttl: 'persistent (until next refresh or manual clear)',
-      status: cacheEnabled ? 'enabled' : 'disabled'
-    },
-    backgroundJob: {
-      status: 'running',
-      interval: `runs continuously with ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minute cooldown`,
-      description: `Updates all people after each cycle completes, then waits ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`
-    }
+    status: 'ok',
+    service: 'downbeat-calendar-feeds',
+    source: CALENDAR_FEED_SOURCE,
+    cache: cacheEnabled ? 'enabled' : 'disabled',
+    timeMode: CALENDAR_TIME_MODE,
   });
 });
 
@@ -6320,11 +6353,8 @@ app.get('/api/flight/:flightId', async (req, res) => {
     const page = await notion.pages.retrieve({ page_id: notionPageId });
     const properties = page.properties;
     
-    // Debug: Log available properties
-    console.log('Available properties:', Object.keys(properties));
-    
-    // Temporary: Return available properties for debugging
-    if (req.query.debug === 'true') {
+    // Detailed provider data is available only to authenticated operators.
+    if (req.query.debug === 'true' && calendarFeedServiceRequestIsAuthorized(req)) {
       return res.json({
         notionPageId,
         direction,
@@ -6398,8 +6428,8 @@ app.get('/api/flight/:flightId', async (req, res) => {
   }
 });
 
-// Cache management endpoint - clear cache for a specific person
-app.get('/cache/clear/:personId', async (req, res) => {
+// Operator-only cache management. Public subscription requests never mutate cache state.
+app.delete('/cache/clear/:personId', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     let { personId } = req.params;
     
@@ -6409,22 +6439,22 @@ app.get('/cache/clear/:personId', async (req, res) => {
     }
     
     // Clear all personal calendar cache variants
-    const icsKey = `calendar:${personId}:ics`;
-    const googleIcsKey = `calendar:${personId}:google_ics`;
-    const jsonKey = `calendar:${personId}:json`;
-    
-    const icsDeleted = await redis.del(icsKey);
-    const googleIcsDeleted = await redis.del(googleIcsKey);
-    const jsonDeleted = await redis.del(jsonKey);
+    const cacheKeys = ['ics', 'google_ics', 'json'].map((format) =>
+      buildCalendarCacheKey(personId, format)
+    );
+    const deletedCounts = await Promise.all(cacheKeys.map(async (key) => ({
+      artifact: await redis.del(key),
+      metadata: await redis.del(calendarArtifactMetadataKey(key)),
+    })));
     
     res.json({
       success: true,
       message: 'Cache cleared successfully',
       personId: personId,
       cleared: {
-        ics: icsDeleted > 0,
-        google_ics: googleIcsDeleted > 0,
-        json: jsonDeleted > 0
+        ics: deletedCounts[0].artifact > 0,
+        google_ics: deletedCounts[1].artifact > 0,
+        json: deletedCounts[2].artifact > 0
       }
     });
   } catch (error) {
@@ -6433,23 +6463,14 @@ app.get('/cache/clear/:personId', async (req, res) => {
   }
 });
 
-// Cache management endpoint - clear all caches
-app.get('/cache/clear-all', async (req, res) => {
+// Cache management endpoint - clear all calendar caches without blocking Redis with KEYS.
+app.delete('/cache/clear-all', requireCalendarFeedServiceKey, async (_req, res) => {
   try {
-    // Get all calendar cache keys
-    const keys = await redis.keys('calendar:*');
-    
-    if (keys.length === 0) {
-      return res.json({
-        success: true,
-        message: 'No cache entries found',
-        cleared: 0
-      });
+    let deleted = 0;
+    for await (const scannedKeys of redis.scanIterator({ MATCH: 'calendar:*', COUNT: 100 })) {
+      const keys = Array.isArray(scannedKeys) ? scannedKeys : [scannedKeys];
+      if (keys.length > 0) deleted += await redis.del(keys);
     }
-    
-    // Delete all cache keys
-    const deleted = await redis.del(keys);
-    
     res.json({
       success: true,
       message: 'All caches cleared successfully',
@@ -6462,7 +6483,7 @@ app.get('/cache/clear-all', async (req, res) => {
 });
 
 // Debug endpoint to explore Calendar Data database
-app.get('/debug/calendar-data/:personId', async (req, res) => {
+app.get('/debug/calendar-data/:personId', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     let { personId } = req.params;
 
@@ -6566,7 +6587,7 @@ app.get('/debug/calendar-data/:personId', async (req, res) => {
 });
 
 // Temporary diagnostic endpoint to verify parseUnifiedDateTime on the server
-app.get('/debug/parse-test', async (req, res) => {
+app.get('/debug/parse-test', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     const input = req.query.input || '2026-02-21T07:00:00-08:00/2026-02-22T00:00:00-08:00';
     const personId = req.query.person;
@@ -6622,7 +6643,7 @@ app.get('/debug/parse-test', async (req, res) => {
   }
 });
 
-app.get('/debug/admin-parse', async (req, res) => {
+app.get('/debug/admin-parse', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit, 10);
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 200)) : 50;
@@ -6699,7 +6720,7 @@ app.get('/debug/admin-parse', async (req, res) => {
 });
 
 // Regeneration endpoint - regenerate calendar for a specific person
-app.get('/regenerate/:personId', async (req, res) => {
+app.post('/regenerate/:personId', requireCalendarFeedServiceKey, async (req, res) => {
   let manualRegenRegistered = false;
   try {
     let { personId } = req.params;
@@ -6775,12 +6796,12 @@ app.get('/regenerate/:personId', async (req, res) => {
   }
 });
 
-app.get('/calendar-data/regenerate/:pageId', async (req, res) => {
+app.post('/calendar-data/regenerate/:pageId', requireCalendarFeedServiceKey, async (req, res) => {
   const encodedPageId = encodeURIComponent(req.params.pageId);
   return res.redirect(307, `/calendar-data/regenerate?id=${encodedPageId}`);
 });
 
-app.get('/calendar-data/regenerate', async (req, res) => {
+app.post('/calendar-data/regenerate', requireCalendarFeedServiceKey, async (req, res) => {
   let manualRegenRegistered = false;
   try {
     const calendarDataInput = req.query.id || req.query.url || req.query.pageId;
@@ -6876,7 +6897,7 @@ app.get('/calendar-data/regenerate', async (req, res) => {
   }
 });
 
-app.get('/regenerate/:personId/status', async (req, res) => {
+app.get('/regenerate/:personId/status', requireCalendarFeedServiceKey, async (req, res) => {
   res.status(410).json({
     success: false,
     error: 'Regeneration status endpoint retired',
@@ -7156,7 +7177,7 @@ app.post('/api/internal/calendar-shadow-run', requireCalendarFeedServiceKey, asy
   });
 });
 
-app.get('/regenerate-all', async (req, res) => {
+app.post('/regenerate-all', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     // Start the regeneration process
     res.json({
@@ -7183,7 +7204,7 @@ app.get('/regenerate-all', async (req, res) => {
 });
 
 // Simple formula test endpoint
-app.get('/debug/simple-test/:personId', async (req, res) => {
+app.get('/debug/simple-test/:personId', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     let { personId } = req.params;
 
@@ -7292,7 +7313,6 @@ function buildSubscribePreparationScript({
   calendarLabel,
   subscriptionUrl,
   webcalUrl,
-  regenerationUrl,
   googleSubscriptionUrl,
   googleCalendarSettingsUrl
 }) {
@@ -7308,7 +7328,6 @@ function buildSubscribePreparationScript({
   return `
         const subscriptionUrl = ${JSON.stringify(subscriptionUrl)};
         const webcalUrl = ${JSON.stringify(webcalUrl)};
-        const regenerationUrl = ${JSON.stringify(regenerationUrl)};
         const googleSubscriptionUrl = ${JSON.stringify(googleUrl)};
         const googleCalendarSettingsUrl = ${JSON.stringify(googleCalendarSettingsUrl)};
         let isPreparingCalendar = false;
@@ -7423,17 +7442,6 @@ function buildSubscribePreparationScript({
             startPreparationProgress();
 
             try {
-                const response = await fetch(regenerationUrl, {
-                    method: 'GET',
-                    cache: 'no-store',
-                    headers: { 'Accept': 'application/json' }
-                });
-                const body = await response.json().catch(() => ({}));
-
-                if (!response.ok || body.success === false) {
-                    throw new Error(body.message || body.error || 'The calendar server could not prepare this feed.');
-                }
-
                 completePreparationProgress();
                 setPreparationStatus(${JSON.stringify(readyLabel)}, 'success');
 
@@ -7500,6 +7508,7 @@ function buildSharedCalendarIcsData({ name, description, events, alarmsForEvent 
       location: event.location,
       url: event.url || '',
       floating: true,
+      allDay: event.allDay === true,
       alarms: alarmsForEvent(event)
     });
   });
@@ -7539,19 +7548,27 @@ async function getSharedCalendarIcsFromCachedJson({
     events,
     alarmsForEvent
   });
-  await setCalendarCache(icsCacheKey, icsData);
-  return icsData;
+  const jsonMetadata = await readCalendarArtifactMetadata(jsonCacheKey);
+  const metadata = await cacheCalendarArtifact(icsCacheKey, icsData, {
+    sourceRevision: jsonMetadata?.sourceRevision,
+    sourceUpdatedAt: jsonMetadata?.sourceUpdatedAt,
+    eventCount: events.length,
+  });
+  return { icsData, metadata };
 }
 
-async function sendSharedCalendarCachedJsonAsIcs(res, options) {
-  const icsData = await getSharedCalendarIcsFromCachedJson(options);
-  if (!icsData) {
+async function sendSharedCalendarCachedJsonAsIcs(req, res, options) {
+  const artifact = await getSharedCalendarIcsFromCachedJson(options);
+  if (!artifact) {
     return false;
   }
 
-  res.setHeader('Content-Type', 'text/calendar');
-  res.setHeader('Content-Disposition', `attachment; filename="${options.filename}"`);
-  res.send(icsData);
+  sendCalendarArtifact(req, res, artifact.icsData, {
+    metadata: artifact.metadata,
+    contentType: 'text/calendar',
+    filename: options.filename,
+    kind: options.kind || 'shared',
+  });
   return true;
 }
 
@@ -7579,7 +7596,6 @@ app.get('/subscribe/admin', async (req, res) => {
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/admin`;
     const webcalUrl = `webcal://${req.get('host')}/calendar/admin`;
-    const regenerationUrl = '/admin/calendar/regen';
     const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
@@ -7946,7 +7962,6 @@ app.get('/subscribe/admin', async (req, res) => {
           calendarLabel: 'admin',
           subscriptionUrl,
           webcalUrl,
-          regenerationUrl,
           googleCalendarSettingsUrl
         })}
         
@@ -7977,7 +7992,6 @@ app.get('/subscribe/travel', async (req, res) => {
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/travel`;
     const webcalUrl = `webcal://${req.get('host')}/calendar/travel`;
-    const regenerationUrl = '/travel/calendar/regen';
     const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
@@ -8450,7 +8464,6 @@ app.get('/subscribe/travel', async (req, res) => {
     <script>
         const subscriptionUrl = '${subscriptionUrl}';
         const webcalUrl = '${webcalUrl}';
-        const regenerationUrl = '${regenerationUrl}';
         const googleCalendarSettingsUrl = '${googleCalendarSettingsUrl}';
         let isPreparingCalendar = false;
         let preparationProgressTimer = null;
@@ -8564,17 +8577,6 @@ app.get('/subscribe/travel', async (req, res) => {
             startPreparationProgress();
 
             try {
-                const response = await fetch(regenerationUrl, {
-                    method: 'GET',
-                    cache: 'no-store',
-                    headers: { 'Accept': 'application/json' }
-                });
-                const body = await response.json().catch(() => ({}));
-
-                if (!response.ok || body.success === false) {
-                    throw new Error(body.message || body.error || 'The calendar server could not prepare this feed.');
-                }
-
                 completePreparationProgress();
                 setPreparationStatus('Travel calendar ready.', 'success');
 
@@ -8637,7 +8639,6 @@ app.get('/subscribe/blockout', async (req, res) => {
   try {
     const subscriptionUrl = `https://${req.get('host')}/calendar/blockout`;
     const webcalUrl = `webcal://${req.get('host')}/calendar/blockout`;
-    const regenerationUrl = '/blockout/calendar/regen';
     const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
@@ -8948,7 +8949,6 @@ app.get('/subscribe/blockout', async (req, res) => {
           calendarLabel: 'blockout',
           subscriptionUrl,
           webcalUrl,
-          regenerationUrl,
           googleCalendarSettingsUrl
         })}
         
@@ -8987,7 +8987,6 @@ app.get('/subscribe/:personId', async (req, res) => {
     const subscriptionUrl = `https://${req.get('host')}/calendar/${personId}.ics`;
     const googleSubscriptionUrl = `https://${req.get('host')}/calendar/google/${personId}.ics`;
     const webcalUrl = `webcal://${req.get('host')}/calendar/${personId}`;
-    const regenerationUrl = `/regenerate/${encodeURIComponent(personId)}`;
     const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/u/0/r/settings/addcalendar';
     
     // Check if this is a calendar app request
@@ -9406,7 +9405,6 @@ app.get('/subscribe/:personId', async (req, res) => {
           calendarLabel: 'personal',
           subscriptionUrl,
           webcalUrl,
-          regenerationUrl,
           googleSubscriptionUrl,
           googleCalendarSettingsUrl
         })}
@@ -9434,11 +9432,10 @@ app.get('/subscribe/:personId', async (req, res) => {
 async function handleAdminCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
-    const forceFresh = req.query.fresh === 'true';
+    const forceFresh = authorizedCalendarFreshRequest(req);
     const cacheKey = buildSharedCalendarCacheKey('admin', format);
-    const revisionCacheKey = buildSharedCalendarCacheKey('admin', 'source_revision');
     const postgresCacheRevision = !forceFresh
-      ? await validatePostgresCacheRevision(revisionCacheKey)
+      ? await validatePostgresCacheRevision(cacheKey)
       : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
@@ -9450,13 +9447,19 @@ async function handleAdminCalendar(req, res, forcedFormat) {
           verboseLog(`✅ Cache HIT for admin calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-            return res.send(cachedData);
+            return sendCalendarArtifact(req, res, cachedData, {
+              metadata: postgresCacheRevision.metadata,
+              contentType: 'application/json',
+              kind: 'admin',
+            });
           } else {
             if (sharedCalendarIcsHasEvents(cachedData)) {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
-              return res.send(cachedData);
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: postgresCacheRevision.metadata,
+                contentType: 'text/calendar',
+                filename: 'admin-calendar.ics',
+                kind: 'admin',
+              });
             }
             console.warn('⚠️  Ignoring cached admin ICS with no events');
           }
@@ -9487,17 +9490,26 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     // Fetch admin calendar data
     let adminEvents;
     try {
-      adminEvents = await withTimeout(
-        getConfiguredAdminCalendarData(),
-        CALENDAR_FETCH_TIMEOUT_MS,
-        `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      adminEvents = await runMonitoredCalendarBuild(
+        'shared:admin:projection',
+        'admin',
+        () => withTimeout(
+          getConfiguredAdminCalendarData(),
+          CALENDAR_FETCH_TIMEOUT_MS,
+          `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+        )
       );
       
       if (!adminEvents || adminEvents.length === 0) {
+        if (Number(postgresCacheRevision.metadata?.eventCount) > 0) {
+          calendarObservability.record('emptyRegression', { kind: 'admin' });
+        }
         const noEventsMsg = {
           error: 'No events found',
           message: 'Admin Events property is empty or contains no events',
-          ...(req.query.debug === 'true' && adminEvents?.readDiagnostics
+          ...(req.query.debug === 'true'
+            && calendarFeedServiceRequestIsAuthorized(req)
+            && adminEvents?.readDiagnostics
             ? { diagnostics: adminEvents.readDiagnostics }
             : {})
         };
@@ -9523,25 +9535,35 @@ async function handleAdminCalendar(req, res, forcedFormat) {
           const cachedData = await redis.get(cacheKey);
           if (cachedData) {
             console.log('✅ Returning cached admin calendar data');
+            const fallbackMetadata = await readCalendarArtifactMetadata(cacheKey);
             if (format === 'json') {
-              res.setHeader('Content-Type', 'application/json');
-              return res.send(cachedData);
+              calendarObservability.record('staleFallback', { kind: 'admin' });
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: fallbackMetadata,
+                contentType: 'application/json',
+                kind: 'admin',
+              });
             }
             if (sharedCalendarIcsHasEvents(cachedData)) {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
-              return res.send(cachedData);
+              calendarObservability.record('staleFallback', { kind: 'admin' });
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: fallbackMetadata,
+                contentType: 'text/calendar',
+                filename: 'admin-calendar.ics',
+                kind: 'admin',
+              });
             }
             console.warn('⚠️  Ignoring cached admin ICS fallback with no events');
           }
 
           if (format !== 'json') {
-            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(req, res, {
               jsonCacheKey: buildSharedCalendarCacheKey('admin', 'json'),
               icsCacheKey: buildSharedCalendarCacheKey('admin', 'ics'),
               name: 'Admin Calendar',
               description: 'All upcoming events',
-              filename: 'admin-calendar.ics'
+              filename: 'admin-calendar.ics',
+              kind: 'admin'
             });
             if (sentCachedJsonFallback) {
               console.log('✅ Rebuilt admin ICS from cached JSON fallback');
@@ -9568,6 +9590,13 @@ async function handleAdminCalendar(req, res, forcedFormat) {
     // Process events
     const allCalendarEvents = processAdminEvents(adminEvents);
     const sourceRevision = adminEvents?.sourceRevision || null;
+    const sourceUpdatedAt = adminEvents?.sourceUpdatedAt || null;
+    if (adminEvents?.snapshotRetryCount > 0) {
+      calendarObservability.record('snapshotRetry', { kind: 'admin' });
+    }
+    if (adminEvents?.snapshotSuperseded === true) {
+      calendarObservability.record('snapshotSuperseded', { kind: 'admin' });
+    }
     
     // Return based on format
     if (format === 'json') {
@@ -9580,16 +9609,26 @@ async function handleAdminCalendar(req, res, forcedFormat) {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, jsonData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, jsonData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached admin calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'application/json');
-      return res.send(jsonData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, jsonData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'application/json',
+        kind: 'admin',
+      });
     } else {
       // Generate ICS
       const calendar = ical({ 
@@ -9611,6 +9650,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
           location: event.location,
           url: event.url || '',
           floating: true,
+          allDay: event.allDay === true,
           alarms: []  // No alarms for admin calendar
         });
       });
@@ -9620,17 +9660,27 @@ async function handleAdminCalendar(req, res, forcedFormat) {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, icsData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, icsData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached admin calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'text/calendar');
-      res.setHeader('Content-Disposition', 'attachment; filename="admin-calendar.ics"');
-      return res.send(icsData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, icsData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'text/calendar',
+        filename: 'admin-calendar.ics',
+        kind: 'admin',
+      });
     }
     
   } catch (error) {
@@ -9645,7 +9695,7 @@ async function handleAdminCalendar(req, res, forcedFormat) {
 app.get('/admin/calendar', (req, res) => handleAdminCalendar(req, res));
 
 // Admin calendar regeneration endpoint (clears cache and regenerates)
-app.get('/admin/calendar/regen', async (req, res) => {
+app.post('/admin/calendar/regen', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     if (CALENDAR_FEED_SOURCE !== 'postgres' && !ADMIN_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
@@ -9657,10 +9707,14 @@ app.get('/admin/calendar/regen', async (req, res) => {
     console.log('🔄 Regenerating admin calendar...');
 
     // Fetch fresh data
-    const adminEvents = await withTimeout(
-      getConfiguredAdminCalendarData(),
-      CALENDAR_FETCH_TIMEOUT_MS,
-      `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    const adminEvents = await runMonitoredCalendarBuild(
+      'shared:admin:projection',
+      'admin',
+      () => withTimeout(
+        getConfiguredAdminCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Admin calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      )
     );
     const allCalendarEvents = processAdminEvents(adminEvents);
 
@@ -9684,6 +9738,7 @@ app.get('/admin/calendar/regen', async (req, res) => {
         location: event.location,
         url: event.url || '',
         floating: true,
+        allDay: event.allDay === true,
         alarms: []  // No alarms for admin calendar
       });
     });
@@ -9700,8 +9755,15 @@ app.get('/admin/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache(buildSharedCalendarCacheKey('admin', 'ics'), icsData);
-        await setCalendarCache(buildSharedCalendarCacheKey('admin', 'json'), jsonData);
+        const metadataOptions = {
+          sourceRevision: adminEvents?.sourceRevision,
+          sourceUpdatedAt: adminEvents?.sourceUpdatedAt,
+          eventCount: allCalendarEvents.length,
+        };
+        await Promise.all([
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('admin', 'ics'), icsData, metadataOptions),
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('admin', 'json'), jsonData, metadataOptions),
+        ]);
         console.log(`💾 Admin calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -9752,11 +9814,10 @@ app.get('/admin/calendar/regen', async (req, res) => {
 async function handleTravelCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
-    const forceFresh = req.query.fresh === 'true';
+    const forceFresh = authorizedCalendarFreshRequest(req);
     const cacheKey = buildSharedCalendarCacheKey('travel', format);
-    const revisionCacheKey = buildSharedCalendarCacheKey('travel', 'source_revision');
     const postgresCacheRevision = !forceFresh
-      ? await validatePostgresCacheRevision(revisionCacheKey)
+      ? await validatePostgresCacheRevision(cacheKey)
       : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
@@ -9768,13 +9829,19 @@ async function handleTravelCalendar(req, res, forcedFormat) {
           verboseLog(`✅ Cache HIT for travel calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-            return res.send(cachedData);
+            return sendCalendarArtifact(req, res, cachedData, {
+              metadata: postgresCacheRevision.metadata,
+              contentType: 'application/json',
+              kind: 'travel',
+            });
           } else {
             if (sharedCalendarIcsHasEvents(cachedData)) {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
-              return res.send(cachedData);
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: postgresCacheRevision.metadata,
+                contentType: 'text/calendar',
+                filename: 'travel-calendar.ics',
+                kind: 'travel',
+              });
             }
             console.warn('⚠️  Ignoring cached travel ICS with no events');
           }
@@ -9805,13 +9872,20 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     // Fetch travel calendar data
     let travelEvents;
     try {
-      travelEvents = await withTimeout(
-        getConfiguredTravelCalendarData(),
-        CALENDAR_FETCH_TIMEOUT_MS,
-        `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      travelEvents = await runMonitoredCalendarBuild(
+        'shared:travel:projection',
+        'travel',
+        () => withTimeout(
+          getConfiguredTravelCalendarData(),
+          CALENDAR_FETCH_TIMEOUT_MS,
+          `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+        )
       );
       
       if (!travelEvents || travelEvents.length === 0) {
+        if (Number(postgresCacheRevision.metadata?.eventCount) > 0) {
+          calendarObservability.record('emptyRegression', { kind: 'travel' });
+        }
         const noEventsMsg = {
           error: 'No events found',
           message: 'Travel Admin property is empty or contains no events'
@@ -9840,26 +9914,35 @@ async function handleTravelCalendar(req, res, forcedFormat) {
           const cachedData = await redis.get(cacheKey);
           if (cachedData) {
             console.log(`✅ Returning cached travel calendar data (fallback from timeout)`);
+            const fallbackMetadata = await readCalendarArtifactMetadata(cacheKey);
+            calendarObservability.record('staleFallback', { kind: 'travel' });
             if (format === 'json') {
-              res.setHeader('Content-Type', 'application/json');
-              return res.send(cachedData);
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: fallbackMetadata,
+                contentType: 'application/json',
+                kind: 'travel',
+              });
             } else {
               if (sharedCalendarIcsHasEvents(cachedData)) {
-                res.setHeader('Content-Type', 'text/calendar');
-                res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
-                return res.send(cachedData);
+                return sendCalendarArtifact(req, res, cachedData, {
+                  metadata: fallbackMetadata,
+                  contentType: 'text/calendar',
+                  filename: 'travel-calendar.ics',
+                  kind: 'travel',
+                });
               }
               console.warn('⚠️  Ignoring cached travel ICS fallback with no events');
             }
           }
 
           if (format !== 'json') {
-            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(req, res, {
               jsonCacheKey: buildSharedCalendarCacheKey('travel', 'json'),
               icsCacheKey: buildSharedCalendarCacheKey('travel', 'ics'),
               name: 'Travel Calendar',
               description: 'All travel events',
-              filename: 'travel-calendar.ics'
+              filename: 'travel-calendar.ics',
+              kind: 'travel'
             });
             if (sentCachedJsonFallback) {
               console.log('✅ Rebuilt travel ICS from cached JSON fallback');
@@ -9886,6 +9969,13 @@ async function handleTravelCalendar(req, res, forcedFormat) {
     // Process events
     const allCalendarEvents = processTravelEvents(travelEvents);
     const sourceRevision = travelEvents?.sourceRevision || null;
+    const sourceUpdatedAt = travelEvents?.sourceUpdatedAt || null;
+    if (travelEvents?.snapshotRetryCount > 0) {
+      calendarObservability.record('snapshotRetry', { kind: 'travel' });
+    }
+    if (travelEvents?.snapshotSuperseded === true) {
+      calendarObservability.record('snapshotSuperseded', { kind: 'travel' });
+    }
     
     // Return based on format
     if (format === 'json') {
@@ -9898,16 +9988,26 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, jsonData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, jsonData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached travel calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'application/json');
-      return res.send(jsonData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, jsonData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'application/json',
+        kind: 'travel',
+      });
     } else {
       // Generate ICS
       const calendar = ical({ 
@@ -9929,6 +10029,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
           location: event.location,
           url: event.url || '',
           floating: true,
+          allDay: event.allDay === true,
           alarms: []  // No alarms for travel calendar
         });
       });
@@ -9938,17 +10039,27 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, icsData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, icsData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached travel calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'text/calendar');
-      res.setHeader('Content-Disposition', 'attachment; filename="travel-calendar.ics"');
-      return res.send(icsData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, icsData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'text/calendar',
+        filename: 'travel-calendar.ics',
+        kind: 'travel',
+      });
     }
     
   } catch (error) {
@@ -9963,7 +10074,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
 app.get('/travel/calendar', (req, res) => handleTravelCalendar(req, res));
 
 // Travel calendar regeneration endpoint (clears cache and regenerates)
-app.get('/travel/calendar/regen', async (req, res) => {
+app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     if (CALENDAR_FEED_SOURCE !== 'postgres' && !TRAVEL_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
@@ -9975,10 +10086,14 @@ app.get('/travel/calendar/regen', async (req, res) => {
     console.log('🔄 Regenerating travel calendar...');
 
     // Fetch fresh data
-    const travelEvents = await withTimeout(
-      getConfiguredTravelCalendarData(),
-      CALENDAR_FETCH_TIMEOUT_MS,
-      `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    const travelEvents = await runMonitoredCalendarBuild(
+      'shared:travel:projection',
+      'travel',
+      () => withTimeout(
+        getConfiguredTravelCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      )
     );
     const allCalendarEvents = processTravelEvents(travelEvents);
 
@@ -10002,6 +10117,7 @@ app.get('/travel/calendar/regen', async (req, res) => {
         location: event.location,
         url: event.url || '',
         floating: true,
+        allDay: event.allDay === true,
         alarms: []  // No alarms for travel calendar
       });
     });
@@ -10018,8 +10134,15 @@ app.get('/travel/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache(buildSharedCalendarCacheKey('travel', 'ics'), icsData);
-        await setCalendarCache(buildSharedCalendarCacheKey('travel', 'json'), jsonData);
+        const metadataOptions = {
+          sourceRevision: travelEvents?.sourceRevision,
+          sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
+          eventCount: allCalendarEvents.length,
+        };
+        await Promise.all([
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'ics'), icsData, metadataOptions),
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'json'), jsonData, metadataOptions),
+        ]);
         console.log(`💾 Travel calendar regenerated and cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -10070,11 +10193,10 @@ app.get('/travel/calendar/regen', async (req, res) => {
 async function handleBlockoutCalendar(req, res, forcedFormat) {
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
-    const forceFresh = req.query.fresh === 'true';
+    const forceFresh = authorizedCalendarFreshRequest(req);
     const cacheKey = buildSharedCalendarCacheKey('blockout', format);
-    const revisionCacheKey = buildSharedCalendarCacheKey('blockout', 'source_revision');
     const postgresCacheRevision = !forceFresh
-      ? await validatePostgresCacheRevision(revisionCacheKey)
+      ? await validatePostgresCacheRevision(cacheKey)
       : { matches: false, sourceRevision: null, unavailable: false };
     
     // Check cache first (unless fresh requested)
@@ -10086,13 +10208,19 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
           verboseLog(`✅ Cache HIT for blockout calendar (${format.toUpperCase()})`);
           
           if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-            return res.send(cachedData);
+            return sendCalendarArtifact(req, res, cachedData, {
+              metadata: postgresCacheRevision.metadata,
+              contentType: 'application/json',
+              kind: 'blockout',
+            });
           } else {
             if (sharedCalendarIcsHasEvents(cachedData)) {
-              res.setHeader('Content-Type', 'text/calendar');
-              res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
-              return res.send(cachedData);
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: postgresCacheRevision.metadata,
+                contentType: 'text/calendar',
+                filename: 'blockout-calendar.ics',
+                kind: 'blockout',
+              });
             }
             console.warn('⚠️  Ignoring cached blockout ICS with no events');
           }
@@ -10123,13 +10251,20 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     // Fetch blockout calendar data
     let blockoutEvents;
     try {
-      blockoutEvents = await withTimeout(
-        getConfiguredBlockoutCalendarData(),
-        CALENDAR_FETCH_TIMEOUT_MS,
-        `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      blockoutEvents = await runMonitoredCalendarBuild(
+        'shared:blockout:projection',
+        'blockout',
+        () => withTimeout(
+          getConfiguredBlockoutCalendarData(),
+          CALENDAR_FETCH_TIMEOUT_MS,
+          `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+        )
       );
       
       if (!blockoutEvents || blockoutEvents.length === 0) {
+        if (Number(postgresCacheRevision.metadata?.eventCount) > 0) {
+          calendarObservability.record('emptyRegression', { kind: 'blockout' });
+        }
         const noEventsMsg = {
           error: 'No events found',
           message: 'Blockout Admin property is empty or contains no events'
@@ -10158,26 +10293,35 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
           const cachedData = await redis.get(cacheKey);
           if (cachedData) {
             console.log(`✅ Returning cached blockout calendar data (fallback from timeout)`);
+            const fallbackMetadata = await readCalendarArtifactMetadata(cacheKey);
+            calendarObservability.record('staleFallback', { kind: 'blockout' });
             if (format === 'json') {
-              res.setHeader('Content-Type', 'application/json');
-              return res.send(cachedData);
+              return sendCalendarArtifact(req, res, cachedData, {
+                metadata: fallbackMetadata,
+                contentType: 'application/json',
+                kind: 'blockout',
+              });
             } else {
               if (sharedCalendarIcsHasEvents(cachedData)) {
-                res.setHeader('Content-Type', 'text/calendar');
-                res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
-                return res.send(cachedData);
+                return sendCalendarArtifact(req, res, cachedData, {
+                  metadata: fallbackMetadata,
+                  contentType: 'text/calendar',
+                  filename: 'blockout-calendar.ics',
+                  kind: 'blockout',
+                });
               }
               console.warn('⚠️  Ignoring cached blockout ICS fallback with no events');
             }
           }
 
           if (format !== 'json') {
-            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(res, {
+            const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(req, res, {
               jsonCacheKey: buildSharedCalendarCacheKey('blockout', 'json'),
               icsCacheKey: buildSharedCalendarCacheKey('blockout', 'ics'),
               name: 'Blockout Calendar',
               description: 'All blockout events',
               filename: 'blockout-calendar.ics',
+              kind: 'blockout',
               alarmsForEvent: (event) => getAlarmsForEvent(event.type, event.title)
             });
             if (sentCachedJsonFallback) {
@@ -10205,6 +10349,13 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
     // Process events
     const allCalendarEvents = processBlockoutEvents(blockoutEvents);
     const sourceRevision = blockoutEvents?.sourceRevision || null;
+    const sourceUpdatedAt = blockoutEvents?.sourceUpdatedAt || null;
+    if (blockoutEvents?.snapshotRetryCount > 0) {
+      calendarObservability.record('snapshotRetry', { kind: 'blockout' });
+    }
+    if (blockoutEvents?.snapshotSuperseded === true) {
+      calendarObservability.record('snapshotSuperseded', { kind: 'blockout' });
+    }
     
     // Return based on format
     if (format === 'json') {
@@ -10217,16 +10368,26 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
       // Cache the JSON
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, jsonData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, jsonData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached blockout calendar JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'application/json');
-      return res.send(jsonData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, jsonData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'application/json',
+        kind: 'blockout',
+      });
     } else {
       // Generate ICS
       const calendar = ical({ 
@@ -10248,6 +10409,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
           location: event.location,
           url: event.url || '',
           floating: true,
+          allDay: event.allDay === true,
           alarms: getAlarmsForEvent(event.type, event.title)
         });
       });
@@ -10257,17 +10419,27 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
       // Cache the ICS
       if (redis && cacheEnabled) {
         try {
-          await setCalendarCache(cacheKey, icsData);
-          await cachePostgresSourceRevision(revisionCacheKey, sourceRevision);
+          await cacheCalendarArtifact(cacheKey, icsData, {
+            sourceRevision,
+            sourceUpdatedAt,
+            eventCount: allCalendarEvents.length,
+          });
           verboseLog(`💾 Cached blockout calendar ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
       }
       
-      res.setHeader('Content-Type', 'text/calendar');
-      res.setHeader('Content-Disposition', 'attachment; filename="blockout-calendar.ics"');
-      return res.send(icsData);
+      const metadata = await readCalendarArtifactMetadata(cacheKey);
+      return sendCalendarArtifact(req, res, icsData, {
+        metadata,
+        sourceRevision,
+        sourceUpdatedAt,
+        eventCount: allCalendarEvents.length,
+        contentType: 'text/calendar',
+        filename: 'blockout-calendar.ics',
+        kind: 'blockout',
+      });
     }
     
   } catch (error) {
@@ -10282,7 +10454,7 @@ async function handleBlockoutCalendar(req, res, forcedFormat) {
 app.get('/blockout/calendar', (req, res) => handleBlockoutCalendar(req, res));
 
 // Blockout calendar regeneration endpoint (clears cache and regenerates)
-app.get('/blockout/calendar/regen', async (req, res) => {
+app.post('/blockout/calendar/regen', requireCalendarFeedServiceKey, async (req, res) => {
   try {
     if (CALENDAR_FEED_SOURCE !== 'postgres' && !BLOCKOUT_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
@@ -10294,10 +10466,14 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     console.log('🔄 Regenerating blockout calendar...');
 
     // Fetch fresh data
-    const blockoutEvents = await withTimeout(
-      getConfiguredBlockoutCalendarData(),
-      CALENDAR_FETCH_TIMEOUT_MS,
-      `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+    const blockoutEvents = await runMonitoredCalendarBuild(
+      'shared:blockout:projection',
+      'blockout',
+      () => withTimeout(
+        getConfiguredBlockoutCalendarData(),
+        CALENDAR_FETCH_TIMEOUT_MS,
+        `Blockout calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
+      )
     );
     const allCalendarEvents = processBlockoutEvents(blockoutEvents);
 
@@ -10321,6 +10497,7 @@ app.get('/blockout/calendar/regen', async (req, res) => {
         location: event.location,
         url: event.url || '',
         floating: true,
+        allDay: event.allDay === true,
         alarms: getAlarmsForEvent(event.type, event.title)
       });
     });
@@ -10337,8 +10514,15 @@ app.get('/blockout/calendar/regen', async (req, res) => {
     // Cache both formats
     if (redis && cacheEnabled) {
       try {
-        await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'ics'), icsData);
-        await setCalendarCache(buildSharedCalendarCacheKey('blockout', 'json'), jsonData);
+        const metadataOptions = {
+          sourceRevision: blockoutEvents?.sourceRevision,
+          sourceUpdatedAt: blockoutEvents?.sourceUpdatedAt,
+          eventCount: allCalendarEvents.length,
+        };
+        await Promise.all([
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('blockout', 'ics'), icsData, metadataOptions),
+          cacheCalendarArtifact(buildSharedCalendarCacheKey('blockout', 'json'), jsonData, metadataOptions),
+        ]);
         console.log(`💾 Blockout calendar cached (${allCalendarEvents.length} events)`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
@@ -10483,12 +10667,11 @@ app.get('/calendar/:personId', async (req, res) => {
     }
 
     // Check Redis cache first (if enabled, unless ?fresh=true is specified)
-    const forceFresh = req.query.fresh === 'true';
+    const forceFresh = authorizedCalendarFreshRequest(req);
     const cacheFormat = shouldReturnICS ? (isGoogleClient ? 'google_ics' : 'ics') : 'json';
     const cacheKey = buildCalendarCacheKey(personId, cacheFormat, regenMode);
-    const revisionCacheKey = buildCalendarCacheKey(personId, 'source_revision', regenMode);
     const postgresCacheRevision = !forceFresh
-      ? await validatePostgresCacheRevision(revisionCacheKey)
+      ? await validatePostgresCacheRevision(cacheKey)
       : { matches: false, sourceRevision: null, unavailable: false };
     
     if (forceFresh && CALENDAR_FEED_SOURCE !== 'postgres' && redis && cacheEnabled) {
@@ -10498,6 +10681,9 @@ app.get('/calendar/:personId', async (req, res) => {
       await redis.del(icsKey);
       await redis.del(googleIcsKey);
       await redis.del(jsonKey);
+      await redis.del(calendarArtifactMetadataKey(icsKey));
+      await redis.del(calendarArtifactMetadataKey(googleIcsKey));
+      await redis.del(calendarArtifactMetadataKey(jsonKey));
       const icsStillExists = await redis.exists(icsKey);
       const googleIcsStillExists = await redis.exists(googleIcsKey);
       const jsonStillExists = await redis.exists(jsonKey);
@@ -10516,11 +10702,18 @@ app.get('/calendar/:personId', async (req, res) => {
           verboseLog(`✅ Cache HIT for ${personId} (${shouldReturnICS ? (isGoogleClient ? 'GOOGLE_ICS' : 'ICS') : 'JSON'})`);
           
           if (shouldReturnICS) {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
-            return res.send(cachedData);
+            return sendCalendarArtifact(req, res, cachedData, {
+              metadata: postgresCacheRevision.metadata,
+              contentType: 'text/calendar',
+              filename: isGoogleClient ? 'calendar-google.ics' : 'calendar.ics',
+              kind: 'personal',
+            });
           } else {
-            return res.json(JSON.parse(cachedData));
+            return sendCalendarArtifact(req, res, cachedData, {
+              metadata: postgresCacheRevision.metadata,
+              contentType: 'application/json',
+              kind: 'personal',
+            });
           }
         }
         logWithDedup(
@@ -10549,17 +10742,29 @@ app.get('/calendar/:personId', async (req, res) => {
       calendarDataPageId
     });
     if (!result.success) {
+      if (result.reason === 'no_events' && Number(postgresCacheRevision.metadata?.eventCount) > 0) {
+        calendarObservability.record('emptyRegression', { kind: 'personal' });
+      }
       if (CALENDAR_FEED_SOURCE === 'postgres' && redis && cacheEnabled) {
         const lastKnownGood = await redis.get(cacheKey);
         if (lastKnownGood) {
           console.warn('[calendar-postgres] Serving last-known-good personal calendar');
           res.setHeader('X-Downbeat-Calendar-Stale', 'true');
+          calendarObservability.record('staleFallback', { kind: 'personal' });
+          const fallbackMetadata = await readCalendarArtifactMetadata(cacheKey);
           if (shouldReturnICS) {
-            res.setHeader('Content-Type', 'text/calendar');
-            res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
-            return res.send(lastKnownGood);
+            return sendCalendarArtifact(req, res, lastKnownGood, {
+              metadata: fallbackMetadata,
+              contentType: 'text/calendar',
+              filename: isGoogleClient ? 'calendar-google.ics' : 'calendar.ics',
+              kind: 'personal',
+            });
           }
-          return res.json(JSON.parse(lastKnownGood));
+          return sendCalendarArtifact(req, res, lastKnownGood, {
+            metadata: fallbackMetadata,
+            contentType: 'application/json',
+            kind: 'personal',
+          });
         }
       }
       const statusCode = result.reason === 'no_events' ? 404 : 500;
@@ -10572,12 +10777,30 @@ app.get('/calendar/:personId', async (req, res) => {
     }
 
     if (shouldReturnICS) {
-      res.setHeader('Content-Type', 'text/calendar');
-      res.setHeader('Content-Disposition', `attachment; filename="${isGoogleClient ? 'calendar-google.ics' : 'calendar.ics'}"`);
-      return res.send(isGoogleClient ? result.googleIcsData : result.icsData);
+      return sendCalendarArtifact(
+        req,
+        res,
+        isGoogleClient ? result.googleIcsData : result.icsData,
+        {
+          metadata: result.artifactMetadata?.[cacheFormat],
+          sourceRevision: result.sourceRevision,
+          sourceUpdatedAt: result.sourceUpdatedAt,
+          eventCount: result.eventCount,
+          contentType: 'text/calendar',
+          filename: isGoogleClient ? 'calendar-google.ics' : 'calendar.ics',
+          kind: 'personal',
+        }
+      );
     }
 
-    return res.json(result.jsonResponse);
+    return sendCalendarArtifact(req, res, result.jsonData, {
+      metadata: result.artifactMetadata?.json,
+      sourceRevision: result.sourceRevision,
+      sourceUpdatedAt: result.sourceUpdatedAt,
+      eventCount: result.eventCount,
+      contentType: 'application/json',
+      kind: 'personal',
+    });
     
   } catch (error) {
     console.error('Calendar generation error:', error);
@@ -10602,6 +10825,9 @@ app.get('/flight-countdown-modern.html', (req, res) => {
 
 // Start background job for calendar updates
 startBackgroundJob();
+if (CALENDAR_FEED_SOURCE === 'postgres') {
+  calendarObservability.start(() => fetchPostgresCalendarFeed('version'));
+}
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);

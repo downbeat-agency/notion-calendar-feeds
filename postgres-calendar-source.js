@@ -3,7 +3,6 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 const VALID_SOURCES = new Set(['notion', 'shadow', 'postgres']);
 const DEFAULT_TIMEOUT_MS = 25_000;
 const MAX_WEAK_PAIR_DISTANCE_MS = 72 * 60 * 60 * 1000;
-const DEFAULT_HISTORY_CUTOVER_DATE = '2026-08-02';
 
 function clean(value, limit = 2_000) {
   return String(value ?? '').trim().slice(0, limit);
@@ -15,49 +14,6 @@ export function configuredCalendarFeedSource(env = process.env) {
     throw new Error('CALENDAR_FEED_SOURCE must be notion, shadow, or postgres.');
   }
   return source;
-}
-
-export function configuredCalendarHistoryCutoverDate(env = process.env) {
-  const value = clean(
-    env.CALENDAR_FEED_HISTORY_CUTOVER_DATE || DEFAULT_HISTORY_CUTOVER_DATE,
-    10
-  );
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
-    throw new Error('CALENDAR_FEED_HISTORY_CUTOVER_DATE must be YYYY-MM-DD.');
-  }
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
-    throw new Error('CALENDAR_FEED_HISTORY_CUTOVER_DATE must be a real calendar date.');
-  }
-  return value;
-}
-
-function calendarEventDate(event = {}) {
-  const direct = clean(event.start, 100).match(/^(\d{4}-\d{2}-\d{2})/u)?.[1];
-  if (direct) return direct;
-  const parsed = event.start instanceof Date ? event.start : new Date(event.start);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : '';
-}
-
-export function mergeCalendarEventsAcrossHistoryCutover(
-  legacyEvents = [],
-  postgresEvents = [],
-  cutoverDate = DEFAULT_HISTORY_CUTOVER_DATE
-) {
-  const boundary = configuredCalendarHistoryCutoverDate({
-    CALENDAR_FEED_HISTORY_CUTOVER_DATE: cutoverDate,
-  });
-  const historical = (Array.isArray(legacyEvents) ? legacyEvents : [])
-    .filter((event) => {
-      const date = calendarEventDate(event);
-      return date && date < boundary;
-    });
-  const current = (Array.isArray(postgresEvents) ? postgresEvents : [])
-    .filter((event) => {
-      const date = calendarEventDate(event);
-      return !date || date >= boundary;
-    });
-  return [...historical, ...current];
 }
 
 function sourceConfig(env = process.env) {

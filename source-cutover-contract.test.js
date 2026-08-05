@@ -28,23 +28,20 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /CALENDAR_FEED_SOURCE === 'postgres'/u);
   assert.match(source, /fetchPostgresCalendarFeed\('personal', personId\)/u);
   assert.match(source, /buildCalendarEventsFromCalendarData\(calendarData\)/u);
-  assert.match(source, /loadFrozenPersonalCalendarHistory\(personId\)/u);
-  assert.match(source, /mergeCalendarEventsAcrossHistoryCutover\(/u);
   assert.match(source, /id: event\.uid \|\| undefined/u);
-  assert.match(source, /dataSource: 'postgres_with_frozen_legacy_history'/u);
+  assert.match(source, /dataSource: 'postgres'/u);
   assert.match(source, /const publishedCalendarEvents = allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
   assert.match(source, /events: publishedCalendarEvents\.map\(publicCalendarEvent\)/u);
   assert.match(source, /delete publicEvent\.comparisonIdentity/u);
 });
 
-test('Postgres cutover freezes legacy personal history without writing payroll data', () => {
-  assert.match(source, /calendar:legacy-history:v1:/u);
-  assert.match(source, /await redis\.set\(frozenPersonalHistoryCacheKey\(personId\)/u);
-  assert.match(source, /LEGACY_CALENDAR_HISTORY_MISSING/u);
+test('Postgres mode reads normal projection history without a Redis freeze', () => {
+  assert.doesNotMatch(source, /calendar:legacy-history|FrozenPersonalCalendarHistory|LEGACY_CALENDAR_HISTORY/u);
+  assert.doesNotMatch(source, /CALENDAR_FEED_HISTORY_CUTOVER_DATE/u);
   assert.doesNotMatch(source, /insert into payroll_entries|update payroll_entries/u);
 });
 
-test('Notion baseline regeneration repairs formula JSON before freezing history', () => {
+test('Notion baseline regeneration repairs formula JSON before shadow comparison', () => {
   assert.match(source, /return parseNotionFormulaJsonArray\(raw \|\| '\[\]'\)/u);
   assert.match(source, /parseJsonFormulaArray\(calendarData\.Flights, 'Flights'\)/u);
   assert.match(source, /parseJsonFormulaArray\(\s*calendarData\['Event Notes Reminders'\]/u);
@@ -62,8 +59,34 @@ test('Postgres mode does not run the Notion fleet sweep', () => {
 
 test('Postgres cache is validated against the current source revision', () => {
   assert.match(source, /fetchPostgresCalendarFeed\('version'\)/u);
-  assert.match(source, /validatePostgresCacheRevision\(revisionCacheKey\)/u);
+  assert.match(source, /validatePostgresCacheRevision\(cacheKey\)/u);
   assert.match(source, /Source revision changed; rebuilding/u);
+  assert.doesNotMatch(source, /source_revision/u);
+});
+
+test('public subscription pages do not invoke maintenance routes', () => {
+  assert.doesNotMatch(source, /fetch\(regenerationUrl/u);
+  assert.doesNotMatch(source, /const regenerationUrl/u);
+});
+
+test('maintenance and diagnostic routes require service authentication and safe verbs', () => {
+  for (const [verb, route] of [
+    ['delete', '/cache/clear/:personId'],
+    ['delete', '/cache/clear-all'],
+    ['post', '/regenerate/:personId'],
+    ['post', '/regenerate-all'],
+    ['post', '/calendar-data/regenerate'],
+    ['post', '/admin/calendar/regen'],
+    ['post', '/travel/calendar/regen'],
+    ['post', '/blockout/calendar/regen'],
+    ['get', '/debug/blockout'],
+    ['get', '/debug/calendar-data/:personId'],
+  ]) {
+    const routeDeclaration = `app.${verb}('${route}', requireCalendarFeedServiceKey`;
+    assert.ok(source.includes(routeDeclaration), routeDeclaration);
+  }
+  assert.doesNotMatch(source, /redis\.keys\('calendar:\*'\)/u);
+  assert.match(source, /redis\.scanIterator\(\{ MATCH: 'calendar:\*'/u);
 });
 
 test('shadow parity report and audit runner require service authentication', () => {

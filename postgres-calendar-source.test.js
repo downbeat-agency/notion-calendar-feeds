@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import {
   calendarFeedServiceRequestIsAuthorized,
   compareCalendarEventSets,
-  configuredCalendarHistoryCutoverDate,
   configuredCalendarFeedSource,
   diagnoseCalendarEventSets,
   fetchPostgresCalendarFeed,
-  mergeCalendarEventsAcrossHistoryCutover,
 } from './postgres-calendar-source.js';
 
 test('calendar shadow report authentication uses the dedicated service key', () => {
@@ -23,31 +21,6 @@ test('calendar feed source defaults to notion and validates explicit values', ()
     () => configuredCalendarFeedSource({ CALENDAR_FEED_SOURCE: 'firebase' }),
     /notion, shadow, or postgres/u
   );
-});
-
-test('calendar history cutover keeps legacy history and Postgres current events', () => {
-  assert.equal(configuredCalendarHistoryCutoverDate({}), '2026-08-02');
-  assert.equal(
-    configuredCalendarHistoryCutoverDate({ CALENDAR_FEED_HISTORY_CUTOVER_DATE: '2026-09-01' }),
-    '2026-09-01'
-  );
-  assert.throws(
-    () => configuredCalendarHistoryCutoverDate({ CALENDAR_FEED_HISTORY_CUTOVER_DATE: '2026-02-30' }),
-    /real calendar date/u
-  );
-
-  const legacyPast = { title: 'Legacy past', start: '2026-08-01T10:00:00.000Z', uid: 'legacy' };
-  const legacyFuture = { title: 'Legacy future', start: '2026-08-03T10:00:00.000Z' };
-  const postgresPast = { title: 'Postgres past', start: '2026-08-01T10:00:00.000Z' };
-  const postgresCurrent = { title: 'Postgres current', start: '2026-08-02T10:00:00.000Z', uid: 'postgres' };
-  const merged = mergeCalendarEventsAcrossHistoryCutover(
-    [legacyPast, legacyFuture],
-    [postgresPast, postgresCurrent],
-    '2026-08-02'
-  );
-  assert.deepEqual(merged, [legacyPast, postgresCurrent]);
-  assert.equal(merged[0].uid, 'legacy');
-  assert.equal(merged[1].uid, 'postgres');
 });
 
 test('Postgres source client preserves the selector and uses the dedicated service header', async () => {
