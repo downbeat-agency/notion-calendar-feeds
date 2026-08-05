@@ -69,17 +69,32 @@ export function calendarEventHubUrl(event = {}, options = {}) {
   return `${baseUrl}/events/${encodeURIComponent(selector)}`;
 }
 
+export function calendarDescriptionWithoutTimelineLink(value = '') {
+  return String(value)
+    .replace(
+      /(^|\n)[\t ]*Timeline(?: Link)?:[\t ]*https?:\/\/[^\s\r\n]+[\t ]*(?=\r?\n|$)/giu,
+      '$1'
+    )
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+}
+
 export function calendarEventWithEventHubLink(event = {}) {
   if (clean(event.type, 100) !== 'main_event' || typeof event.description !== 'string') {
     return event;
   }
-  const notionLink = event.description.match(/(^|\n)Notion Link:\s*(https?:\/\/[^\s\r\n]+)/u);
-  if (!notionLink) return event;
+  const description = calendarDescriptionWithoutTimelineLink(event.description);
+  const notionLink = description.match(/(^|\n)Notion Link:\s*(https?:\/\/[^\s\r\n]+)/u);
+  if (!notionLink) {
+    return description === event.description ? event : { ...event, description };
+  }
   const eventHubUrl = calendarEventHubUrl({ notion_url: notionLink[2] });
-  if (!eventHubUrl) return event;
+  if (!eventHubUrl) {
+    return description === event.description ? event : { ...event, description };
+  }
   return {
     ...event,
-    description: event.description.replace(
+    description: description.replace(
       notionLink[0],
       `${notionLink[1]}Event Link: ${eventHubUrl}`
     ),

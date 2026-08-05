@@ -26,6 +26,7 @@ import {
   assertCalendarEventSnapshotExpectedIds,
 } from './calendar-event-snapshot.js';
 import {
+  calendarDescriptionWithoutTimelineLink,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
 } from './calendar-event-links.js';
@@ -5177,9 +5178,9 @@ function processAdminEvents(eventsArray) {
           }
         }
 
-        const timelineLink = (event.timeline_url || event.timeline_link || '').trim();
-        if (timelineLink) {
-          description += `\nTimeline Link: ${timelineLink}\n`;
+        const eventHubUrl = calendarEventHubUrl(event);
+        if (eventHubUrl) {
+          description += `\nEvent Link: ${eventHubUrl}\n`;
         }
 
         const setListLink = (event.set_list_url || event.set_list_link || event.setlist_url || '').trim();
@@ -5212,9 +5213,9 @@ function processAdminEvents(eventsArray) {
           start: eventTimes.start,
           end: eventTimes.end,
           title: title,
-          description: description.trim(),
+          description: calendarDescriptionWithoutTimelineLink(description),
           location: location,
-          url: event.notion_url || '',
+          url: eventHubUrl || '',
           type: 'main_event',
           helperAdjusted: alignmentResult.helperAdjusted,
           helperDeltaDays: alignmentResult.helperDeltaDays
