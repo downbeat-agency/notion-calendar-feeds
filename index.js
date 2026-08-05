@@ -25,6 +25,10 @@ import {
   assertCalendarEventSnapshotCoverage,
   assertCalendarEventSnapshotExpectedIds,
 } from './calendar-event-snapshot.js';
+import {
+  calendarEventHubUrl,
+  calendarEventWithEventHubLink,
+} from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
   calendarFeedServiceRequestIsAuthorized,
@@ -3737,6 +3741,7 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
     regenMode = REGEN_MODE_FULL,
     dataSource = 'calendar_data_database'
   } = options;
+  const publishedCalendarEvents = allCalendarEvents.map(calendarEventWithEventHubLink);
 
   const firstName = (personName || 'Unknown').split(' ')[0] || 'Unknown';
   const calendar = ical({
@@ -3745,7 +3750,7 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
     ttl: 300
   });
 
-  allCalendarEvents.forEach(event => {
+  publishedCalendarEvents.forEach(event => {
     const startDate = normalizeCalendarEventDate(event.start);
     const endDate = normalizeCalendarEventDate(event.end) || startDate;
     if (!startDate || !endDate) return;
@@ -3764,17 +3769,17 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
 
   const icsData = serializeCalendar(calendar);
   const googleIcsData = serializeGoogleCalendar(calendar);
-  const breakdown = getCalendarEventBreakdown(allCalendarEvents);
+  const breakdown = getCalendarEventBreakdown(publishedCalendarEvents);
   const jsonResponse = {
     personName,
     regenMode,
     totalMainEvents,
-    totalCalendarEvents: allCalendarEvents.length,
+    totalCalendarEvents: publishedCalendarEvents.length,
     dataSource,
     breakdown,
     // comparisonIdentity is private, in-process shadow metadata. Never place
     // it in the public JSON subscription artifact.
-    events: allCalendarEvents.map(publicCalendarEvent)
+    events: publishedCalendarEvents.map(publicCalendarEvent)
   };
   const jsonData = JSON.stringify(jsonResponse);
   return { icsData, googleIcsData, jsonResponse, jsonData };
@@ -4026,8 +4031,9 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const personnelConverted = convertPersonnelTimesUTCToPacific(event.event_personnel?.trim() || '', eventTimes.start);
         const personnelText = sanitizePersonnelTimesAsText(personnelConverted);
         let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
-        let notionUrlInfo = event.notion_url?.trim() ? `Notion Link: ${event.notion_url}\n\n` : '';
-        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
+        const eventHubUrl = calendarEventHubUrl(event);
+        const eventUrlInfo = eventHubUrl ? `Event Link: ${eventHubUrl}\n\n` : '';
+        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
     }
     (event.flights || []).forEach(flight => {

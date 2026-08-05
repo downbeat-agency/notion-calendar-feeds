@@ -32,7 +32,8 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /mergeCalendarEventsAcrossHistoryCutover\(/u);
   assert.match(source, /id: event\.uid \|\| undefined/u);
   assert.match(source, /dataSource: 'postgres_with_frozen_legacy_history'/u);
-  assert.match(source, /events: allCalendarEvents\.map\(publicCalendarEvent\)/u);
+  assert.match(source, /const publishedCalendarEvents = allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
+  assert.match(source, /events: publishedCalendarEvents\.map\(publicCalendarEvent\)/u);
   assert.match(source, /delete publicEvent\.comparisonIdentity/u);
 });
 
