@@ -5,6 +5,11 @@ The server processes calendar data from Notion's "Calendar Data" database with s
 
 Each data source can generate multiple calendar events (main events + flights + layovers + rehearsals + hotels + transportation + team calendar).
 
+> **Current Postgres feeds:** Personal travel records are projected from Postgres. Their
+> `flight_url`, `hotel_url`, and `transportation_url` values open the authenticated,
+> assigned-only Event Hub travel tab for the related event. The Notion examples below
+> document the legacy formula payload and remain supported during compatibility reads.
+
 ## Data Source
 
 ### "Calendar Data" Database  
@@ -69,7 +74,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 
 **Available Fields (25 total):**
 - `confirmation` - Booking confirmation number
-- `flight_url` - Link to Notion page for this flight
+- `flight_url` - Event Hub Flights tab for Postgres feeds; legacy payloads may contain a Notion page
 - `airport_arrival` - Arrival time recommendations
 - `flight_status` - Status (Booked, Pending, etc.)
 - `flight_type` - Type (Round Trip, One-Way, etc.)
@@ -200,7 +205,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 
 **Available Fields (9 total):**
 - `title` - Hotel entry title
-- `hotel_url` - Link to Notion page for this hotel
+- `hotel_url` - Event Hub Hotels tab for Postgres feeds; legacy payloads may contain a Notion page
 - `hotel_name` - Hotel name
 - `hotel_phone` - Hotel phone number
 - `hotel_address` - Full hotel address
@@ -233,7 +238,7 @@ Each data source can generate multiple calendar events (main events + flights + 
 
 **Available Fields (7 total):**
 - `title` - Transportation entry title (required)
-- `transportation_url` - Link to Notion page for this transport
+- `transportation_url` - Event Hub Ground tab for Postgres feeds; legacy payloads may contain a Notion page
 - `start` - Start time as ISO 8601 (required)
 - `end` - End time as ISO 8601
 - `location` - Pickup/dropoff location
@@ -371,7 +376,7 @@ The database uses separate formula fields for each event type. Each field contai
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
 - **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification
 - **Descriptions**: Include confirmation numbers, flight details, call times, Notion links, etc.
-- **Links**: Events link back to Notion via URL fields (notion_url, flight_url, hotel_url, transportation_url, notion_link)
+- **Links**: Postgres personal travel URLs open the assigned-only Event Hub tab. Legacy Notion-backed payloads keep their original Notion URL and label.
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")
 
 ## Optimization Notes

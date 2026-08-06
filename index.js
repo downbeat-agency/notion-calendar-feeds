@@ -29,6 +29,7 @@ import {
   calendarDescriptionWithoutTimelineLink,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
+  calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
@@ -3325,6 +3326,12 @@ function getGroundTransportEmoji(transport, title) {
   return '🚙';
 }
 
+function calendarTravelDescriptionLink(url, travelType) {
+  const value = typeof url === 'string' ? url.trim() : '';
+  if (!value) return '';
+  return `${calendarTravelLinkLabel(value, travelType)}: ${value}`;
+}
+
 function buildTransportDescription(transport) {
   const rawDescription = transport?.description;
   if (!rawDescription) {
@@ -3416,9 +3423,10 @@ function buildTransportDescription(transport) {
       }
     }
 
-    const notionUrl = transport.transportation_url || transport.notion_url;
-    if (notionUrl && typeof notionUrl === 'string' && notionUrl.trim()) {
-      description += `\nNotion Link: ${notionUrl.trim()}`;
+    const travelUrl = transport.transportation_url || transport.notion_url;
+    const travelLink = calendarTravelDescriptionLink(travelUrl, 'ground');
+    if (travelLink) {
+      description += `\n${travelLink}`;
     }
 
     return description.trim() || 'Ground transportation details';
@@ -3466,9 +3474,10 @@ function buildTransportDescription(transport) {
       description += `Confirmation: ${confirmation}\n`;
     }
 
-    const notionUrl = transport.transportation_url || transport.notion_url;
-    if (notionUrl && typeof notionUrl === 'string' && notionUrl.trim()) {
-      description += `\nNotion Link: ${notionUrl.trim()}`;
+    const travelUrl = transport.transportation_url || transport.notion_url;
+    const travelLink = calendarTravelDescriptionLink(travelUrl, 'ground');
+    if (travelLink) {
+      description += `\n${travelLink}`;
     }
 
     return description.trim() || 'Ground transportation details';
@@ -3676,6 +3685,8 @@ function buildFlightDescription(flight, legType, start, end, personName) {
   if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
   if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
+  const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
+  if (travelLink) desc += `\n${travelLink}\n`;
   return appendFlightAwareDetails(desc.trim(), flight, legType);
 }
 
@@ -3700,6 +3711,8 @@ function buildLayoverDescription(flight, legType, start, end, personName) {
   if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
   if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
+  const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
+  if (travelLink) desc += `\n${travelLink}\n`;
   return desc.trim();
 }
 
@@ -4107,7 +4120,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       if (hotelTimes) {
         hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
         const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-        allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
+        const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
+        allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
       }
     });
     (event.ground_transport || []).forEach(transport => {
@@ -4167,7 +4181,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
     const hotelTimes = hotel.dates_booked ? parseUnifiedDateTime(hotel.dates_booked) : null;
     if (hotelTimes) {
       const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-      allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}\nPhone: ${hotel.hotel_phone || 'N/A'}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotel.hotel_url ? '\n\nNotion Link: ' + hotel.hotel_url : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
+      const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
+      allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
     }
   });
   topLevelTransport.forEach(transport => {

@@ -101,4 +101,26 @@ export function calendarEventWithEventHubLink(event = {}) {
   };
 }
 
+export function calendarTravelLinkLabel(value, travelType = '') {
+  const url = clean(value);
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'notion.so' || host.endsWith('.notion.so') || host === 'notion.com' || host.endsWith('.notion.com')) {
+      return 'Notion Link';
+    }
+    const tab = clean(parsed.searchParams.get('travel'), 40).toLowerCase();
+    const isEventTravelLink = /^\/events\/[^/]+/u.test(parsed.pathname)
+      && parsed.searchParams.get('section') === 'travel';
+    if (!isEventTravelLink) return 'Travel Details';
+    if (tab === 'hotels' || travelType === 'hotels') return 'Hotel Details';
+    if (tab === 'flights' || travelType === 'flights') return 'Flight Details';
+    if (tab === 'ground' || travelType === 'ground') return 'Ground Details';
+    return 'Travel Details';
+  } catch {
+    return 'Travel Details';
+  }
+}
+
 export { DEFAULT_EVENT_HUB_BASE_URL };

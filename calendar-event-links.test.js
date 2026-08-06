@@ -5,7 +5,39 @@ import {
   calendarDescriptionWithoutTimelineLink,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
+  calendarTravelLinkLabel,
 } from './calendar-event-links.js';
+
+test('Event Hub travel links receive booking-specific labels', () => {
+  assert.equal(
+    calendarTravelLinkLabel(
+      'https://music.downbeat.agency/events/event-1?section=travel&travel=hotels',
+      'hotels'
+    ),
+    'Hotel Details'
+  );
+  assert.equal(
+    calendarTravelLinkLabel(
+      'https://music.downbeat.agency/events/event-1?section=travel&travel=flights',
+      'flights'
+    ),
+    'Flight Details'
+  );
+  assert.equal(
+    calendarTravelLinkLabel(
+      'https://music.downbeat.agency/events/event-1?section=travel&travel=ground',
+      'ground'
+    ),
+    'Ground Details'
+  );
+});
+
+test('legacy Notion travel URLs keep their honest label', () => {
+  assert.equal(
+    calendarTravelLinkLabel('https://www.notion.so/hotel-page', 'hotels'),
+    'Notion Link'
+  );
+});
 
 test('legacy Notion event links become authenticated Event Hub deep links', () => {
   assert.equal(
