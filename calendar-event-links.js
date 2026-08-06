@@ -79,6 +79,14 @@ export function calendarMainEventTitle(event = {}) {
   return `🎸 ${eventName}${bandName ? ` (${bandName})` : ''}`;
 }
 
+export function calendarRehearsalTitle(event = {}) {
+  const bandName = clean(
+    event.band || event.band_name || event.bandName || event.rehearsal_band_name,
+    200
+  );
+  return `🎤 Rehearsal${bandName ? ` (${bandName})` : ''}`;
+}
+
 function validHttpUrl(value) {
   const candidate = clean(value, 2_000);
   if (!candidate) return '';

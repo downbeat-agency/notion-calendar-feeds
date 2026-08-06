@@ -30,6 +30,7 @@ import {
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
+  calendarRehearsalTitle,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
@@ -4120,7 +4121,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: `🎤 Rehearsal - ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(event), start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: event.event_name });
       }
     });
     (event.hotels || []).forEach(hotel => {
@@ -4181,7 +4182,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: '🎤 Rehearsal', start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(rehearsal), start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: '' });
       }
     }
   });
@@ -5322,11 +5323,7 @@ function processAdminEvents(eventsArray) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
 
-            // Build title with event name and band if available
-            let title = `🎤 Rehearsal - ${event.event_name || 'Event'}`;
-            if (event.band) {
-              title += ` (${event.band})`;
-            }
+            const title = calendarRehearsalTitle(event);
 
             allCalendarEvents.push({
               ...calendarOccurrence(rehearsal),

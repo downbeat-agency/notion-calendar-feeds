@@ -379,7 +379,7 @@ The database uses separate formula fields for each event type. Each field contai
 - **Endpoint**: `GET /calendar/:personId` - Uses "Calendar Data" database
 - **ICS Format**: `GET /calendar/:personId?format=ics` - All events in calendar format
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
-- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification. Main Event titles include the band in parentheses on both personnel and Admin calendars.
+- **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification. Main Event titles include the band in parentheses on both personnel and Admin calendars. Rehearsal titles use `Rehearsal (Band)` without repeating the linked Event name.
 - **Descriptions**: Main Events normalize escaped line breaks, omit empty fields, group structured Postgres details, notes, contacts, and contracted services into readable sections, and show independent `Timeline Updated`, `Event Details Updated`, and `Contract Updated` values when their source data exists. Travel descriptions include the relevant booking details and Event Hub destination.
 - **Links**: Postgres personal and shared Travel URLs open the matching Event Hub tab. Main Events use the Event Hub as the built-in calendar URL and show separate Event, App, and PCO links when available. Legacy Notion-backed travel payloads keep their original Notion URL and label.
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")

@@ -9,6 +9,7 @@ import {
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
+  calendarRehearsalTitle,
   calendarTimelineUpdatedLabel,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
@@ -96,6 +97,17 @@ test('main event titles include the band consistently', () => {
     calendarMainEventTitle({ event_name: 'San Diego Wedding' }),
     '🎸 San Diego Wedding'
   );
+});
+
+test('rehearsal titles show the band without repeating the linked event', () => {
+  assert.equal(
+    calendarRehearsalTitle({
+      event_name: 'Orange County Wedding',
+      band: 'The A-List',
+    }),
+    '🎤 Rehearsal (The A-List)'
+  );
+  assert.equal(calendarRehearsalTitle({}), '🎤 Rehearsal');
 });
 
 test('calendar update labels format exact Postgres instants and date-only history honestly', () => {
