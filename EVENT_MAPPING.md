@@ -5,10 +5,11 @@ The server processes calendar data from Notion's "Calendar Data" database with s
 
 Each data source can generate multiple calendar events (main events + flights + layovers + rehearsals + hotels + transportation + team calendar).
 
-> **Current Postgres feeds:** Personal travel records are projected from Postgres. Their
-> `flight_url`, `hotel_url`, and `transportation_url` values open the authenticated,
-> assigned-only Event Hub travel tab for the related event. The Notion examples below
-> document the legacy formula payload and remain supported during compatibility reads.
+> **Current Postgres feeds:** Personal and shared Travel records are projected from
+> Postgres. Their `flight_url`, `hotel_url`, and `transportation_url` values open the
+> matching authenticated Event Hub travel tab for the related event. Unattached
+> bookings omit the URL. The Notion examples below document the legacy formula payload
+> and remain supported during compatibility reads.
 
 ## Data Source
 
