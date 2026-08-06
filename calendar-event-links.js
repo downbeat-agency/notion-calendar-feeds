@@ -244,7 +244,9 @@ function cleanMainEventDescription(value = '') {
   let pcoUrl = '';
   let embeddedEventUrl = '';
   let embeddedAppUrl = '';
+  let embeddedTimelineUpdated = '';
   let embeddedDetailsUpdated = '';
+  let embeddedContractUpdated = '';
   let inContracted = false;
   const lines = [];
   calendarDescriptionWithoutTimelineLink(value).split('\n').forEach((rawLine) => {
@@ -265,11 +267,13 @@ function cleanMainEventDescription(value = '') {
       return;
     }
     if (/^Notion\s+Link:\s*https?:\/\//iu.test(line)) return;
-    const updatedMatch = line.match(
-      /^(?:(?:General\s+)?Notes\s+Updated|Event\s+Details\s+Updated):\s*(.*)$/iu
-    );
+    const updatedMatch = line.match(/^(Timeline\s+Updated|(?:General\s+)?Notes\s+Updated|Event\s+Details\s+Updated|Contract\s+Updated):\s*(.*)$/iu);
     if (updatedMatch) {
-      embeddedDetailsUpdated ||= updatedMatch[1].trim();
+      const label = updatedMatch[1].toLowerCase();
+      const value = updatedMatch[2].trim();
+      if (label.startsWith('timeline')) embeddedTimelineUpdated ||= value;
+      else if (label.startsWith('contract')) embeddedContractUpdated ||= value;
+      else embeddedDetailsUpdated ||= value;
       return;
     }
     if (/^(?:n\/?a|none|null|-+)$/iu.test(line)) return;
@@ -297,8 +301,10 @@ function cleanMainEventDescription(value = '') {
   return {
     body: spacedMainEventBody(nonEmptyMainEventLines(lines)),
     embeddedAppUrl,
+    embeddedContractUpdated,
     embeddedDetailsUpdated,
     embeddedEventUrl,
+    embeddedTimelineUpdated,
     pcoUrl,
   };
 }
@@ -336,10 +342,10 @@ function normalizedLegacyUpdateLabel(value) {
     .replace(/\s+\((P[DS]T)\)$/u, ' $1');
 }
 
-export function calendarEventDetailsUpdatedLabel(event = {}, legacyFallback = '') {
-  const value = clean(event.eventDetailsUpdatedAt || event.event_details_updated_at, 100);
+function calendarUpdatedLabel(event, valueKeys, precisionKeys, legacyFallback = '') {
+  const value = clean(valueKeys.map((key) => event[key]).find(Boolean), 100);
   const precision = clean(
-    event.eventDetailsUpdatedPrecision || event.event_details_updated_precision,
+    precisionKeys.map((key) => event[key]).find(Boolean),
     20
   ).toLowerCase();
   if (value) {
@@ -348,6 +354,33 @@ export function calendarEventDetailsUpdatedLabel(event = {}, legacyFallback = ''
     if (formatted) return formatted;
   }
   return normalizedLegacyUpdateLabel(legacyFallback);
+}
+
+export function calendarTimelineUpdatedLabel(event = {}, legacyFallback = '') {
+  return calendarUpdatedLabel(
+    event,
+    ['timelineUpdatedAt', 'timeline_updated_at'],
+    ['timelineUpdatedPrecision', 'timeline_updated_precision'],
+    legacyFallback
+  );
+}
+
+export function calendarEventDetailsUpdatedLabel(event = {}, legacyFallback = '') {
+  return calendarUpdatedLabel(
+    event,
+    ['eventDetailsUpdatedAt', 'event_details_updated_at'],
+    ['eventDetailsUpdatedPrecision', 'event_details_updated_precision'],
+    legacyFallback
+  );
+}
+
+export function calendarContractUpdatedLabel(event = {}, legacyFallback = '') {
+  return calendarUpdatedLabel(
+    event,
+    ['contractUpdatedAt', 'contract_updated_at'],
+    ['contractUpdatedPrecision', 'contract_updated_precision'],
+    legacyFallback
+  );
 }
 
 export function calendarEventWithEventHubLink(event = {}) {
@@ -364,19 +397,32 @@ export function calendarEventWithEventHubLink(event = {}) {
   const appUrl = calendarAppUrl(event)
     || (notionLink ? calendarAppUrl({ notion_url: notionLink[2] }) : '')
     || validHttpUrl(cleaned.embeddedAppUrl);
+  const timelineUpdated = calendarTimelineUpdatedLabel(
+    event,
+    cleaned.embeddedTimelineUpdated
+  );
   const detailsUpdated = calendarEventDetailsUpdatedLabel(
     event,
     cleaned.embeddedDetailsUpdated
+  );
+  const contractUpdated = calendarContractUpdatedLabel(
+    event,
+    cleaned.embeddedContractUpdated
   );
   const linkLines = [
     eventHubUrl ? `Event Link: ${eventHubUrl}` : '',
     appUrl ? `App Link: ${appUrl}` : '',
     cleaned.pcoUrl ? `PCO Plan: ${cleaned.pcoUrl}` : '',
   ].filter(Boolean);
+  const updateLines = [
+    timelineUpdated ? `Timeline Updated: ${timelineUpdated}` : '',
+    detailsUpdated ? `Event Details Updated: ${detailsUpdated}` : '',
+    contractUpdated ? `Contract Updated: ${contractUpdated}` : '',
+  ].filter(Boolean);
   const description = [
     cleaned.body,
     linkLines.length ? `LINKS\n\n${linkLines.join('\n')}` : '',
-    detailsUpdated ? `Event Details Updated: ${detailsUpdated}` : '',
+    updateLines.join('\n'),
   ].filter(Boolean).join('\n\n');
   const decorated = {
     ...event,
@@ -385,10 +431,18 @@ export function calendarEventWithEventHubLink(event = {}) {
   };
   delete decorated.appUrl;
   delete decorated.app_url;
+  delete decorated.timelineUpdatedAt;
+  delete decorated.timeline_updated_at;
+  delete decorated.timelineUpdatedPrecision;
+  delete decorated.timeline_updated_precision;
   delete decorated.eventDetailsUpdatedAt;
   delete decorated.event_details_updated_at;
   delete decorated.eventDetailsUpdatedPrecision;
   delete decorated.event_details_updated_precision;
+  delete decorated.contractUpdatedAt;
+  delete decorated.contract_updated_at;
+  delete decorated.contractUpdatedPrecision;
+  delete decorated.contract_updated_precision;
   return decorated;
 }
 

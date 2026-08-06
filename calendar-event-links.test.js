@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   calendarAppUrl,
+  calendarContractUpdatedLabel,
   calendarDescriptionWithoutTimelineLink,
   calendarEventDetailsUpdatedLabel,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
+  calendarTimelineUpdatedLabel,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 
@@ -84,7 +86,14 @@ test('Postgres occurrence identity becomes the canonical App link', () => {
   );
 });
 
-test('Event Details Updated formats exact Postgres instants and date-only history honestly', () => {
+test('calendar update labels format exact Postgres instants and date-only history honestly', () => {
+  assert.equal(
+    calendarTimelineUpdatedLabel({
+      timeline_updated_at: '2026-08-06T23:28:00.000Z',
+      timeline_updated_precision: 'timestamp',
+    }),
+    'August 6, 2026 at 4:28 PM PDT'
+  );
   assert.equal(
     calendarEventDetailsUpdatedLabel({
       event_details_updated_at: '2026-08-06T23:28:00.000Z',
@@ -98,6 +107,13 @@ test('Event Details Updated formats exact Postgres instants and date-only histor
       event_details_updated_precision: 'date',
     }),
     'April 7, 2026'
+  );
+  assert.equal(
+    calendarContractUpdatedLabel({
+      contract_updated_at: '2026-03-01',
+      contract_updated_precision: 'date',
+    }),
+    'March 1, 2026'
   );
 });
 
@@ -217,18 +233,37 @@ test('Postgres metadata overrides legacy update copy without leaking projection 
     type: 'main_event',
     occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
     appUrl: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
-    eventDetailsUpdatedAt: '2026-08-06T23:28:00.000Z',
+    timelineUpdatedAt: '2026-08-06T23:28:00.000Z',
+    timelineUpdatedPrecision: 'timestamp',
+    eventDetailsUpdatedAt: '2026-08-05T18:00:00.000Z',
     eventDetailsUpdatedPrecision: 'timestamp',
-    description: 'Notes Updated: April 7, 2026 5:57 PM',
+    contractUpdatedAt: '2026-08-04T20:00:00.000Z',
+    contractUpdatedPrecision: 'timestamp',
+    description: [
+      'Timeline Updated: July 1, 2026 1:00 PM',
+      'Notes Updated: April 7, 2026 5:57 PM',
+      'Contract Updated: March 1, 2026',
+    ].join('\n'),
   });
-  assert.match(
+  assert.match(event.description, new RegExp(
+    [
+      'Timeline Updated: August 6, 2026 at 4:28 PM PDT',
+      'Event Details Updated: August 5, 2026 at 11:00 AM PDT',
+      'Contract Updated: August 4, 2026 at 1:00 PM PDT$',
+    ].join('\\n'),
+    'u'
+  ));
+  assert.doesNotMatch(
     event.description,
-    /Event Details Updated: August 6, 2026 at 4:28 PM PDT$/u
+    /July 1|Notes Updated|April 7|March 1/u
   );
-  assert.doesNotMatch(event.description, /Notes Updated|April 7/u);
   assert.equal(Object.hasOwn(event, 'appUrl'), false);
+  assert.equal(Object.hasOwn(event, 'timelineUpdatedAt'), false);
+  assert.equal(Object.hasOwn(event, 'timelineUpdatedPrecision'), false);
   assert.equal(Object.hasOwn(event, 'eventDetailsUpdatedAt'), false);
   assert.equal(Object.hasOwn(event, 'eventDetailsUpdatedPrecision'), false);
+  assert.equal(Object.hasOwn(event, 'contractUpdatedAt'), false);
+  assert.equal(Object.hasOwn(event, 'contractUpdatedPrecision'), false);
 });
 
 test('raw Postgres update metadata is also stripped from decorated events', () => {
@@ -236,13 +271,21 @@ test('raw Postgres update metadata is also stripped from decorated events', () =
     type: 'main_event',
     occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
     app_url: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
-    event_details_updated_at: '2026-08-06T23:28:00.000Z',
+    timeline_updated_at: '2026-08-06T23:28:00.000Z',
+    timeline_updated_precision: 'timestamp',
+    event_details_updated_at: '2026-08-05T18:00:00.000Z',
     event_details_updated_precision: 'timestamp',
+    contract_updated_at: '2026-08-04T20:00:00.000Z',
+    contract_updated_precision: 'timestamp',
     description: '',
   });
   assert.equal(Object.hasOwn(event, 'app_url'), false);
+  assert.equal(Object.hasOwn(event, 'timeline_updated_at'), false);
+  assert.equal(Object.hasOwn(event, 'timeline_updated_precision'), false);
   assert.equal(Object.hasOwn(event, 'event_details_updated_at'), false);
   assert.equal(Object.hasOwn(event, 'event_details_updated_precision'), false);
+  assert.equal(Object.hasOwn(event, 'contract_updated_at'), false);
+  assert.equal(Object.hasOwn(event, 'contract_updated_precision'), false);
 });
 
 test('main-event descriptions use Event Link instead of Notion Link', () => {
@@ -257,7 +300,10 @@ test('main-event descriptions use Event Link instead of Notion Link', () => {
   assert.match(source, /description \+= `\\nEvent Link: \$\{eventHubUrl\}\\n`/u);
   assert.match(source, /url: eventHubUrl \|\| ''/u);
   assert.match(source, /appUrl: source\?\.app_url \|\| undefined/u);
+  assert.match(source, /timelineUpdatedAt: source\?\.timeline_updated_at \|\| undefined/u);
   assert.match(source, /eventDetailsUpdatedAt: source\?\.event_details_updated_at \|\| undefined/u);
+  assert.match(source, /contractUpdatedAt: source\?\.contract_updated_at \|\| undefined/u);
+  assert.match(source, /url: rehearsal\.rehearsal_link \|\| ''/u);
   assert.doesNotMatch(source, /`Notion Link: \$\{event\.notion_url\}\\n\\n`/u);
   assert.doesNotMatch(source, /`\\nTimeline Link: \$\{timelineLink\}\\n`/u);
 });

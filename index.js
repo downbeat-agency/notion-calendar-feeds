@@ -4000,8 +4000,12 @@ function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyPrope
     occurrenceKey: source?.[occurrenceKeyProperty] || undefined,
     comparisonIdentity: source?._comparison_identity || undefined,
     appUrl: source?.app_url || undefined,
+    timelineUpdatedAt: source?.timeline_updated_at || undefined,
+    timelineUpdatedPrecision: source?.timeline_updated_precision || undefined,
     eventDetailsUpdatedAt: source?.event_details_updated_at || undefined,
-    eventDetailsUpdatedPrecision: source?.event_details_updated_precision || undefined
+    eventDetailsUpdatedPrecision: source?.event_details_updated_precision || undefined,
+    contractUpdatedAt: source?.contract_updated_at || undefined,
+    contractUpdatedPrecision: source?.contract_updated_precision || undefined
   };
 }
 
