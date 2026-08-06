@@ -31,10 +31,13 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 1. **Main Events** (Weddings/Gigs)
 **Triggers:** Object has `event_name` AND `event_date`
 
-**Available Fields (12 total):**
+**Available Fields:**
 - `event_name` - Event title (required)
 - `event_date` - ISO 8601 date range (required)
 - `notion_url` - Link back to Notion page
+- `app_url` - Canonical authenticated Downbeat App event link
+- `event_details_updated_at` - Latest meaningful Timeline, details, contract, or note change
+- `event_details_updated_precision` - `timestamp` for exact changes or `date` for historical fallbacks
 - `band` - Band name
 - `event_personnel` - Formatted list of event personnel (all roles)
 - `calltime` - Call time (ISO 8601)
@@ -376,8 +379,8 @@ The database uses separate formula fields for each event type. Each field contai
 - **ICS Format**: `GET /calendar/:personId?format=ics` - All events in calendar format
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
 - **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification
-- **Descriptions**: Include confirmation numbers, flight details, call times, Notion links, etc.
-- **Links**: Postgres personal travel URLs open the assigned-only Event Hub tab. Legacy Notion-backed payloads keep their original Notion URL and label.
+- **Descriptions**: Main Events normalize escaped line breaks, omit empty fields, group structured Postgres details, notes, contacts, and contracted services into readable sections, and show one `Event Details Updated` value from the latest meaningful Timeline, Event Hub details, contract, or note change. Travel descriptions include the relevant booking details and Event Hub destination.
+- **Links**: Postgres personal and shared Travel URLs open the matching Event Hub tab. Main Events use the Event Hub as the built-in calendar URL and show separate Event, App, and PCO links when available. Legacy Notion-backed travel payloads keep their original Notion URL and label.
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")
 
 ## Optimization Notes

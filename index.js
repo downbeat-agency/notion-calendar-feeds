@@ -3998,7 +3998,10 @@ function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyPrope
   return {
     uid: source?.[uidProperty] || undefined,
     occurrenceKey: source?.[occurrenceKeyProperty] || undefined,
-    comparisonIdentity: source?._comparison_identity || undefined
+    comparisonIdentity: source?._comparison_identity || undefined,
+    appUrl: source?.app_url || undefined,
+    eventDetailsUpdatedAt: source?.event_details_updated_at || undefined,
+    eventDetailsUpdatedPrecision: source?.event_details_updated_precision || undefined
   };
 }
 
@@ -5338,7 +5341,7 @@ function processAdminEvents(eventsArray) {
     }
   });
 
-  return allCalendarEvents;
+  return allCalendarEvents.map(calendarEventWithEventHubLink);
 }
 
 // ============================================

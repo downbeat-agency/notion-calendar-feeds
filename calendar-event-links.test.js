@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  calendarAppUrl,
   calendarDescriptionWithoutTimelineLink,
+  calendarEventDetailsUpdatedLabel,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
   calendarTravelLinkLabel,
@@ -67,6 +69,38 @@ test('Postgres occurrence identity becomes an Event Hub deep link', () => {
   );
 });
 
+test('Postgres occurrence identity becomes the canonical App link', () => {
+  assert.equal(
+    calendarAppUrl({
+      occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    }),
+    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+  );
+  assert.equal(
+    calendarAppUrl({
+      occurrenceKey: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    }),
+    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+  );
+});
+
+test('Event Details Updated formats exact Postgres instants and date-only history honestly', () => {
+  assert.equal(
+    calendarEventDetailsUpdatedLabel({
+      event_details_updated_at: '2026-08-06T23:28:00.000Z',
+      event_details_updated_precision: 'timestamp',
+    }),
+    'August 6, 2026 at 4:28 PM PDT'
+  );
+  assert.equal(
+    calendarEventDetailsUpdatedLabel({
+      event_details_updated_at: '2026-04-07',
+      event_details_updated_precision: 'date',
+    }),
+    'April 7, 2026'
+  );
+});
+
 test('only event identities produce Event Hub links', () => {
   assert.equal(calendarEventHubUrl({ occurrence_key: 'hotel:booking-id' }), '');
   assert.equal(calendarEventHubUrl({ notion_url: 'https://www.notion.so/' }), '');
@@ -84,7 +118,21 @@ test('frozen legacy main-event descriptions are upgraded without changing other 
   });
   assert.equal(
     event.description,
-    'Assignments: Drums\n\nEvent Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215\n\nDress Code:\nBlack suit'
+    [
+      'Assignments: Drums',
+      '',
+      'Dress Code',
+      'Black suit',
+      '',
+      'LINKS',
+      '',
+      'Event Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+      'App Link: https://app.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+    ].join('\n')
+  );
+  assert.equal(
+    event.url,
+    'https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215'
   );
 });
 
@@ -110,17 +158,106 @@ test('frozen main events lose timeline links while retaining Event Hub links', (
   });
   assert.equal(
     event.description,
-    'Event Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215'
+    [
+      'LINKS',
+      '',
+      'Event Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+      'App Link: https://app.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+    ].join('\n')
   );
+});
+
+test('main-event descriptions repair escaped copy and remove empty or obsolete metadata', () => {
+  const event = calendarEventWithEventHubLink({
+    type: 'main_event',
+    occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    description: [
+      'Parking and Load In:',
+      '\\n',
+      'Dress Code:',
+      'Black formal\\n',
+      'Green Room:',
+      '\\n',
+      'Event Notes:',
+      '• Bridgerton vibes for cocktail hour\\n',
+      'Day of Contact for Band: Brandon Shaw - (818) 913-2487\\n',
+      'Contracted:',
+      'Ceremony: Ceremony Sound + Violin + Keys 3:30pm-4:30pm (1hrs)\\n',
+      'PCO Link: https://services.planningcenteronline.com/plans/84911226\\n',
+      'App Link: https://app.downbeat.agency/event/02e26e6b-efb4-419c-9486-6cd8265c40ea\\n',
+      'Notes Updated: April 7, 2026 5:57 PM',
+    ].join(''),
+  });
+
+  assert.doesNotMatch(event.description, /\\n/u);
+  assert.doesNotMatch(event.description, /Parking and Load In|Green Room|Notes Updated/u);
+  assert.match(
+    event.description,
+    /App Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea/u
+  );
+  assert.match(event.description, /Dress Code\nBlack formal/u);
+  assert.match(event.description, /Event Notes\n• Bridgerton vibes for cocktail hour/u);
+  assert.match(event.description, /Day-of Contact\nBrandon Shaw - \(818\) 913-2487/u);
+  assert.match(
+    event.description,
+    /CONTRACTED\n\n• Ceremony · 3:30 PM–4:30 PM \(1hrs\)\n  Ceremony Sound \+ Violin \+ Keys/u
+  );
+  assert.match(
+    event.description,
+    /LINKS\n\nEvent Link: https:\/\/music\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea\nApp Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea\nPCO Plan: https:\/\/services\.planningcenteronline\.com\/plans\/84911226\n\nEvent Details Updated: April 7, 2026 5:57 PM$/u
+  );
+  assert.equal(
+    event.url,
+    'https://music.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+  );
+});
+
+test('Postgres metadata overrides legacy update copy without leaking projection fields', () => {
+  const event = calendarEventWithEventHubLink({
+    type: 'main_event',
+    occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    appUrl: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    eventDetailsUpdatedAt: '2026-08-06T23:28:00.000Z',
+    eventDetailsUpdatedPrecision: 'timestamp',
+    description: 'Notes Updated: April 7, 2026 5:57 PM',
+  });
+  assert.match(
+    event.description,
+    /Event Details Updated: August 6, 2026 at 4:28 PM PDT$/u
+  );
+  assert.doesNotMatch(event.description, /Notes Updated|April 7/u);
+  assert.equal(Object.hasOwn(event, 'appUrl'), false);
+  assert.equal(Object.hasOwn(event, 'eventDetailsUpdatedAt'), false);
+  assert.equal(Object.hasOwn(event, 'eventDetailsUpdatedPrecision'), false);
+});
+
+test('raw Postgres update metadata is also stripped from decorated events', () => {
+  const event = calendarEventWithEventHubLink({
+    type: 'main_event',
+    occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    app_url: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    event_details_updated_at: '2026-08-06T23:28:00.000Z',
+    event_details_updated_precision: 'timestamp',
+    description: '',
+  });
+  assert.equal(Object.hasOwn(event, 'app_url'), false);
+  assert.equal(Object.hasOwn(event, 'event_details_updated_at'), false);
+  assert.equal(Object.hasOwn(event, 'event_details_updated_precision'), false);
 });
 
 test('main-event descriptions use Event Link instead of Notion Link', () => {
   const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
   assert.match(source, /calendarEventHubUrl\(event\)/u);
   assert.match(source, /allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
+  assert.match(
+    source,
+    /function processAdminEvents[\s\S]*?return allCalendarEvents\.map\(calendarEventWithEventHubLink\);/u
+  );
   assert.match(source, /`Event Link: \$\{eventHubUrl\}\\n\\n`/u);
   assert.match(source, /description \+= `\\nEvent Link: \$\{eventHubUrl\}\\n`/u);
   assert.match(source, /url: eventHubUrl \|\| ''/u);
+  assert.match(source, /appUrl: source\?\.app_url \|\| undefined/u);
+  assert.match(source, /eventDetailsUpdatedAt: source\?\.event_details_updated_at \|\| undefined/u);
   assert.doesNotMatch(source, /`Notion Link: \$\{event\.notion_url\}\\n\\n`/u);
   assert.doesNotMatch(source, /`\\nTimeline Link: \$\{timelineLink\}\\n`/u);
 });
