@@ -29,6 +29,7 @@ import {
   calendarDescriptionWithoutTimelineLink,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
+  calendarMainEventTitle,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
@@ -4074,7 +4075,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
         const eventHubUrl = calendarEventHubUrl(event);
         const eventUrlInfo = eventHubUrl ? `Event Link: ${eventHubUrl}\n\n` : '';
-        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: `🎸 ${event.event_name}${event.band ? ` (${event.band})` : ''}`, start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: calendarMainEventTitle(event), start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
     }
     (event.flights || []).forEach(flight => {
@@ -5270,8 +5271,7 @@ function processAdminEvents(eventsArray) {
         
         // Notion URL is in URL field, not in description
 
-        const rawTitle = typeof event.event_name === 'string' ? event.event_name.trim() : '';
-        const title = rawTitle ? `🎸 ${rawTitle}` : '🎸 Event';
+        const title = calendarMainEventTitle(event);
 
         // Build location from venue and venue_address
         let location = '';

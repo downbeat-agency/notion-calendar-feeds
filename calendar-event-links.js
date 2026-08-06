@@ -73,6 +73,12 @@ export function calendarEventHubUrl(event = {}, options = {}) {
   return `${baseUrl}/events/${encodeURIComponent(selector)}`;
 }
 
+export function calendarMainEventTitle(event = {}) {
+  const eventName = clean(event.event_name || event.eventName, 500) || 'Event';
+  const bandName = clean(event.band || event.band_name || event.bandName, 200);
+  return `🎸 ${eventName}${bandName ? ` (${bandName})` : ''}`;
+}
+
 function validHttpUrl(value) {
   const candidate = clean(value, 2_000);
   if (!candidate) return '';

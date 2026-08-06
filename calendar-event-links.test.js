@@ -8,6 +8,7 @@ import {
   calendarEventDetailsUpdatedLabel,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
+  calendarMainEventTitle,
   calendarTimelineUpdatedLabel,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
@@ -83,6 +84,17 @@ test('Postgres occurrence identity becomes the canonical App link', () => {
       occurrenceKey: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
     }),
     'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+  );
+});
+
+test('main event titles include the band consistently', () => {
+  assert.equal(
+    calendarMainEventTitle({ event_name: 'Los Olivos Wedding', band: 'AMFM' }),
+    '🎸 Los Olivos Wedding (AMFM)'
+  );
+  assert.equal(
+    calendarMainEventTitle({ event_name: 'San Diego Wedding' }),
+    '🎸 San Diego Wedding'
   );
 });
 
@@ -291,6 +303,7 @@ test('raw Postgres update metadata is also stripped from decorated events', () =
 test('main-event descriptions use Event Link instead of Notion Link', () => {
   const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
   assert.match(source, /calendarEventHubUrl\(event\)/u);
+  assert.match(source, /const title = calendarMainEventTitle\(event\);/u);
   assert.match(source, /allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
   assert.match(
     source,
