@@ -31,6 +31,7 @@ import {
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
   calendarRehearsalTitle,
+  calendarTeamEventUrl,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
@@ -4217,7 +4218,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const endDate = isAllDay
           ? shiftFloatingCalendarDate(eventTimes.end, 1)
           : eventTimes.end;
-        allCalendarEvents.push({ ...calendarOccurrence(teamEvent), type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, allDay: isAllDay, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: teamEvent.notion_link || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(teamEvent), type: 'team_calendar', title: `${emoji} ${teamEvent.title || 'Team Event'}`, start: eventTimes.start, end: endDate, allDay: isAllDay, description: [teamEvent.dcos, teamEvent.notes].filter(Boolean).join('\n\n'), location: teamEvent.address || '', url: calendarTeamEventUrl(teamEvent), mainEvent: '' });
       }
     }
   });

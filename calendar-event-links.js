@@ -111,6 +111,15 @@ export function calendarAppUrl(event = {}, options = {}) {
   return `${baseUrl}/events/${encodeURIComponent(selector)}`;
 }
 
+export function calendarTeamEventUrl(event = {}) {
+  return validHttpUrl(
+    event.schedule_url
+      || event.scheduleUrl
+      || event.url
+      || event.notion_link
+  );
+}
+
 function normalizedCalendarCopy(value = '') {
   return String(value ?? '')
     .replace(/\\r\\n|\\n|\\r/gu, '\n')

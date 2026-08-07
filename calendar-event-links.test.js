@@ -10,6 +10,7 @@ import {
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
   calendarRehearsalTitle,
+  calendarTeamEventUrl,
   calendarTimelineUpdatedLabel,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
@@ -108,6 +109,17 @@ test('rehearsal titles show the band without repeating the linked event', () => 
     '🎤 Rehearsal (The A-List)'
   );
   assert.equal(calendarRehearsalTitle({}), '🎤 Rehearsal');
+});
+
+test('office calendar entries prefer the authenticated Postgres schedule link', () => {
+  assert.equal(
+    calendarTeamEventUrl({
+      schedule_url: 'https://music.downbeat.agency/time?shift=shift-1&date=2026-08-07',
+      notion_link: 'https://www.notion.so/legacy-office-row',
+    }),
+    'https://music.downbeat.agency/time?shift=shift-1&date=2026-08-07'
+  );
+  assert.equal(calendarTeamEventUrl({ schedule_url: 'javascript:alert(1)' }), '');
 });
 
 test('calendar update labels format exact Postgres instants and date-only history honestly', () => {
