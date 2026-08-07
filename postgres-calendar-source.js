@@ -38,17 +38,7 @@ function feedPath(kind, selector) {
   throw new Error(`Unsupported Postgres calendar feed kind: ${kind}`);
 }
 
-export function calendarFeedServiceRequestIsAuthorized(req, env = process.env) {
-  const expected = clean(env.CALENDAR_FEED_SERVICE_KEY);
-  const supplied = clean(req?.get?.('X-Downbeat-Calendar-Service-Key'));
-  if (!expected || !supplied) return false;
-  const expectedBuffer = Buffer.from(expected);
-  const suppliedBuffer = Buffer.from(supplied);
-  return expectedBuffer.length === suppliedBuffer.length
-    && timingSafeEqual(expectedBuffer, suppliedBuffer);
-}
-
-export async function fetchPostgresCalendarFeed(kind, selector = null, options = {}) {
+async function calendarFeedApiRequest(path, options = {}) {
   const env = options.env || process.env;
   const fetchFn = options.fetchFn || fetch;
   const configuredTimeoutMs = Number(
@@ -61,12 +51,16 @@ export async function fetchPostgresCalendarFeed(kind, selector = null, options =
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   try {
-    const response = await fetchFn(`${baseUrl}${feedPath(kind, selector)}`, {
-      method: 'GET',
+    const method = options.method || 'GET';
+    const response = await fetchFn(`${baseUrl}${path}`, {
+      method,
+      cache: 'no-store',
       headers: {
         Accept: 'application/json',
         'X-Downbeat-Calendar-Service-Key': serviceKey,
+        ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
+      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       signal: controller.signal,
     });
     const body = await response.json().catch(() => null);
@@ -76,11 +70,6 @@ export async function fetchPostgresCalendarFeed(kind, selector = null, options =
       );
       error.status = response.status;
       error.code = body?.code || 'POSTGRES_CALENDAR_FEED_HTTP_ERROR';
-      throw error;
-    }
-    if (!body || body.source !== 'postgres' || Number(body.schemaVersion) !== 1) {
-      const error = new Error('Postgres calendar feed returned an unsupported payload.');
-      error.code = 'POSTGRES_CALENDAR_FEED_SCHEMA_INVALID';
       throw error;
     }
     return body;
@@ -94,6 +83,53 @@ export async function fetchPostgresCalendarFeed(kind, selector = null, options =
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function calendarFeedServiceRequestIsAuthorized(req, env = process.env) {
+  const expected = clean(env.CALENDAR_FEED_SERVICE_KEY);
+  const supplied = clean(req?.get?.('X-Downbeat-Calendar-Service-Key'));
+  if (!expected || !supplied) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length
+    && timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+export async function fetchPostgresCalendarFeed(kind, selector = null, options = {}) {
+  const body = await calendarFeedApiRequest(feedPath(kind, selector), options);
+  if (!body || body.source !== 'postgres' || Number(body.schemaVersion) !== 1) {
+    const error = new Error('Postgres calendar feed returned an unsupported payload.');
+    error.code = 'POSTGRES_CALENDAR_FEED_SCHEMA_INVALID';
+    throw error;
+  }
+  return body;
+}
+
+export async function claimPostgresCalendarRefreshJobs(input, options = {}) {
+  const body = await calendarFeedApiRequest(
+    '/api/internal/calendar-feeds/refresh-jobs/claim',
+    { ...options, method: 'POST', body: input }
+  );
+  if (!body?.success || !Array.isArray(body.jobs)) {
+    const error = new Error('Postgres calendar refresh claim returned an unsupported payload.');
+    error.code = 'POSTGRES_CALENDAR_REFRESH_CLAIM_INVALID';
+    throw error;
+  }
+  return body.jobs;
+}
+
+export async function completePostgresCalendarRefreshJob(jobId, input, options = {}) {
+  return calendarFeedApiRequest(
+    `/api/internal/calendar-feeds/refresh-jobs/${encodeURIComponent(clean(jobId, 100))}/complete`,
+    { ...options, method: 'POST', body: input }
+  );
+}
+
+export async function failPostgresCalendarRefreshJob(jobId, input, options = {}) {
+  return calendarFeedApiRequest(
+    `/api/internal/calendar-feeds/refresh-jobs/${encodeURIComponent(clean(jobId, 100))}/fail`,
+    { ...options, method: 'POST', body: input }
+  );
 }
 
 function iso(value) {

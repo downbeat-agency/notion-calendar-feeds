@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "test": "node --test admin-json.test.js calendar-cache-policy.test.js calendar-event-links.test.js calendar-event-membership.test.js calendar-event-snapshot.test.js calendar-ics-policy.test.js calendar-observability.test.js calendar-rehearsal-membership.test.js calendar-shadow-baseline.test.js calendar-shadow-summary.test.js postgres-calendar-source.test.js source-cutover-contract.test.js stable-formula-snapshot.test.js"
+    "test": "node --test admin-json.test.js calendar-cache-policy.test.js calendar-event-links.test.js calendar-event-membership.test.js calendar-event-snapshot.test.js calendar-ics-policy.test.js calendar-observability.test.js calendar-refresh-worker.test.js calendar-rehearsal-membership.test.js calendar-shadow-baseline.test.js calendar-shadow-summary.test.js postgres-calendar-source.test.js source-cutover-contract.test.js stable-formula-snapshot.test.js"
   },
   "keywords": [
     "notion",

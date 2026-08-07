@@ -64,6 +64,26 @@ test('Postgres cache is validated against the current source revision', () => {
   assert.doesNotMatch(source, /source_revision/u);
 });
 
+test('Postgres changes proactively refresh durable calendar artifacts', () => {
+  assert.match(source, /createPostgresCalendarRefreshWorker/u);
+  assert.match(source, /async function regenerateQueuedCalendarJob/u);
+  assert.match(source, /trigger: 'postgres_change_queue'/u);
+  assert.match(source, /postgresCalendarRefreshWorker\.start\(\)/u);
+  assert.match(
+    source,
+    /Cache-Control', 'private, no-cache, max-age=0, must-revalidate'/u
+  );
+});
+
+test('Postgres regeneration may publish an empty calendar after the final item is removed', () => {
+  const start = source.indexOf('async function regenerateCalendarForPersonFromPostgres');
+  const end = source.indexOf('async function comparePersonalCalendarShadow', start);
+  assert.ok(start >= 0 && end > start);
+  const implementation = source.slice(start, end);
+  assert.match(implementation, /eventCount: allCalendarEvents\.length/u);
+  assert.doesNotMatch(implementation, /allCalendarEvents\.length === 0|reason: 'no_events'/u);
+});
+
 test('public subscription pages do not invoke maintenance routes', () => {
   assert.doesNotMatch(source, /fetch\(regenerationUrl/u);
   assert.doesNotMatch(source, /const regenerationUrl/u);

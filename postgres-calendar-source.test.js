@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calendarFeedServiceRequestIsAuthorized,
+  claimPostgresCalendarRefreshJobs,
+  completePostgresCalendarRefreshJob,
   compareCalendarEventSets,
   configuredCalendarFeedSource,
   diagnoseCalendarEventSets,
@@ -38,7 +40,39 @@ test('Postgres source client preserves the selector and uses the dedicated servi
   });
   assert.equal(request.url, 'https://downbeat.test/api/internal/calendar-feeds/personal/person%2Fid');
   assert.equal(request.options.headers['X-Downbeat-Calendar-Service-Key'], 'secret');
+  assert.equal(request.options.cache, 'no-store');
   assert.equal(result, payload);
+});
+
+test('Postgres refresh queue client uses authenticated JSON writes', async () => {
+  const requests = [];
+  const options = {
+    env: {
+      CALENDAR_FEED_API_BASE_URL: 'https://downbeat.test',
+      CALENDAR_FEED_SERVICE_KEY: 'secret',
+    },
+    fetchFn: async (url, request) => {
+      requests.push({ url, request });
+      const payload = url.endsWith('/claim')
+        ? { success: true, jobs: [{ id: 'job-1' }] }
+        : { success: true, applied: true };
+      return { ok: true, status: 200, json: async () => payload };
+    },
+  };
+
+  const jobs = await claimPostgresCalendarRefreshJobs({ workerId: 'edge-1', limit: 5 }, options);
+  const completed = await completePostgresCalendarRefreshJob(
+    'job-1',
+    { workerId: 'edge-1', generation: 2, sourceRevision: '10' },
+    options
+  );
+
+  assert.deepEqual(jobs, [{ id: 'job-1' }]);
+  assert.equal(completed.applied, true);
+  assert.equal(requests[0].request.method, 'POST');
+  assert.equal(requests[0].request.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].request.body), { workerId: 'edge-1', limit: 5 });
+  assert.match(requests[1].url, /\/refresh-jobs\/job-1\/complete$/u);
 });
 
 test('shadow comparison reports parity without exposing event text', () => {

@@ -45,6 +45,7 @@ import {
   resolveCalendarRendererVersion,
 } from './calendar-cache-policy.js';
 import { createCalendarObservability } from './calendar-observability.js';
+import { createPostgresCalendarRefreshWorker } from './calendar-refresh-worker.js';
 import {
   configuredCalendarTimeMode,
   serializeCalendarWithTimePolicy,
@@ -65,6 +66,7 @@ import {
 
 const app = express();
 const port = process.env.PORT || 3000;
+let postgresCalendarRefreshWorker = null;
 const notionEvents = new Client({
   auth: process.env.NOTION_API_KEY,
   timeoutMs: 90000 // 90 seconds - longer than Railway's 60s timeout to handle slow Notion responses
@@ -870,6 +872,7 @@ function sendCalendarArtifact(req, res, content, options = {}) {
   res.setHeader('ETag', metadata.etag);
   res.setHeader('Last-Modified', new Date(metadata.generatedAt).toUTCString());
   res.setHeader('X-Downbeat-Calendar-Renderer', CALENDAR_RENDERER_VERSION);
+  res.setHeader('Cache-Control', 'private, no-cache, max-age=0, must-revalidate');
   if (options.contentType) res.setHeader('Content-Type', options.contentType);
   if (options.filename) {
     res.setHeader('Content-Disposition', `attachment; filename="${options.filename}"`);
@@ -1068,6 +1071,10 @@ app.get('/api/internal/calendar-health', requireCalendarFeedServiceKey, (_req, r
     rendererVersion: CALENDAR_RENDERER_VERSION,
     cacheEnabled,
     activeBuilds: runCalendarBuild.activeCount(),
+    refreshWorker: postgresCalendarRefreshWorker?.snapshot?.() || {
+      enabled: false,
+      started: false,
+    },
     monitoring: calendarObservability.snapshot(),
   });
 });
@@ -4415,9 +4422,6 @@ async function regenerateCalendarForPersonFromPostgres(personId, options = {}) {
     const payload = await fetchPostgresCalendarFeed('personal', personId);
     const calendarData = selectPostgresCalendarDataMode(payload.calendarData || {}, selectedRegenMode);
     const allCalendarEvents = buildCalendarEventsFromCalendarData(calendarData);
-    if (allCalendarEvents.length === 0) {
-      return { success: false, personId, reason: 'no_events' };
-    }
     const personName = calendarData.personName || 'Unknown';
     const totalMainEvents = allCalendarEvents.filter(event => event.type === 'main_event').length;
     const artifacts = buildCalendarArtifacts(personName, allCalendarEvents, {
@@ -6787,6 +6791,7 @@ app.post('/regenerate/:personId', requireCalendarFeedServiceKey, async (req, res
         personName: result.personName,
         regen_mode: result.regenMode || regenMode,
         eventCount: result.eventCount,
+        sourceRevision: result.sourceRevision || null,
         cache_cleared: true,
         cached_for_seconds: CACHE_TTL
       });
@@ -9795,6 +9800,7 @@ app.post('/admin/calendar/regen', requireCalendarFeedServiceKey, async (req, res
       success: true,
       message: 'Admin calendar regenerated successfully',
       total_events: allCalendarEvents.length,
+      sourceRevision: adminEvents?.sourceRevision || null,
       cache_replaced: redis && cacheEnabled,
       cached_for_seconds: CACHE_TTL
     });
@@ -10174,6 +10180,7 @@ app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, async (req, re
       success: true,
       message: 'Travel calendar regenerated successfully',
       total_events: allCalendarEvents.length,
+      sourceRevision: travelEvents?.sourceRevision || null,
       cache_replaced: redis && cacheEnabled,
       cached_for_seconds: CACHE_TTL
     });
@@ -10553,6 +10560,7 @@ app.post('/blockout/calendar/regen', requireCalendarFeedServiceKey, async (req, 
       success: true,
       message: 'Blockout calendar regenerated successfully',
       total_events: allCalendarEvents.length,
+      sourceRevision: blockoutEvents?.sourceRevision || null,
       cache_replaced: redis && cacheEnabled,
       cached_for_seconds: CACHE_TTL
     });
@@ -10843,6 +10851,62 @@ app.get('/flight-countdown-modern.html', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'public', 'flight-countdown-modern.html'));
 });
 
+async function regenerateQueuedCalendarJob(job = {}) {
+  if (CALENDAR_FEED_SOURCE !== 'postgres') {
+    const error = new Error('Calendar refresh queue requires Postgres source mode.');
+    error.code = 'CALENDAR_REFRESH_SOURCE_NOT_POSTGRES';
+    throw error;
+  }
+  if (job.feedKind === 'personal') {
+    return regenerateCalendarForPerson(job.selector, {
+      trigger: 'postgres_change_queue',
+      clearCache: false,
+      regenMode: REGEN_MODE_FULL,
+    });
+  }
+
+  const endpointByKind = {
+    admin: '/admin/calendar/regen',
+    travel: '/travel/calendar/regen',
+    blockout: '/blockout/calendar/regen',
+  };
+  const endpoint = endpointByKind[job.feedKind];
+  if (!endpoint) {
+    const error = new Error('Calendar refresh job has an unsupported feed kind.');
+    error.code = 'CALENDAR_REFRESH_KIND_INVALID';
+    throw error;
+  }
+  const serviceKey = String(process.env.CALENDAR_FEED_SERVICE_KEY || '').trim();
+  if (!serviceKey) {
+    const error = new Error('Calendar refresh service key is not configured.');
+    error.code = 'CALENDAR_REFRESH_SERVICE_KEY_MISSING';
+    throw error;
+  }
+  const response = await withTimeout(
+    fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'X-Downbeat-Calendar-Service-Key': serviceKey,
+      },
+    }),
+    CALENDAR_FETCH_TIMEOUT_MS + 5_000,
+    `${job.feedKind} queued calendar refresh timed out`
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body?.success || body.stale === true) {
+    const error = new Error(`${job.feedKind} queued calendar refresh failed.`);
+    error.code = body?.stale
+      ? 'CALENDAR_REFRESH_STALE_FALLBACK'
+      : (body?.code || 'CALENDAR_REFRESH_SHARED_FAILED');
+    throw error;
+  }
+  return {
+    success: true,
+    sourceRevision: body.sourceRevision || null,
+  };
+}
+
 // Start background job for calendar updates
 startBackgroundJob();
 if (CALENDAR_FEED_SOURCE === 'postgres') {
@@ -10851,6 +10915,14 @@ if (CALENDAR_FEED_SOURCE === 'postgres') {
 
 app.listen(port, () => {
   console.log(`Calendar feed server running on port ${port}`);
+  if (CALENDAR_FEED_SOURCE === 'postgres') {
+    postgresCalendarRefreshWorker = createPostgresCalendarRefreshWorker({
+      regenerateJob: regenerateQueuedCalendarJob,
+    });
+    if (postgresCalendarRefreshWorker.start()) {
+      console.log('📅 Postgres change-driven calendar refresh worker active.');
+    }
+  }
   if (CALENDAR_FEED_SOURCE !== 'postgres') {
     console.log(`Background job active - updating all people after each cycle completes, then waiting ${Math.round(BACKGROUND_REFRESH_COOLDOWN_MS / 60000)} minutes`);
   }
