@@ -407,7 +407,49 @@ export function calendarContractUpdatedLabel(event = {}, legacyFallback = '') {
 }
 
 export function calendarEventWithEventHubLink(event = {}) {
-  if (clean(event.type, 100) !== 'main_event' || typeof event.description !== 'string') {
+  const eventType = clean(event.type, 100);
+  if (eventType === 'rehearsal') {
+    const normalizedDescription = normalizedCalendarCopy(event.description);
+    let embeddedRehearsalUrl = '';
+    let embeddedAppUrl = '';
+    const bodyLines = [];
+    normalizedDescription.split('\n').forEach((rawLine) => {
+      const line = rawLine.trim();
+      const rehearsalUrl = labeledUrl(line, ['Rehearsal Link']);
+      if (rehearsalUrl) {
+        embeddedRehearsalUrl ||= rehearsalUrl;
+        return;
+      }
+      const appUrl = labeledUrl(line, ['App Link']);
+      if (appUrl) {
+        embeddedAppUrl ||= appUrl;
+        return;
+      }
+      if (/^LINKS:?$/iu.test(line)) return;
+      bodyLines.push(rawLine);
+    });
+    const rehearsalUrl = validHttpUrl(
+      event.rehearsalLink || event.rehearsal_link || embeddedRehearsalUrl
+    );
+    const appUrl = calendarAppUrl(event) || validHttpUrl(embeddedAppUrl);
+    const linkLines = [
+      rehearsalUrl ? `Rehearsal Link: ${rehearsalUrl}` : '',
+      appUrl ? `App Link: ${appUrl}` : '',
+    ].filter(Boolean);
+    const decorated = {
+      ...event,
+      description: [
+        normalizedCalendarCopy(bodyLines.join('\n')),
+        linkLines.length ? `LINKS\n\n${linkLines.join('\n\n')}` : '',
+      ].filter(Boolean).join('\n\n'),
+    };
+    delete decorated.appUrl;
+    delete decorated.app_url;
+    delete decorated.rehearsalLink;
+    delete decorated.rehearsal_link;
+    return decorated;
+  }
+  if (eventType !== 'main_event' || typeof event.description !== 'string') {
     return event;
   }
   const normalizedDescription = calendarDescriptionWithoutTimelineLink(event.description);

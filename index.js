@@ -4010,6 +4010,7 @@ function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyPrope
     occurrenceKey: source?.[occurrenceKeyProperty] || undefined,
     comparisonIdentity: source?._comparison_identity || undefined,
     appUrl: source?.app_url || undefined,
+    rehearsalLink: source?.rehearsal_link || undefined,
     timelineUpdatedAt: source?.timeline_updated_at || undefined,
     timelineUpdatedPrecision: source?.timeline_updated_precision || undefined,
     eventDetailsUpdatedAt: source?.event_details_updated_at || undefined,
@@ -5338,7 +5339,7 @@ function processAdminEvents(eventsArray) {
               end: rehearsalTimes.end,
               description: description,
               location: location,
-              url: rehearsal.rehearsal_link || '',
+              url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || rehearsal.rehearsal_link || '',
               mainEvent: event.event_name || ''
             });
           }

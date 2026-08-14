@@ -111,6 +111,51 @@ test('rehearsal titles show the band without repeating the linked event', () => 
   assert.equal(calendarRehearsalTitle({}), '🎤 Rehearsal');
 });
 
+test('rehearsal links render after pay and personnel with readable spacing', () => {
+  const event = calendarEventWithEventHubLink({
+    type: 'rehearsal',
+    description: [
+      'Rehearsal for Gold Standard',
+      '',
+      'LINKS',
+      '',
+      'Rehearsal Link: https://music.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+      'App Link: https://app.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+      '',
+      'Rehearsal Pay - $100',
+      '',
+      'Band Personnel:',
+      'Bass: Brandon',
+      'Drums: Diego',
+    ].join('\n'),
+    rehearsalLink: 'https://music.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+    appUrl: 'https://app.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+    url: 'https://services.planningcenteronline.com/plans/123',
+  });
+
+  assert.equal(
+    event.description,
+    [
+      'Rehearsal for Gold Standard',
+      '',
+      'Rehearsal Pay - $100',
+      '',
+      'Band Personnel:',
+      'Bass: Brandon',
+      'Drums: Diego',
+      '',
+      'LINKS',
+      '',
+      'Rehearsal Link: https://music.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+      '',
+      'App Link: https://app.downbeat.agency/events/event-1?section=rehearsals&rehearsalId=rehearsal-1',
+    ].join('\n')
+  );
+  assert.equal(event.url, 'https://services.planningcenteronline.com/plans/123');
+  assert.equal(Object.hasOwn(event, 'rehearsalLink'), false);
+  assert.equal(Object.hasOwn(event, 'appUrl'), false);
+});
+
 test('office calendar entries prefer the authenticated Postgres schedule link', () => {
   assert.equal(
     calendarTeamEventUrl({
@@ -340,7 +385,10 @@ test('main-event descriptions use Event Link instead of Notion Link', () => {
   assert.match(source, /timelineUpdatedAt: source\?\.timeline_updated_at \|\| undefined/u);
   assert.match(source, /eventDetailsUpdatedAt: source\?\.event_details_updated_at \|\| undefined/u);
   assert.match(source, /contractUpdatedAt: source\?\.contract_updated_at \|\| undefined/u);
-  assert.match(source, /url: rehearsal\.rehearsal_link \|\| ''/u);
+  assert.match(
+    source,
+    /url: rehearsal\.rehearsal_notion_url \|\| rehearsal\.rehearsal_pco \|\| rehearsal\.rehearsal_link \|\| ''/u
+  );
   assert.doesNotMatch(source, /`Notion Link: \$\{event\.notion_url\}\\n\\n`/u);
   assert.doesNotMatch(source, /`\\nTimeline Link: \$\{timelineLink\}\\n`/u);
 });
