@@ -381,7 +381,7 @@ test('main-event descriptions use Event Link instead of Notion Link', () => {
   assert.match(source, /`Event Link: \$\{eventHubUrl\}\\n\\n`/u);
   assert.match(source, /description \+= `\\nEvent Link: \$\{eventHubUrl\}\\n`/u);
   assert.match(source, /url: eventHubUrl \|\| ''/u);
-  assert.match(source, /appUrl: source\?\.app_url \|\| undefined/u);
+  assert.match(source, /appUrl: source\?\.app_url \|\| source\?\.app_link \|\| undefined/u);
   assert.match(source, /timelineUpdatedAt: source\?\.timeline_updated_at \|\| undefined/u);
   assert.match(source, /eventDetailsUpdatedAt: source\?\.event_details_updated_at \|\| undefined/u);
   assert.match(source, /contractUpdatedAt: source\?\.contract_updated_at \|\| undefined/u);

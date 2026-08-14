@@ -4009,7 +4009,7 @@ function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyPrope
     uid: source?.[uidProperty] || undefined,
     occurrenceKey: source?.[occurrenceKeyProperty] || undefined,
     comparisonIdentity: source?._comparison_identity || undefined,
-    appUrl: source?.app_url || undefined,
+    appUrl: source?.app_url || source?.app_link || undefined,
     rehearsalLink: source?.rehearsal_link || undefined,
     timelineUpdatedAt: source?.timeline_updated_at || undefined,
     timelineUpdatedPrecision: source?.timeline_updated_precision || undefined,
