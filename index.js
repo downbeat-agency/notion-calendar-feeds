@@ -30,6 +30,8 @@ import {
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
+  calendarPersonnelEventWithAppLink,
+  calendarRehearsalAppUrl,
   calendarRehearsalTitle,
   calendarTeamEventUrl,
   calendarTravelLinkLabel,
@@ -3784,7 +3786,7 @@ function buildCalendarArtifacts(personName, allCalendarEvents, options = {}) {
     regenMode = REGEN_MODE_FULL,
     dataSource = 'calendar_data_database'
   } = options;
-  const publishedCalendarEvents = allCalendarEvents.map(calendarEventWithEventHubLink);
+  const publishedCalendarEvents = allCalendarEvents.map(calendarPersonnelEventWithAppLink);
 
   const firstName = (personName || 'Unknown').split(' ')[0] || 'Unknown';
   const calendar = ical({
@@ -4130,7 +4132,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(event), start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(event), start: times.start, end: times.end, description: desc, location: loc, url: calendarRehearsalAppUrl(rehearsal), mainEvent: event.event_name });
       }
     });
     (event.hotels || []).forEach(hotel => {
@@ -4191,7 +4193,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let desc = rehearsal.description || 'Rehearsal';
         if (rehearsal.rehearsal_pay) desc += `\n\nRehearsal Pay - $${rehearsal.rehearsal_pay}`;
         if (rehearsal.rehearsal_band) desc += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
-        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(rehearsal), start: times.start, end: times.end, description: desc, location: loc, url: rehearsal.rehearsal_notion_url || rehearsal.rehearsal_pco || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(rehearsal), type: 'rehearsal', title: calendarRehearsalTitle(rehearsal), start: times.start, end: times.end, description: desc, location: loc, url: calendarRehearsalAppUrl(rehearsal), mainEvent: '' });
       }
     }
   });

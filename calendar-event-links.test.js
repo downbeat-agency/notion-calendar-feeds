@@ -4,11 +4,14 @@ import { readFileSync } from 'node:fs';
 import {
   calendarAppUrl,
   calendarContractUpdatedLabel,
+  calendarDescriptionWithoutPcoLink,
   calendarDescriptionWithoutTimelineLink,
   calendarEventDetailsUpdatedLabel,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
+  calendarPersonnelEventWithAppLink,
+  calendarRehearsalAppUrl,
   calendarRehearsalTitle,
   calendarTeamEventUrl,
   calendarTimelineUpdatedLabel,
@@ -87,6 +90,13 @@ test('Postgres occurrence identity becomes the canonical App link', () => {
     }),
     'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
   );
+});
+
+test('rehearsal App links accept source aliases and reject non-web URLs', () => {
+  const appLink = 'https://app.downbeat.agency/events/event-id?section=rehearsals';
+  assert.equal(calendarRehearsalAppUrl({ app_link: appLink }), appLink);
+  assert.equal(calendarRehearsalAppUrl({ appUrl: appLink }), appLink);
+  assert.equal(calendarRehearsalAppUrl({ app_link: 'javascript:alert(1)' }), '');
 });
 
 test('main event titles include the band consistently', () => {
@@ -248,6 +258,73 @@ test('timeline links are removed from calendar descriptions', () => {
   );
 });
 
+test('PCO links are removed from personnel calendar descriptions', () => {
+  assert.equal(
+    calendarDescriptionWithoutPcoLink([
+      'Full run',
+      '',
+      'LINKS',
+      '',
+      'PCO Link: https://services.planningcenteronline.com/plans/123',
+    ].join('\n')),
+    'Full run'
+  );
+  assert.equal(
+    calendarDescriptionWithoutPcoLink('Flight details\n\n\nKeep original spacing'),
+    'Flight details\n\n\nKeep original spacing'
+  );
+});
+
+test('personnel main events omit PCO and publish the App link as the calendar URL', () => {
+  const event = calendarPersonnelEventWithAppLink({
+    type: 'main_event',
+    url: 'https://services.planningcenteronline.com/plans/84911226',
+    description: [
+      'Dress Code:',
+      'Black formal',
+      '',
+      'Event Link: https://music.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+      'PCO Plan: https://services.planningcenteronline.com/plans/84911226',
+    ].join('\n'),
+  });
+
+  assert.equal(
+    event.url,
+    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+  );
+  assert.doesNotMatch(event.description, /PCO|planningcenter/iu);
+  assert.match(
+    event.description,
+    /App Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea/u
+  );
+});
+
+test('personnel rehearsals prefer the App link and never retain a PCO URL', () => {
+  const appLink = 'https://app.downbeat.agency/events/event-id?section=rehearsals&rehearsalId=rehearsal-id';
+  const rehearsal = calendarPersonnelEventWithAppLink({
+    type: 'rehearsal',
+    appUrl: appLink,
+    url: 'https://services.planningcenteronline.com/plans/123',
+    description: 'Full run\n\nLINKS\n\nPCO Link: https://services.planningcenteronline.com/plans/123',
+  });
+  assert.equal(rehearsal.url, appLink);
+  assert.equal(
+    rehearsal.description,
+    `Full run\n\nLINKS\n\nApp Link: ${appLink}`
+  );
+  assert.doesNotMatch(rehearsal.description, /PCO|planningcenter/iu);
+  assert.equal(Object.hasOwn(rehearsal, 'appUrl'), false);
+
+  assert.equal(
+    calendarPersonnelEventWithAppLink({
+      type: 'rehearsal',
+      url: 'https://services.planningcenteronline.com/plans/456',
+      description: 'Rehearsal',
+    }).url,
+    ''
+  );
+});
+
 test('frozen main events lose timeline links while retaining Event Hub links', () => {
   const event = calendarEventWithEventHubLink({
     type: 'main_event',
@@ -369,10 +446,18 @@ test('raw Postgres update metadata is also stripped from decorated events', () =
   assert.equal(Object.hasOwn(event, 'contract_updated_precision'), false);
 });
 
-test('main-event descriptions use Event Link instead of Notion Link', () => {
+test('personnel calendars publish App URLs while Admin retains Event Hub URLs', () => {
   const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  const personalBuilder = source.slice(
+    source.indexOf('function buildCalendarEventsFromCalendarData'),
+    source.indexOf('async function regenerateCalendarForPersonFromNotion')
+  );
   assert.match(source, /calendarEventHubUrl\(event\)/u);
   assert.match(source, /const title = calendarMainEventTitle\(event\);/u);
+  assert.match(
+    source,
+    /const publishedCalendarEvents = allCalendarEvents\.map\(calendarPersonnelEventWithAppLink\);/u
+  );
   assert.match(source, /allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
   assert.match(
     source,
@@ -385,6 +470,11 @@ test('main-event descriptions use Event Link instead of Notion Link', () => {
   assert.match(source, /timelineUpdatedAt: source\?\.timeline_updated_at \|\| undefined/u);
   assert.match(source, /eventDetailsUpdatedAt: source\?\.event_details_updated_at \|\| undefined/u);
   assert.match(source, /contractUpdatedAt: source\?\.contract_updated_at \|\| undefined/u);
+  assert.match(personalBuilder, /url: calendarRehearsalAppUrl\(rehearsal\)/u);
+  assert.doesNotMatch(
+    personalBuilder,
+    /url: rehearsal\.rehearsal_notion_url \|\| rehearsal\.rehearsal_pco/u
+  );
   assert.match(
     source,
     /url: rehearsal\.rehearsal_notion_url \|\| rehearsal\.rehearsal_pco \|\| rehearsal\.rehearsal_link \|\| ''/u

@@ -183,9 +183,10 @@ Each data source can generate multiple calendar events (main events + flights + 
 ### 3. **Rehearsal Events**
 **Triggers:** Top-level `Rehearsals` field
 
-**Available Fields (6 total):**
+**Available Fields (7 total):**
 - `rehearsal_time` - ISO 8601 date range (required)
-- `rehearsal_pco` - Planning Center Online link
+- `app_link` - Downbeat rehearsal app link used by personnel calendars
+- `rehearsal_pco` - Legacy Planning Center Online link (not published by personnel calendars)
 - `rehearsal_band` - Band personnel list
 - `rehearsal_location` - Location name
 - `rehearsal_address` - Full address
@@ -201,7 +202,7 @@ Each data source can generate multiple calendar events (main events + flights + 
   end: rehearsal.rehearsal_time,            // Same as start (date range)
   description: "Rehearsal for 10/11/25 Midnight Hour - LA Wedding\n\nBand Personnel:\nBass - Eric  🟢\nDrums - Diego  🟢\nGuitar - Silas  🟢\nKeys - Kevin  🟢\nVox 1 - Revel  🟢\nVox 2 - Dani  🟢\nVox 3 - Joe  🟢\nVox 4 - Ayo  🟢",
   location: rehearsal.rehearsal_address || rehearsal.rehearsal_location || "TBD",  // "123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠"
-  url: rehearsal.rehearsal_pco             // "https://services.planningcenteronline.com/plans/81859026"
+  url: rehearsal.app_link                  // "https://app.downbeat.agency/events/{eventId}?section=rehearsals&rehearsalId={rehearsalId}"
 }
 ```
 
@@ -327,7 +328,7 @@ The database uses separate formula fields for each event type. Each field contai
   
   "Flights": "[{\"confirmation\":\"HWSV8Y\",\"flight_url\":\"https://www.notion.so/26939e4a65a980f6839bd853232eaa52\",\"airport_arrival\":\"Domestic flights (within the U.S.) → Arrive 2 hours before departure. International flights → Arrive 3 hours before departure.\",\"flight_status\":\"Booked\",\"flight_type\":\"Round Trip\",\"departure_name\":\"Flight to JFK (Diego)\",\"departure_airline\":\"Delta\",\"departure_flightnumber\":\"DL 915\",\"departure_time\":\"2025-10-10T06:55:00+00:00/2025-10-10T15:30:00+00:00\",\"departure_airport\":\"1 World Way, Los Angeles, CA 90045\",\"departure_airport_name\":\"Los Angeles International Airport\",\"return_name\":\"Flight Return to LAX (Diego)\",\"return_airline\":\"Delta\",\"return_airport\":\"JFK Access Rd, Jamaica, NY 11430\",\"return_airport_name\":\"John F. Kennedy International Airport\",\"return_flightnumber\":\"DL 773\",\"return_time\":\"2025-10-12T16:55:00+00:00/2025-10-12T20:02:00+00:00\"}]",
   
-  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"description\":\"Rehearsal for 9/14/25 Gold Standard - Santa Monica Wedding\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
+  "Rehearsals": "[{\"rehearsal_time\":\"2025-09-11T17:00:00+00:00/2025-09-11T19:00:00+00:00\",\"app_link\":\"https://app.downbeat.agency/events/13839e4a-65a9-804c-8d66-d0574a4acbf6?section=rehearsals&rehearsalId=2a239e4a-65a9-8019-a96f-e2a6d5f1d456\",\"rehearsal_pco\":\"https://services.planningcenteronline.com/plans/81859026\",\"rehearsal_band\":\"Bass - Eric  🟢\\nDrums - Diego  🟢\\nGuitar - Silas  🟢\\nKeys - Kevin  🟢\\nVox 1 - Revel  🟢\\nVox 2 - Dani  🟢\\nVox 3 - Joe  🟢\\nVox 4 - Ayo  🟢\",\"description\":\"Rehearsal for 9/14/25 Gold Standard - Santa Monica Wedding\",\"rehearsal_location\":\"Downbeat HQ\",\"rehearsal_address\":\"123 W Bellevue Dr Ste 4 Pasadena, CA 91105⁠\"}]",
   
   "Hotels": "[{\"title\":\"Hotel -  (Band)\",\"hotel_url\":\"https://www.notion.so/22a39e4a65a980418fc2dc12edd96217\",\"hotel_name\":\"Hilton Garden Inn Sonoma County Airport\",\"hotel_phone\":\"(707) 545-0444\",\"hotel_address\":\"417 Aviation Blvd, Santa Rosa, CA 95403\",\"confirmation\":\"3291242890\",\"names_on_reservation\":\"Jackie,Eric,Joakim,Dave,Payson,Byron,Diego,Gabe,Michael\",\"booked_under\":\"Diego\",\"dates_booked\":\"2025-09-20T23:00:00+00:00/2025-09-21T18:00:00+00:00\"}]",
   
@@ -381,7 +382,7 @@ The database uses separate formula fields for each event type. Each field contai
 - **JSON Format**: `GET /calendar/:personId` - Structured data with event breakdown
 - **Event Titles**: Include emojis (✈️ for flights, 🎤 for rehearsals, 🏨 for hotels, 🚗/🚙 for transport meet up vs pickup/dropoff, 📅 for team calendar) for easy identification. Main Event titles include the band in parentheses on both personnel and Admin calendars. Rehearsal titles use `Rehearsal (Band)` without repeating the linked Event name.
 - **Descriptions**: Main Events normalize escaped line breaks, omit empty fields, group structured Postgres details, notes, contacts, and contracted services into readable sections, and show independent `Timeline Updated`, `Event Details Updated`, and `Contract Updated` values when their source data exists. Travel descriptions include the relevant booking details and Event Hub destination.
-- **Links**: Postgres personal and shared Travel URLs open the matching Event Hub tab. Main Events use the Event Hub as the built-in calendar URL and show separate Event, App, and PCO links when available. Legacy Notion-backed travel payloads keep their original Notion URL and label.
+- **Links**: Personnel Main Events and Rehearsals use the Downbeat App link as the built-in calendar URL and omit PCO links. Main Event descriptions may still show separate Event Hub and App links. Postgres personal and shared Travel URLs open the matching Event Hub tab, while legacy Notion-backed travel payloads keep their original Notion URL and label. Admin calendar links retain their separate policy.
 - **Date Ranges**: All times use ISO 8601 format with date ranges (e.g., "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00")
 
 ## Optimization Notes

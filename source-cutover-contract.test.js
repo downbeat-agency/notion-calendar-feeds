@@ -30,7 +30,7 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /buildCalendarEventsFromCalendarData\(calendarData\)/u);
   assert.match(source, /id: event\.uid \|\| undefined/u);
   assert.match(source, /dataSource: 'postgres'/u);
-  assert.match(source, /const publishedCalendarEvents = allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
+  assert.match(source, /const publishedCalendarEvents = allCalendarEvents\.map\(calendarPersonnelEventWithAppLink\)/u);
   assert.match(source, /events: publishedCalendarEvents\.map\(publicCalendarEvent\)/u);
   assert.match(source, /delete publicEvent\.comparisonIdentity/u);
 });

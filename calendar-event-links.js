@@ -111,6 +111,15 @@ export function calendarAppUrl(event = {}, options = {}) {
   return `${baseUrl}/events/${encodeURIComponent(selector)}`;
 }
 
+export function calendarRehearsalAppUrl(rehearsal = {}) {
+  return validHttpUrl(
+    rehearsal.appUrl
+      || rehearsal.app_url
+      || rehearsal.appLink
+      || rehearsal.app_link
+  );
+}
+
 export function calendarTeamEventUrl(event = {}) {
   return validHttpUrl(
     event.schedule_url
@@ -138,6 +147,23 @@ export function calendarDescriptionWithoutTimelineLink(value = '') {
       '$1'
     )
     .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+}
+
+export function calendarDescriptionWithoutPcoLink(value = '') {
+  const original = String(value ?? '');
+  const normalized = normalizedCalendarCopy(original);
+  if (!/(^|\n)[\t ]*PCO(?:[\t ]+(?:Link|Plan))?:[\t ]*https?:\/\/[^\s\r\n]+[\t ]*(?=\r?\n|$)/iu.test(normalized)) {
+    return original;
+  }
+  return normalized
+    .replace(
+      /(^|\n)[\t ]*PCO(?:[\t ]+(?:Link|Plan))?:[\t ]*https?:\/\/[^\s\r\n]+[\t ]*(?=\r?\n|$)/giu,
+      '$1'
+    )
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim()
+    .replace(/(^|\n)[\t ]*LINKS[\t ]*$/giu, '$1')
     .trim();
 }
 
@@ -406,53 +432,63 @@ export function calendarContractUpdatedLabel(event = {}, legacyFallback = '') {
   );
 }
 
-export function calendarEventWithEventHubLink(event = {}) {
-  const eventType = clean(event.type, 100);
-  if (eventType === 'rehearsal') {
-    const normalizedDescription = normalizedCalendarCopy(event.description);
-    let embeddedRehearsalUrl = '';
-    let embeddedAppUrl = '';
-    const bodyLines = [];
-    normalizedDescription.split('\n').forEach((rawLine) => {
-      const line = rawLine.trim();
-      const rehearsalUrl = labeledUrl(line, ['Rehearsal Link']);
-      if (rehearsalUrl) {
-        embeddedRehearsalUrl ||= rehearsalUrl;
-        return;
-      }
-      const appUrl = labeledUrl(line, ['App Link']);
-      if (appUrl) {
-        embeddedAppUrl ||= appUrl;
-        return;
-      }
-      if (/^LINKS:?$/iu.test(line)) return;
-      bodyLines.push(rawLine);
-    });
-    const rehearsalUrl = validHttpUrl(
-      event.rehearsalLink || event.rehearsal_link || embeddedRehearsalUrl
-    );
-    const appUrl = calendarAppUrl(event) || validHttpUrl(embeddedAppUrl);
-    const linkLines = [
-      rehearsalUrl ? `Rehearsal Link: ${rehearsalUrl}` : '',
-      appUrl ? `App Link: ${appUrl}` : '',
-    ].filter(Boolean);
-    const decorated = {
-      ...event,
-      description: [
-        normalizedCalendarCopy(bodyLines.join('\n')),
-        linkLines.length ? `LINKS\n\n${linkLines.join('\n\n')}` : '',
-      ].filter(Boolean).join('\n\n'),
-    };
-    delete decorated.appUrl;
-    delete decorated.app_url;
-    delete decorated.rehearsalLink;
-    delete decorated.rehearsal_link;
-    return decorated;
-  }
-  if (eventType !== 'main_event' || typeof event.description !== 'string') {
+function calendarRehearsalWithLinks(event = {}, options = {}) {
+  const includePco = options.includePco !== false;
+  const useAppUrl = options.useAppUrl === true;
+  const sourceDescription = includePco
+    ? event.description
+    : calendarDescriptionWithoutPcoLink(event.description);
+  const normalizedDescription = normalizedCalendarCopy(sourceDescription);
+  let embeddedRehearsalUrl = '';
+  let embeddedAppUrl = '';
+  const bodyLines = [];
+  normalizedDescription.split('\n').forEach((rawLine) => {
+    const line = rawLine.trim();
+    const rehearsalUrl = labeledUrl(line, ['Rehearsal Link']);
+    if (rehearsalUrl) {
+      embeddedRehearsalUrl ||= rehearsalUrl;
+      return;
+    }
+    const appUrl = labeledUrl(line, ['App Link']);
+    if (appUrl) {
+      embeddedAppUrl ||= appUrl;
+      return;
+    }
+    if (/^LINKS:?$/iu.test(line)) return;
+    bodyLines.push(rawLine);
+  });
+  const rehearsalUrl = validHttpUrl(
+    event.rehearsalLink || event.rehearsal_link || embeddedRehearsalUrl
+  );
+  const appUrl = calendarRehearsalAppUrl(event) || validHttpUrl(embeddedAppUrl);
+  const linkLines = [
+    rehearsalUrl ? `Rehearsal Link: ${rehearsalUrl}` : '',
+    appUrl ? `App Link: ${appUrl}` : '',
+  ].filter(Boolean);
+  const decorated = {
+    ...event,
+    description: [
+      normalizedCalendarCopy(bodyLines.join('\n')),
+      linkLines.length ? `LINKS\n\n${linkLines.join('\n\n')}` : '',
+    ].filter(Boolean).join('\n\n'),
+    ...(useAppUrl ? { url: appUrl || '' } : {}),
+  };
+  delete decorated.appUrl;
+  delete decorated.app_url;
+  delete decorated.appLink;
+  delete decorated.app_link;
+  delete decorated.rehearsalLink;
+  delete decorated.rehearsal_link;
+  return decorated;
+}
+
+function calendarMainEventWithLinks(event = {}, options = {}) {
+  if (clean(event.type, 100) !== 'main_event') {
     return event;
   }
-  const normalizedDescription = calendarDescriptionWithoutTimelineLink(event.description);
+  const includePco = options.includePco !== false;
+  const useAppUrl = options.useAppUrl === true;
+  const normalizedDescription = calendarDescriptionWithoutTimelineLink(event.description || '');
   const notionLink = normalizedDescription.match(/(^|\n)Notion Link:\s*(https?:\/\/[^\s\r\n]+)/u);
   const cleaned = cleanMainEventDescription(normalizedDescription);
   const eventHubUrl = calendarEventHubUrl(event)
@@ -461,7 +497,9 @@ export function calendarEventWithEventHubLink(event = {}) {
     || (notionLink ? calendarEventHubUrl({ notion_url: notionLink[2] }) : '');
   const appUrl = calendarAppUrl(event)
     || (notionLink ? calendarAppUrl({ notion_url: notionLink[2] }) : '')
-    || validHttpUrl(cleaned.embeddedAppUrl);
+    || eventHubUrlFromEmbeddedUrl(cleaned.embeddedAppUrl, { baseUrl: DEFAULT_APP_BASE_URL })
+    || eventHubUrlFromEmbeddedUrl(cleaned.embeddedEventUrl, { baseUrl: DEFAULT_APP_BASE_URL })
+    || eventHubUrlFromEmbeddedUrl(event.url, { baseUrl: DEFAULT_APP_BASE_URL });
   const timelineUpdated = calendarTimelineUpdatedLabel(
     event,
     cleaned.embeddedTimelineUpdated
@@ -477,7 +515,7 @@ export function calendarEventWithEventHubLink(event = {}) {
   const linkLines = [
     eventHubUrl ? `Event Link: ${eventHubUrl}` : '',
     appUrl ? `App Link: ${appUrl}` : '',
-    cleaned.pcoUrl ? `PCO Plan: ${cleaned.pcoUrl}` : '',
+    includePco && cleaned.pcoUrl ? `PCO Plan: ${cleaned.pcoUrl}` : '',
   ].filter(Boolean);
   const updateLines = [
     timelineUpdated ? `Timeline Updated: ${timelineUpdated}` : '',
@@ -492,7 +530,9 @@ export function calendarEventWithEventHubLink(event = {}) {
   const decorated = {
     ...event,
     description,
-    ...(eventHubUrl ? { url: eventHubUrl } : {}),
+    ...(useAppUrl
+      ? { url: appUrl || '' }
+      : (eventHubUrl ? { url: eventHubUrl } : {})),
   };
   delete decorated.appUrl;
   delete decorated.app_url;
@@ -508,6 +548,57 @@ export function calendarEventWithEventHubLink(event = {}) {
   delete decorated.contract_updated_at;
   delete decorated.contractUpdatedPrecision;
   delete decorated.contract_updated_precision;
+  return decorated;
+}
+
+export function calendarEventWithEventHubLink(event = {}) {
+  if (clean(event.type, 100) === 'rehearsal') {
+    return calendarRehearsalWithLinks(event);
+  }
+  return calendarMainEventWithLinks(event);
+}
+
+export function calendarPersonnelEventWithAppLink(event = {}) {
+  const eventType = clean(event.type, 100);
+  if (eventType === 'main_event') {
+    return calendarMainEventWithLinks(event, {
+      includePco: false,
+      useAppUrl: true,
+    });
+  }
+  if (eventType === 'rehearsal') {
+    return calendarRehearsalWithLinks(event, {
+      includePco: false,
+      useAppUrl: true,
+    });
+  }
+
+  const appUrl = calendarRehearsalAppUrl(event);
+  const currentUrl = validHttpUrl(event.url);
+  const currentHost = (() => {
+    try {
+      return new URL(currentUrl).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const currentUrlIsPco = currentHost === 'planningcenteronline.com'
+    || currentHost.endsWith('.planningcenteronline.com')
+    || currentHost === 'planningcenter.com'
+    || currentHost.endsWith('.planningcenter.com');
+  const decorated = {
+    ...event,
+    description: typeof event.description === 'string'
+      ? calendarDescriptionWithoutPcoLink(event.description)
+      : event.description,
+    ...(appUrl
+      ? { url: appUrl }
+      : (currentUrlIsPco ? { url: '' } : {})),
+  };
+  delete decorated.appUrl;
+  delete decorated.app_url;
+  delete decorated.appLink;
+  delete decorated.app_link;
   return decorated;
 }
 
