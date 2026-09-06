@@ -18,6 +18,10 @@ import {
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 
+const POSTGRES_EVENT_ID = 'eff09abf-522b-4fcd-b3f6-446a3f6eccf6';
+const EVENT_NOTION_PAGE_ID = '23939e4a-65a9-8032-be86-df28748fcd61';
+const EVENT_APP_URL = `https://app.downbeat.agency/event/${EVENT_NOTION_PAGE_ID}`;
+
 test('Event Hub travel links receive booking-specific labels', () => {
   assert.equal(
     calendarTravelLinkLabel(
@@ -77,18 +81,28 @@ test('Postgres occurrence identity becomes an Event Hub deep link', () => {
   );
 });
 
-test('Postgres occurrence identity becomes the canonical App link', () => {
+test('App links require the distinct Notion identity and singular app route', () => {
   assert.equal(
     calendarAppUrl({
-      occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+      occurrence_key: `event:${POSTGRES_EVENT_ID}`,
     }),
-    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+    ''
   );
   assert.equal(
     calendarAppUrl({
-      occurrenceKey: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+      notion_url: `https://www.notion.so/${EVENT_NOTION_PAGE_ID.replaceAll('-', '')}`,
     }),
-    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+    EVENT_APP_URL
+  );
+  assert.equal(
+    calendarAppUrl({ app_url: EVENT_APP_URL }),
+    EVENT_APP_URL
+  );
+  assert.equal(
+    calendarAppUrl({
+      app_url: `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}`,
+    }),
+    ''
   );
 });
 
@@ -234,7 +248,7 @@ test('frozen legacy main-event descriptions are upgraded without changing other 
       'LINKS',
       '',
       'Event Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
-      'App Link: https://app.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+      'App Link: https://app.downbeat.agency/event/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
     ].join('\n')
   );
   assert.equal(
@@ -278,25 +292,34 @@ test('PCO links are removed from personnel calendar descriptions', () => {
 test('personnel main events omit PCO and publish the App link as the calendar URL', () => {
   const event = calendarPersonnelEventWithAppLink({
     type: 'main_event',
+    occurrenceKey: `event:${POSTGRES_EVENT_ID}`,
+    appUrl: EVENT_APP_URL,
     url: 'https://services.planningcenteronline.com/plans/84911226',
     description: [
       'Dress Code:',
       'Black formal',
       '',
-      'Event Link: https://music.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+      `Event Link: https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}`,
       'PCO Plan: https://services.planningcenteronline.com/plans/84911226',
     ].join('\n'),
   });
 
-  assert.equal(
-    event.url,
-    'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
-  );
+  assert.equal(event.url, EVENT_APP_URL);
   assert.doesNotMatch(event.description, /PCO|planningcenter/iu);
-  assert.match(
-    event.description,
-    /App Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea/u
-  );
+  assert.match(event.description, new RegExp(`Event Link: https://music\\.downbeat\\.agency/events/${POSTGRES_EVENT_ID}`, 'u'));
+  assert.match(event.description, new RegExp(`App Link: ${EVENT_APP_URL}`, 'u'));
+});
+
+test('personnel main events never turn an Event Link into an App Link', () => {
+  const event = calendarPersonnelEventWithAppLink({
+    type: 'main_event',
+    occurrenceKey: `event:${POSTGRES_EVENT_ID}`,
+    url: `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}`,
+    description: `Event Link: https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}`,
+  });
+
+  assert.equal(event.url, '');
+  assert.doesNotMatch(event.description, /App Link:/u);
 });
 
 test('personnel rehearsals prefer the App link and never retain a PCO URL', () => {
@@ -336,7 +359,7 @@ test('frozen main events lose timeline links while retaining Event Hub links', (
       'LINKS',
       '',
       'Event Link: https://music.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
-      'App Link: https://app.downbeat.agency/events/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
+      'App Link: https://app.downbeat.agency/event/2b639e4a-65a9-800a-aa68-2f4e2eed5215',
     ].join('\n')
   );
 });
@@ -344,7 +367,7 @@ test('frozen main events lose timeline links while retaining Event Hub links', (
 test('main-event descriptions repair escaped copy and remove empty or obsolete metadata', () => {
   const event = calendarEventWithEventHubLink({
     type: 'main_event',
-    occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    occurrence_key: `event:${POSTGRES_EVENT_ID}`,
     description: [
       'Parking and Load In:',
       '\\n',
@@ -358,7 +381,7 @@ test('main-event descriptions repair escaped copy and remove empty or obsolete m
       'Contracted:',
       'Ceremony: Ceremony Sound + Violin + Keys 3:30pm-4:30pm (1hrs)\\n',
       'PCO Link: https://services.planningcenteronline.com/plans/84911226\\n',
-      'App Link: https://app.downbeat.agency/event/02e26e6b-efb4-419c-9486-6cd8265c40ea\\n',
+      `App Link: ${EVENT_APP_URL}\\n`,
       'Notes Updated: April 7, 2026 5:57 PM',
     ].join(''),
   });
@@ -367,7 +390,7 @@ test('main-event descriptions repair escaped copy and remove empty or obsolete m
   assert.doesNotMatch(event.description, /Parking and Load In|Green Room|Notes Updated/u);
   assert.match(
     event.description,
-    /App Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea/u
+    new RegExp(`App Link: ${EVENT_APP_URL}`, 'u')
   );
   assert.match(event.description, /Dress Code\nBlack formal/u);
   assert.match(event.description, /Event Notes\n• Bridgerton vibes for cocktail hour/u);
@@ -378,11 +401,11 @@ test('main-event descriptions repair escaped copy and remove empty or obsolete m
   );
   assert.match(
     event.description,
-    /LINKS\n\nEvent Link: https:\/\/music\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea\nApp Link: https:\/\/app\.downbeat\.agency\/events\/02e26e6b-efb4-419c-9486-6cd8265c40ea\nPCO Plan: https:\/\/services\.planningcenteronline\.com\/plans\/84911226\n\nEvent Details Updated: April 7, 2026 5:57 PM$/u
+    new RegExp(`LINKS\\n\\nEvent Link: https://music\\.downbeat\\.agency/events/${POSTGRES_EVENT_ID}\\nApp Link: ${EVENT_APP_URL}\\nPCO Plan: https://services\\.planningcenteronline\\.com/plans/84911226\\n\\nEvent Details Updated: April 7, 2026 5:57 PM$`, 'u')
   );
   assert.equal(
     event.url,
-    'https://music.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea'
+    `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}`
   );
 });
 
@@ -390,7 +413,7 @@ test('Postgres metadata overrides legacy update copy without leaking projection 
   const event = calendarEventWithEventHubLink({
     type: 'main_event',
     occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
-    appUrl: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    appUrl: EVENT_APP_URL,
     timelineUpdatedAt: '2026-08-06T23:28:00.000Z',
     timelineUpdatedPrecision: 'timestamp',
     eventDetailsUpdatedAt: '2026-08-05T18:00:00.000Z',
@@ -428,7 +451,7 @@ test('raw Postgres update metadata is also stripped from decorated events', () =
   const event = calendarEventWithEventHubLink({
     type: 'main_event',
     occurrence_key: 'event:02e26e6b-efb4-419c-9486-6cd8265c40ea',
-    app_url: 'https://app.downbeat.agency/events/02e26e6b-efb4-419c-9486-6cd8265c40ea',
+    app_url: EVENT_APP_URL,
     timeline_updated_at: '2026-08-06T23:28:00.000Z',
     timeline_updated_precision: 'timestamp',
     event_details_updated_at: '2026-08-05T18:00:00.000Z',

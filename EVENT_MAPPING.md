@@ -34,8 +34,8 @@ Each data source can generate multiple calendar events (main events + flights + 
 **Available Fields:**
 - `event_name` - Event title (required)
 - `event_date` - ISO 8601 date range (required)
-- `notion_url` - Link back to Notion page
-- `app_url` - Canonical authenticated Downbeat App event link
+- `notion_url` - Legacy Event Notion URL, used only to recover its page identity during rollback
+- `app_url` - Canonical Downbeat App link (`https://app.downbeat.agency/event/{notionPageId}`)
 - `timeline_updated_at` / `timeline_updated_precision` - Latest Timeline change
 - `event_details_updated_at` / `event_details_updated_precision` - Latest Event Hub details or Event Notes change
 - `contract_updated_at` / `contract_updated_precision` - Latest contract-scope change
@@ -57,16 +57,16 @@ Each data source can generate multiple calendar events (main events + flights + 
   title: event.event_name,              // " Wedding"
   start: event.event_date,              // "2025-09-13T22:00:00+00:00/2025-09-14T06:00:00+00:00"
   end: event.event_date,                // Same as start (date range)
-  description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + notionUrlInfo + event.general_info,
+  description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventLinkInfo + event.general_info,
   // Description includes:
   // - Position, Assignments, Pay (if present)
   // - Call Time (if present)
   // - Gear Checklist (if present)
   // - Event Personnel (if present) - formatted list of all roles
-  // - Notion Link (if present)
+  // - Event Link (`https://music.downbeat.agency/events/{postgresEventId}`)
   // - General Info (load-in, dress code, etc.)
   location: event.venue_address || event.venue,  // "1910 Ocean Way, Santa Monica, CA 90405"
-  url: event.notion_url,                // "https://www.notion.so/13839e4a65a9804c8d66d0574a4acbf6"
+  url: event.app_url,                   // "https://app.downbeat.agency/event/13839e4a-65a9-804c-8d66-d0574a4acbf6"
   band: event.band,                     // "Gold Standard"
   pay_total: event.pay_total,           // 800
   position: event.position,             // "Drums"

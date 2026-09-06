@@ -51,6 +51,19 @@ function eventSelectorFromNotionUrl(value) {
   return normalizedNotionPageId(matches.at(-1));
 }
 
+function eventSelectorFromAppUrl(value) {
+  const candidate = clean(value);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    const match = parsed.pathname.match(/^\/event\/([0-9a-f-]{32,36})(?:\/|$)/iu);
+    return match ? normalizedNotionPageId(match[1]) : '';
+  } catch {
+    return '';
+  }
+}
+
 function normalizedEventHubBaseUrl(value) {
   const candidate = clean(value, 500) || DEFAULT_EVENT_HUB_BASE_URL;
   try {
@@ -99,16 +112,11 @@ function validHttpUrl(value) {
 }
 
 export function calendarAppUrl(event = {}, options = {}) {
-  const explicit = validHttpUrl(event.appUrl || event.app_url);
-  if (explicit) return explicit;
-  const selector = eventSelectorFromOccurrenceKey(event.occurrence_key || event.occurrenceKey)
-    || eventSelectorFromComparisonIdentity(
-      event._comparison_identity || event.comparisonIdentity
-    )
-    || eventSelectorFromNotionUrl(event.notion_url);
+  const selector = eventSelectorFromAppUrl(event.appUrl || event.app_url)
+    || eventSelectorFromNotionUrl(event.notion_url || event.notionUrl);
   if (!selector) return '';
   const baseUrl = normalizedEventHubBaseUrl(options.baseUrl || DEFAULT_APP_BASE_URL);
-  return `${baseUrl}/events/${encodeURIComponent(selector)}`;
+  return `${baseUrl}/event/${encodeURIComponent(selector)}`;
 }
 
 export function calendarRehearsalAppUrl(rehearsal = {}) {
@@ -493,13 +501,10 @@ function calendarMainEventWithLinks(event = {}, options = {}) {
   const cleaned = cleanMainEventDescription(normalizedDescription);
   const eventHubUrl = calendarEventHubUrl(event)
     || eventHubUrlFromEmbeddedUrl(cleaned.embeddedEventUrl)
-    || eventHubUrlFromEmbeddedUrl(cleaned.embeddedAppUrl)
     || (notionLink ? calendarEventHubUrl({ notion_url: notionLink[2] }) : '');
   const appUrl = calendarAppUrl(event)
     || (notionLink ? calendarAppUrl({ notion_url: notionLink[2] }) : '')
-    || eventHubUrlFromEmbeddedUrl(cleaned.embeddedAppUrl, { baseUrl: DEFAULT_APP_BASE_URL })
-    || eventHubUrlFromEmbeddedUrl(cleaned.embeddedEventUrl, { baseUrl: DEFAULT_APP_BASE_URL })
-    || eventHubUrlFromEmbeddedUrl(event.url, { baseUrl: DEFAULT_APP_BASE_URL });
+    || calendarAppUrl({ app_url: cleaned.embeddedAppUrl });
   const timelineUpdated = calendarTimelineUpdatedLabel(
     event,
     cleaned.embeddedTimelineUpdated

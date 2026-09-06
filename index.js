@@ -4022,6 +4022,13 @@ function calendarOccurrence(source = {}, uidProperty = 'uid', occurrenceKeyPrope
   };
 }
 
+function calendarMainEventOccurrence(source = {}) {
+  return {
+    ...calendarOccurrence(source),
+    appUrl: calendarAppUrl(source) || undefined,
+  };
+}
+
 function publicCalendarEvent(event = {}) {
   const publicEvent = { ...event };
   delete publicEvent.comparisonIdentity;
@@ -4087,7 +4094,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
         const eventHubUrl = calendarEventHubUrl(event);
         const eventUrlInfo = eventHubUrl ? `Event Link: ${eventHubUrl}\n\n` : '';
-        allCalendarEvents.push({ ...calendarOccurrence(event), type: 'main_event', title: calendarMainEventTitle(event), start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarMainEventOccurrence(event), type: 'main_event', title: calendarMainEventTitle(event), start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
     }
     (event.flights || []).forEach(flight => {
@@ -5293,7 +5300,7 @@ function processAdminEvents(eventsArray) {
         }
 
         allCalendarEvents.push({
-          ...calendarOccurrence(event),
+          ...calendarMainEventOccurrence(event),
           start: eventTimes.start,
           end: eventTimes.end,
           title: title,
