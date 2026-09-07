@@ -26,6 +26,7 @@ import {
   assertCalendarEventSnapshotExpectedIds,
 } from './calendar-event-snapshot.js';
 import {
+  calendarAppUrl,
   calendarDescriptionWithoutTimelineLink,
   calendarEventHubUrl,
   calendarEventWithEventHubLink,

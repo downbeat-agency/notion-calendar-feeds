@@ -35,6 +35,14 @@ test('Postgres source mode reuses the legacy renderer with stable event IDs', ()
   assert.match(source, /delete publicEvent\.comparisonIdentity/u);
 });
 
+test('the main-event renderer imports its App-link resolver', () => {
+  const eventLinksImport = source.match(
+    /import\s*\{([^}]*)\}\s*from '\.\/calendar-event-links\.js';/u
+  )?.[1] || '';
+  assert.match(eventLinksImport, /(?:^|,)\s*calendarAppUrl\s*(?:,|$)/u);
+  assert.match(source, /appUrl: calendarAppUrl\(source\) \|\| undefined/u);
+});
+
 test('Postgres mode reads normal projection history without a Redis freeze', () => {
   assert.doesNotMatch(source, /calendar:legacy-history|FrozenPersonalCalendarHistory|LEGACY_CALENDAR_HISTORY/u);
   assert.doesNotMatch(source, /CALENDAR_FEED_HISTORY_CUTOVER_DATE/u);
