@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-const CALENDAR_RENDERER_SCHEMA_VERSION = 'calendar-renderer-v2';
+const CALENDAR_RENDERER_SCHEMA_VERSION = 'calendar-renderer-v3';
 
 function clean(value, limit = 500) {
   return String(value ?? '').trim().slice(0, limit);

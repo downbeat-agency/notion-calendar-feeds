@@ -43,14 +43,15 @@ export function serializeCalendarWithTimePolicy(calendar, options = {}) {
   return mode === 'floating' ? icsData : addLegacyLosAngelesMetadata(icsData);
 }
 
-export function serializeGoogleCalendarWithTimePolicy(calendar, options = {}) {
+export function serializeGoogleCalendarWithTimePolicy(calendar) {
   if (!calendar) return '';
-  const mode = options.mode || configuredCalendarTimeMode(options.env);
-  if (mode === 'floating') return calendar.toString();
+  // Google subscriptions interpret floating values in the subscription zone,
+  // which can default to UTC. Anchor unzoned clocks to our Pacific calendar
+  // convention; preserve already-zoned instants and date-only events.
 
   let icsData = addLegacyLosAngelesMetadata(calendar.toString())
-    .replace(/\r?\nDTSTART:(\d{8}T\d{6})/gu, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
-    .replace(/\r?\nDTEND:(\d{8}T\d{6})/gu, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
+    .replace(/\r?\nDTSTART:(\d{8}T\d{6})(?=\r?\n|$)/gu, `\r\nDTSTART;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`)
+    .replace(/\r?\nDTEND:(\d{8}T\d{6})(?=\r?\n|$)/gu, `\r\nDTEND;TZID=${GOOGLE_CALENDAR_TIMEZONE}:$1`);
   if (!icsData.includes('BEGIN:VTIMEZONE')) {
     icsData = icsData.replace(
       /(X-WR-TIMEZONE:[^\r\n]+\r?\n)/u,

@@ -41,7 +41,7 @@ CALENDAR_FEED_API_TIMEOUT_MS=25000 # optional
 
 Postgres mode publishes January 1 of the current Los Angeles business year through all future records. There is no rolling future cutoff and no frozen Redis history. Every request reads a cached artifact only when its Postgres source revision and deployment-aware renderer version still match; otherwise it rebuilds from Postgres. Concurrent requests for the same projection share one in-flight build.
 
-Calendar times default to floating wall-clock values, so a 3:00 PM event remains 3:00 PM in every subscriber timezone. The compatibility rollback is explicit:
+Standard iCal feeds default to floating wall-clock values. Google subscriptions always anchor unzoned times to `America/Los_Angeles`, with daylight saving rules, because Google can interpret floating subscriptions as UTC. Already-zoned timestamps and all-day dates are preserved. These modes control standard iCal output:
 
 ```text
 CALENDAR_TIME_MODE=floating  # default
