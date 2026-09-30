@@ -34,6 +34,7 @@ import {
   calendarPersonnelEventWithAppLink,
   calendarRehearsalAppUrl,
   calendarRehearsalTitle,
+  calendarAdminRehearsalTitle,
   calendarTeamEventUrl,
   calendarTravelLinkLabel,
 } from './calendar-event-links.js';
@@ -5339,7 +5340,7 @@ function processAdminEvents(eventsArray) {
               description += `\n\nBand Personnel:\n${rehearsal.rehearsal_band}`;
             }
 
-            const title = calendarRehearsalTitle(event);
+            const title = calendarAdminRehearsalTitle(event);
 
             allCalendarEvents.push({
               ...calendarOccurrence(rehearsal),
