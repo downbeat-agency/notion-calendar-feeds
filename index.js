@@ -51,6 +51,7 @@ import {
 import { createCalendarObservability } from './calendar-observability.js';
 import { createPostgresCalendarRefreshWorker } from './calendar-refresh-worker.js';
 import { groundStopCalendarTitle, groundStopCalendarDescription } from './calendar-ground-presentation.js';
+import { calendarTravelDescription } from './calendar-travel-notes.js';
 import {
   configuredCalendarTimeMode,
   serializeCalendarWithTimePolicy,
@@ -3693,7 +3694,10 @@ function buildFlightDescription(flight, legType, start, end, personName) {
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
   if (travelLink) desc += `\n${travelLink}\n`;
-  return appendFlightAwareDetails(desc.trim(), flight, legType);
+  return calendarTravelDescription(
+    appendFlightAwareDetails(desc.trim(), flight, legType),
+    flight.booking_notes, flight.leg_notes, 'Flight Notes'
+  );
 }
 
 /** Build layover description in same format as flight */
@@ -3719,7 +3723,7 @@ function buildLayoverDescription(flight, legType, start, end, personName) {
   if (personName) desc += `Passengers:\n• ${personName}\n`;
   const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
   if (travelLink) desc += `\n${travelLink}\n`;
-  return desc.trim();
+  return calendarTravelDescription(desc.trim(), flight.booking_notes, flight.leg_notes, 'Flight Notes');
 }
 
 // Same logic as travel calendar: parse departure and arrival separately when both exist.
@@ -4142,7 +4146,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
         const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
         const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
-        allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: calendarTravelDescription(`Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, hotel.booking_notes, hotel.property_notes, 'Property Notes'), location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
       }
     });
     (event.ground_transport || []).forEach(transport => {
@@ -4202,7 +4206,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
     if (hotelTimes) {
       const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
       const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
-      allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: `Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
+      allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: calendarTravelDescription(`Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, hotel.booking_notes, hotel.property_notes, 'Property Notes'), location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
     }
   });
   topLevelTransport.forEach(transport => {
@@ -5644,7 +5648,7 @@ function processTravelEvents(travelGroupsArray) {
               start: depStart,
               end: depEnd,
               title: title,
-              description: description.trim(),
+              description: calendarTravelDescription(description.trim(), flight.booking_notes, flight.leg_notes, 'Flight Notes'),
               location: location,
               url: url,
               type: 'flight_departure'
@@ -5718,7 +5722,7 @@ function processTravelEvents(travelGroupsArray) {
               start: retStart,
               end: retEnd,
               title: title,
-              description: description.trim(),
+              description: calendarTravelDescription(description.trim(), flight.booking_notes, flight.leg_notes, 'Flight Notes'),
               location: location,
               url: url,
               type: 'flight_return'
@@ -5861,7 +5865,7 @@ function processTravelEvents(travelGroupsArray) {
               start: checkIn,
               end: checkOutForEvent,
               title: title,
-              description: description.trim(),
+              description: calendarTravelDescription(description.trim(), hotel.booking_notes, hotel.property_notes, 'Property Notes'),
               location: location,
               url: url,
               type: 'hotel_checkin'
@@ -5923,7 +5927,7 @@ function processTravelEvents(travelGroupsArray) {
               start: checkOut,
               end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
               title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
-              description: description.trim(),
+              description: calendarTravelDescription(description.trim(), hotel.booking_notes, hotel.property_notes, 'Property Notes'),
               location: location,
               url: url,
               type: 'hotel_checkout'
