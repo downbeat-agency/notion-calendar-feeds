@@ -50,6 +50,7 @@ import {
 } from './calendar-cache-policy.js';
 import { createCalendarObservability } from './calendar-observability.js';
 import { createPostgresCalendarRefreshWorker } from './calendar-refresh-worker.js';
+import { groundStopCalendarTitle, groundStopCalendarDescription } from './calendar-ground-presentation.js';
 import {
   configuredCalendarTimeMode,
   serializeCalendarWithTimePolicy,
@@ -3324,20 +3325,7 @@ function extractTransportInfoValue(rawDescription, transportType) {
 }
 
 function normalizeTransportTitle(rawTitle) {
-  return (rawTitle || 'Ground Transport')
-    .replace('PASSENGER', 'Passenger')
-    .replace('PICKUP:', 'Pickup:')
-    .replace('DROPOFF:', 'Dropoff:')
-    .replace('MEET UP:', 'Meet Up:');
-}
-
-function getGroundTransportEmoji(transport, title) {
-  const t = transport?.type;
-  const normalizedTitle = typeof title === 'string' ? title : '';
-  if (t === 'ground_transport_meeting' || normalizedTitle.startsWith('Meet Up')) return '🚕';
-  if (t === 'ground_transport_pickup' || normalizedTitle.startsWith('Pickup:')) return '🚙';
-  if (t === 'ground_transport_dropoff' || normalizedTitle.startsWith('Dropoff:')) return '🚗';
-  return '🚙';
+  return groundStopCalendarTitle(rawTitle);
 }
 
 function calendarTravelDescriptionLink(url, travelType) {
@@ -3346,7 +3334,7 @@ function calendarTravelDescriptionLink(url, travelType) {
   return `${calendarTravelLinkLabel(value, travelType)}: ${value}`;
 }
 
-function buildTransportDescription(transport) {
+function buildTransportDescriptionDetails(transport) {
   const rawDescription = transport?.description;
   if (!rawDescription) {
     return 'Ground transportation details';
@@ -3498,6 +3486,10 @@ function buildTransportDescription(transport) {
   }
 
   return 'Ground transportation details';
+}
+
+function buildTransportDescription(transport) {
+  return groundStopCalendarDescription(transport?.notes, buildTransportDescriptionDetails(transport));
 }
 
 function getTransportEventTimes(transport) {
@@ -4161,8 +4153,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           const startTime = new Date(startParsed.start);
           const endTime = endParsed?.end instanceof Date && !isNaN(endParsed.end.getTime()) ? new Date(endParsed.end) : new Date(startTime.getTime() + 30 * 60 * 1000);
           const title = normalizeTransportTitle(transport.title);
-          const transportEmoji = getGroundTransportEmoji(transport, title);
-          allCalendarEvents.push({ ...calendarOccurrence(transport), type: transport.type || 'ground_transport', title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
+          allCalendarEvents.push({ ...calendarOccurrence(transport), type: transport.type || 'ground_transport', title, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: event.event_name });
         }
       }
     });
@@ -4221,8 +4212,7 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         const { startTime, endTime } = transportEventTimes;
         const title = normalizeTransportTitle(transport.title);
         const eventType = transport.type === 'ground_transport_pickup' ? 'ground_transport_pickup' : transport.type === 'ground_transport_dropoff' ? 'ground_transport_dropoff' : transport.type === 'ground_transport_meeting' ? 'ground_transport_meeting' : 'ground_transport';
-        const transportEmoji = getGroundTransportEmoji(transport, title);
-        allCalendarEvents.push({ ...calendarOccurrence(transport), type: eventType, title: `${transportEmoji} ${title}`, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
+        allCalendarEvents.push({ ...calendarOccurrence(transport), type: eventType, title, start: startTime, end: endTime, description: buildTransportDescription(transport), location: transport.location || '', url: transport.transportation_url || '', mainEvent: '' });
       }
     }
   });
@@ -5357,6 +5347,23 @@ function processAdminEvents(eventsArray) {
         }
       });
     }
+
+    (event.ground_transport || []).forEach(transport => {
+      if (!transport.start) return;
+      const times = getTransportEventTimes(transport);
+      if (!times) return;
+      allCalendarEvents.push({
+        ...calendarOccurrence(transport),
+        type: transport.type || 'ground_transport',
+        title: normalizeTransportTitle(transport.title),
+        start: times.startTime,
+        end: times.endTime,
+        description: buildTransportDescription(transport),
+        location: transport.location || '',
+        url: transport.transportation_url || '',
+        mainEvent: event.event_name || ''
+      });
+    });
   });
 
   return allCalendarEvents.map(calendarEventWithEventHubLink);
