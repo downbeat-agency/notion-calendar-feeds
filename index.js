@@ -6,6 +6,7 @@ import { createClient } from 'redis';
 import { createHash } from 'node:crypto';
 import path from 'path';
 import { parseNotionFormulaJsonArray } from './admin-json.js';
+import { adminCalendarEventsOnly } from './calendar-admin-scope.js';
 import {
   buildCalendarEventMembershipSnapshot,
   calendarEventMembershipMap,
@@ -5355,26 +5356,9 @@ function processAdminEvents(eventsArray) {
         }
       });
     }
-
-    (event.ground_transport || []).forEach(transport => {
-      if (!transport.start) return;
-      const times = getTransportEventTimes(transport);
-      if (!times) return;
-      allCalendarEvents.push({
-        ...calendarOccurrence(transport),
-        type: transport.type || 'ground_transport',
-        title: normalizeTransportTitle(transport.title),
-        start: times.startTime,
-        end: times.endTime,
-        description: buildTransportDescription(transport),
-        location: transport.location || '',
-        url: transport.transportation_url || '',
-        mainEvent: event.event_name || ''
-      });
-    });
   });
 
-  return allCalendarEvents.map(calendarEventWithEventHubLink);
+  return adminCalendarEventsOnly(allCalendarEvents).map(calendarEventWithEventHubLink);
 }
 
 // ============================================

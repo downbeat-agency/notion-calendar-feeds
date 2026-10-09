@@ -482,10 +482,10 @@ test('personnel calendars publish App URLs while Admin retains Event Hub URLs', 
     source,
     /const publishedCalendarEvents = allCalendarEvents\.map\(calendarPersonnelEventWithAppLink\);/u
   );
-  assert.match(source, /allCalendarEvents\.map\(calendarEventWithEventHubLink\)/u);
+  assert.match(source, /adminCalendarEventsOnly\(allCalendarEvents\)\.map\(calendarEventWithEventHubLink\)/u);
   assert.match(
     source,
-    /function processAdminEvents[\s\S]*?return allCalendarEvents\.map\(calendarEventWithEventHubLink\);/u
+    /function processAdminEvents[\s\S]*?return adminCalendarEventsOnly\(allCalendarEvents\)\.map\(calendarEventWithEventHubLink\);/u
   );
   assert.match(source, /`Event Link: \$\{eventHubUrl\}\\n\\n`/u);
   assert.match(source, /description \+= `\\nEvent Link: \$\{eventHubUrl\}\\n`/u);
