@@ -58,6 +58,12 @@ import {
 } from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
 import {
+  TRAVEL_FEED_KEYS,
+  travelCalendarEventsForFeed,
+  travelFeedDefinition,
+  travelFeedKeyFromSubscriptionPath,
+} from './calendar-travel-feeds.js';
+import {
   configuredCalendarTimeMode,
   serializeCalendarWithTimePolicy,
   serializeGoogleCalendarWithTimePolicy,
@@ -4878,53 +4884,14 @@ function startBackgroundJob() {
           );
           
           if (travelEvents && travelEvents.length > 0) {
-            const allCalendarEvents = processTravelEvents(travelEvents);
-            
-            // Generate and cache ICS
-            const calendar = ical({ 
-              name: 'Travel Calendar',
-              description: 'All travel events',
-              ttl: 300
-            });
-            
-            allCalendarEvents.forEach(event => {
-              const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-              const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-              
-              calendar.createEvent({
-                id: event.uid || undefined,
-                start: startDate,
-                end: endDate,
-                summary: event.title,
-                description: event.description,
-                location: event.location,
-                url: event.url || '',
-                floating: true,
-                allDay: event.allDay === true,
-                alarms: []  // No alarms for travel calendar
-              });
-            });
-            
-            const icsData = serializeCalendar(calendar);
-            await cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'ics'), icsData, {
-              sourceRevision: travelEvents?.sourceRevision,
-              sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
-              eventCount: allCalendarEvents.length,
-            });
-            
-            // Also cache JSON
-            const jsonData = JSON.stringify({
-              calendar_name: 'Travel Calendar',
-              total_events: allCalendarEvents.length,
-              events: allCalendarEvents
-            }, null, 2);
-            await cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'json'), jsonData, {
-              sourceRevision: travelEvents?.sourceRevision,
-              sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
-              eventCount: allCalendarEvents.length,
-            });
-            
-            console.log(`✅ Travel calendar cached (${allCalendarEvents.length} events)`);
+            const processedTravelEvents = processTravelEvents(travelEvents);
+            const artifactsByKey = Object.fromEntries(
+              TRAVEL_FEED_KEYS.map((key) => [key, buildTravelFeedArtifacts(processedTravelEvents, key)])
+            );
+            await Promise.all(
+              TRAVEL_FEED_KEYS.map((key) => cacheTravelFeedArtifacts(artifactsByKey[key], travelEvents))
+            );
+            console.log(`✅ Travel calendars cached (${TRAVEL_FEED_KEYS.map((key) => `${key}=${artifactsByKey[key].events.length}`).join(', ')})`);
           }
         } catch (travelError) {
           console.error('⚠️  Travel calendar refresh failed:', travelError.message);
@@ -8017,15 +7984,28 @@ app.get('/subscribe/admin', async (req, res) => {
   }
 });
 
-app.get('/subscribe/travel', async (req, res) => {
-  // Redirect if URL has extra characters (malformed URL like /subscribe/travel%20%20...)
+app.get([
+  '/subscribe/travel',
+  '/subscribe/travel-flights',
+  '/subscribe/travel-ground',
+  '/subscribe/travel-hotels',
+], async (req, res) => {
   const originalPath = decodeURIComponent(req.originalUrl.split('?')[0]);
-  if (originalPath !== '/subscribe/travel' && originalPath.startsWith('/subscribe/travel')) {
-    return res.redirect(301, '/subscribe/travel');
+  const feedKey = travelFeedKeyFromSubscriptionPath(originalPath);
+  if (!feedKey) {
+    const malformedFeedKey = [...TRAVEL_FEED_KEYS]
+      .sort((left, right) => travelFeedDefinition(right).subscribePath.length - travelFeedDefinition(left).subscribePath.length)
+      .find((key) => originalPath.startsWith(travelFeedDefinition(key).subscribePath));
+    if (malformedFeedKey) {
+      return res.redirect(301, travelFeedDefinition(malformedFeedKey).subscribePath);
+    }
+    return res.status(404).json({ error: 'Unknown Travel calendar feed' });
   }
+
+  const feed = travelFeedDefinition(feedKey);
   try {
-    const subscriptionUrl = `https://${req.get('host')}/calendar/travel`;
-    const webcalUrl = `webcal://${req.get('host')}/calendar/travel`;
+    const subscriptionUrl = `https://${req.get('host')}${feed.calendarPath}`;
+    const webcalUrl = `webcal://${req.get('host')}${feed.calendarPath}`;
     const googleCalendarSettingsUrl = 'https://calendar.google.com/calendar/r/settings/addbyurl';
     
     // Check if this is a calendar app request
@@ -8036,7 +8016,7 @@ app.get('/subscribe/travel', async (req, res) => {
     
     if (isCalendarApp) {
       // Redirect calendar apps directly to the calendar feed
-      return res.redirect(302, '/calendar/travel.ics');
+      return res.redirect(302, `${feed.calendarPath}.ics`);
     }
     
     // For web browsers, show a subscription page with same styling as personal calendars
@@ -8050,7 +8030,7 @@ app.get('/subscribe/travel', async (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Subscribe to Travel Calendar</title>
+    <title>Subscribe to ${feed.calendarName}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * {
@@ -8430,9 +8410,9 @@ app.get('/subscribe/travel', async (req, res) => {
 <body>
     <div class="container">
         <div class="header">
-            <h1>Subscribe to Travel Calendar</h1>
+            <h1>Subscribe to ${feed.calendarName}</h1>
             <div class="separator"></div>
-            <div class="description">View all travel events across all personnel in your calendar app. Includes flight details, hotel information, travel dates, and more. Subscribe once and stay organized across all your devices.</div>
+            <div class="description">${feed.subscribeDescription} Subscribe once and stay organized across all your devices.</div>
         </div>
 
         <div class="preparation-status" id="preparationStatus" aria-live="polite"></div>
@@ -8526,7 +8506,7 @@ app.get('/subscribe/travel', async (req, res) => {
             const activeLabel = activeControl.querySelector('[data-default-label]');
             activeControl.classList.add('is-preparing');
             if (activeLabel) {
-                activeLabel.textContent = 'Preparing travel calendar...';
+                activeLabel.textContent = 'Preparing ${feed.preparationLabel.toLowerCase()}...';
             }
         }
 
@@ -8607,12 +8587,12 @@ app.get('/subscribe/travel', async (req, res) => {
             isPreparingCalendar = true;
             setControlsDisabled(true);
             setPreparingControl(action);
-            setPreparationStatus('Preparing travel calendar...');
+            setPreparationStatus('Preparing ${feed.preparationLabel.toLowerCase()}...');
             startPreparationProgress();
 
             try {
                 completePreparationProgress();
-                setPreparationStatus('Travel calendar ready.', 'success');
+                setPreparationStatus('${feed.preparationLabel} ready.', 'success');
 
                 if (action === 'apple') {
                     window.location.href = webcalUrl;
@@ -9846,11 +9826,87 @@ app.post('/admin/calendar/regen', requireCalendarFeedServiceKey, async (req, res
 // TRAVEL CALENDAR ENDPOINTS
 // ============================================
 
-async function handleTravelCalendar(req, res, forcedFormat) {
+function serializeTravelFeedCalendar(events, feed) {
+  const calendar = ical({
+    name: feed.calendarName,
+    description: feed.calendarDescription,
+    ttl: 300,
+  });
+
+  events.forEach((event) => {
+    const startDate = event.start instanceof Date ? event.start : new Date(event.start);
+    const endDate = event.end instanceof Date ? event.end : new Date(event.end);
+
+    calendar.createEvent({
+      id: event.uid || undefined,
+      start: startDate,
+      end: endDate,
+      summary: event.title,
+      description: event.description,
+      location: event.location,
+      url: event.url || '',
+      floating: true,
+      allDay: event.allDay === true,
+      alarms: [],
+    });
+  });
+
+  return serializeCalendar(calendar);
+}
+
+function buildTravelFeedArtifacts(processedEvents, feedKey) {
+  const feed = travelFeedDefinition(feedKey);
+  if (!feed) {
+    throw new Error(`Unknown Travel feed: ${feedKey}`);
+  }
+
+  const events = travelCalendarEventsForFeed(processedEvents, feedKey);
+  return {
+    feed,
+    events,
+    jsonData: JSON.stringify({
+      calendar_name: feed.calendarName,
+      total_events: events.length,
+      events,
+    }, null, 2),
+    icsData: serializeTravelFeedCalendar(events, feed),
+  };
+}
+
+async function cacheTravelFeedArtifacts(artifacts, travelEvents) {
+  if (!redis || !cacheEnabled) {
+    return false;
+  }
+
+  const metadataOptions = {
+    sourceRevision: travelEvents?.sourceRevision,
+    sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
+    eventCount: artifacts.events.length,
+  };
+  await Promise.all([
+    cacheCalendarArtifact(
+      buildSharedCalendarCacheKey(artifacts.feed.cacheKind, 'ics'),
+      artifacts.icsData,
+      metadataOptions
+    ),
+    cacheCalendarArtifact(
+      buildSharedCalendarCacheKey(artifacts.feed.cacheKind, 'json'),
+      artifacts.jsonData,
+      metadataOptions
+    ),
+  ]);
+  return true;
+}
+
+async function handleTravelCalendar(req, res, forcedFormat, feedKey = 'all') {
+  const feed = travelFeedDefinition(feedKey);
+  if (!feed) {
+    return res.status(404).json({ error: 'Unknown Travel calendar feed' });
+  }
   try {
     const format = forcedFormat || req.query.format || (req.headers.accept?.includes('application/json') ? 'json' : 'ics');
     const forceFresh = authorizedCalendarFreshRequest(req);
-    const cacheKey = buildSharedCalendarCacheKey('travel', format);
+    const cacheKey = buildSharedCalendarCacheKey(feed.cacheKind, format);
     const postgresCacheRevision = !forceFresh
       ? await validatePostgresCacheRevision(cacheKey)
       : { matches: false, sourceRevision: null, unavailable: false };
@@ -9861,29 +9917,30 @@ async function handleTravelCalendar(req, res, forcedFormat) {
         const cachedData = await redis.get(cacheKey);
         if (cachedData) {
           if (postgresCacheRevision.unavailable) res.setHeader('X-Downbeat-Calendar-Stale', 'true');
-          verboseLog(`✅ Cache HIT for travel calendar (${format.toUpperCase()})`);
+          verboseLog(`✅ Cache HIT for ${feed.calendarName} (${format.toUpperCase()})`);
           
           if (format === 'json') {
             return sendCalendarArtifact(req, res, cachedData, {
               metadata: postgresCacheRevision.metadata,
               contentType: 'application/json',
-              kind: 'travel',
+              kind: feed.cacheKind,
             });
           } else {
-            if (sharedCalendarIcsHasEvents(cachedData)) {
+            const cachedEventCount = Number(postgresCacheRevision.metadata?.eventCount);
+            if (sharedCalendarIcsHasEvents(cachedData) || cachedEventCount === 0) {
               return sendCalendarArtifact(req, res, cachedData, {
                 metadata: postgresCacheRevision.metadata,
                 contentType: 'text/calendar',
-                filename: 'travel-calendar.ics',
-                kind: 'travel',
+                filename: feed.filename,
+                kind: feed.cacheKind,
               });
             }
-            console.warn('⚠️  Ignoring cached travel ICS with no events');
+            console.warn(`⚠️  Ignoring cached ${feed.calendarName} ICS with no events`);
           }
         }
         logWithDedup(
-          `cache_miss:travel:${format.toLowerCase()}`,
-          `❌ Cache MISS for travel calendar (${format.toUpperCase()})`
+          `cache_miss:${feed.cacheKind}:${format.toLowerCase()}`,
+          `❌ Cache MISS for ${feed.calendarName} (${format.toUpperCase()})`
         );
       } catch (cacheError) {
         console.error('Redis cache error:', cacheError);
@@ -9919,7 +9976,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       
       if (!travelEvents || travelEvents.length === 0) {
         if (Number(postgresCacheRevision.metadata?.eventCount) > 0) {
-          calendarObservability.record('emptyRegression', { kind: 'travel' });
+          calendarObservability.record('emptyRegression', { kind: feed.cacheKind });
         }
         const noEventsMsg = {
           error: 'No events found',
@@ -9948,39 +10005,40 @@ async function handleTravelCalendar(req, res, forcedFormat) {
         try {
           const cachedData = await redis.get(cacheKey);
           if (cachedData) {
-            console.log(`✅ Returning cached travel calendar data (fallback from timeout)`);
+            console.log(`✅ Returning cached ${feed.calendarName} data (fallback from timeout)`);
             const fallbackMetadata = await readCalendarArtifactMetadata(cacheKey);
-            calendarObservability.record('staleFallback', { kind: 'travel' });
+            calendarObservability.record('staleFallback', { kind: feed.cacheKind });
             if (format === 'json') {
               return sendCalendarArtifact(req, res, cachedData, {
                 metadata: fallbackMetadata,
                 contentType: 'application/json',
-                kind: 'travel',
+                kind: feed.cacheKind,
               });
             } else {
-              if (sharedCalendarIcsHasEvents(cachedData)) {
+              const cachedEventCount = Number(fallbackMetadata?.eventCount);
+              if (sharedCalendarIcsHasEvents(cachedData) || cachedEventCount === 0) {
                 return sendCalendarArtifact(req, res, cachedData, {
                   metadata: fallbackMetadata,
                   contentType: 'text/calendar',
-                  filename: 'travel-calendar.ics',
-                  kind: 'travel',
+                  filename: feed.filename,
+                  kind: feed.cacheKind,
                 });
               }
-              console.warn('⚠️  Ignoring cached travel ICS fallback with no events');
+              console.warn(`⚠️  Ignoring cached ${feed.calendarName} ICS fallback with no events`);
             }
           }
 
           if (format !== 'json') {
             const sentCachedJsonFallback = await sendSharedCalendarCachedJsonAsIcs(req, res, {
-              jsonCacheKey: buildSharedCalendarCacheKey('travel', 'json'),
-              icsCacheKey: buildSharedCalendarCacheKey('travel', 'ics'),
-              name: 'Travel Calendar',
-              description: 'All travel events',
-              filename: 'travel-calendar.ics',
-              kind: 'travel'
+              jsonCacheKey: buildSharedCalendarCacheKey(feed.cacheKind, 'json'),
+              icsCacheKey: buildSharedCalendarCacheKey(feed.cacheKind, 'ics'),
+              name: feed.calendarName,
+              description: feed.calendarDescription,
+              filename: feed.filename,
+              kind: feed.cacheKind,
             });
             if (sentCachedJsonFallback) {
-              console.log('✅ Rebuilt travel ICS from cached JSON fallback');
+              console.log(`✅ Rebuilt ${feed.calendarName} ICS from cached JSON fallback`);
               return;
             }
           }
@@ -10001,23 +10059,24 @@ async function handleTravelCalendar(req, res, forcedFormat) {
       }
     }
     
-    // Process events
-    const allCalendarEvents = processTravelEvents(travelEvents);
+    // Process and scope events for the requested Travel feed.
+    const processedTravelEvents = processTravelEvents(travelEvents);
+    const allCalendarEvents = travelCalendarEventsForFeed(processedTravelEvents, feedKey);
     const sourceRevision = travelEvents?.sourceRevision || null;
     const sourceUpdatedAt = travelEvents?.sourceUpdatedAt || null;
     if (travelEvents?.snapshotRetryCount > 0) {
-      calendarObservability.record('snapshotRetry', { kind: 'travel' });
+      calendarObservability.record('snapshotRetry', { kind: feed.cacheKind });
     }
     if (travelEvents?.snapshotSuperseded === true) {
-      calendarObservability.record('snapshotSuperseded', { kind: 'travel' });
+      calendarObservability.record('snapshotSuperseded', { kind: feed.cacheKind });
     }
     
     // Return based on format
     if (format === 'json') {
       const jsonData = JSON.stringify({
-        calendar_name: 'Travel Calendar',
+        calendar_name: feed.calendarName,
         total_events: allCalendarEvents.length,
-        events: allCalendarEvents
+        events: allCalendarEvents,
       }, null, 2);
       
       // Cache the JSON
@@ -10028,7 +10087,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
             sourceUpdatedAt,
             eventCount: allCalendarEvents.length,
           });
-          verboseLog(`💾 Cached travel calendar JSON (${CACHE_TTL}s TTL)`);
+          verboseLog(`💾 Cached ${feed.calendarName} JSON (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -10041,35 +10100,10 @@ async function handleTravelCalendar(req, res, forcedFormat) {
         sourceUpdatedAt,
         eventCount: allCalendarEvents.length,
         contentType: 'application/json',
-        kind: 'travel',
+        kind: feed.cacheKind,
       });
     } else {
-      // Generate ICS
-      const calendar = ical({ 
-        name: 'Travel Calendar',
-        description: 'All travel events',
-        ttl: 300
-      });
-      
-      allCalendarEvents.forEach(event => {
-        const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-        const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-        
-        calendar.createEvent({
-          id: event.uid || undefined,
-          start: startDate,
-          end: endDate,
-          summary: event.title,
-          description: event.description,
-          location: event.location,
-          url: event.url || '',
-          floating: true,
-          allDay: event.allDay === true,
-          alarms: []  // No alarms for travel calendar
-        });
-      });
-      
-      const icsData = serializeCalendar(calendar);
+      const icsData = serializeTravelFeedCalendar(allCalendarEvents, feed);
       
       // Cache the ICS
       if (redis && cacheEnabled) {
@@ -10079,7 +10113,7 @@ async function handleTravelCalendar(req, res, forcedFormat) {
             sourceUpdatedAt,
             eventCount: allCalendarEvents.length,
           });
-          verboseLog(`💾 Cached travel calendar ICS (${CACHE_TTL}s TTL)`);
+          verboseLog(`💾 Cached ${feed.calendarName} ICS (${CACHE_TTL}s TTL)`);
         } catch (cacheError) {
           console.error('Redis cache write error:', cacheError);
         }
@@ -10092,8 +10126,8 @@ async function handleTravelCalendar(req, res, forcedFormat) {
         sourceUpdatedAt,
         eventCount: allCalendarEvents.length,
         contentType: 'text/calendar',
-        filename: 'travel-calendar.ics',
-        kind: 'travel',
+        filename: feed.filename,
+        kind: feed.cacheKind,
       });
     }
     
@@ -10106,10 +10140,16 @@ async function handleTravelCalendar(req, res, forcedFormat) {
   }
 }
 
-app.get('/travel/calendar', (req, res) => handleTravelCalendar(req, res));
+app.get('/travel/calendar', (req, res) => handleTravelCalendar(req, res, undefined, 'all'));
+app.get('/travel/flights/calendar', (req, res) => handleTravelCalendar(req, res, undefined, 'flights'));
+app.get('/travel/ground/calendar', (req, res) => handleTravelCalendar(req, res, undefined, 'ground'));
+app.get('/travel/hotels/calendar', (req, res) => handleTravelCalendar(req, res, undefined, 'hotels'));
 
-// Travel calendar regeneration endpoint (clears cache and regenerates)
-app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, async (req, res) => {
+async function handleTravelCalendarRegen(req, res, feedKey = 'all') {
+  const feed = travelFeedDefinition(feedKey);
+  if (!feed) {
+    return res.status(404).json({ error: 'Unknown Travel calendar feed' });
+  }
   try {
     if (CALENDAR_FEED_SOURCE !== 'postgres' && !TRAVEL_CALENDAR_PAGE_ID) {
       return res.status(500).json({ 
@@ -10118,9 +10158,9 @@ app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, async (req, re
       });
     }
 
-    console.log('🔄 Regenerating travel calendar...');
+    console.log(`🔄 Regenerating ${feed.calendarName}...`);
 
-    // Fetch fresh data
+    // Fetch fresh data once, then derive and cache each requested Travel view.
     const travelEvents = await runMonitoredCalendarBuild(
       'shared:travel:projection',
       'travel',
@@ -10130,97 +10170,70 @@ app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, async (req, re
         `Travel calendar fetch timeout after ${CALENDAR_FETCH_TIMEOUT_MS}ms`
       )
     );
-    const allCalendarEvents = processTravelEvents(travelEvents);
+    const processedTravelEvents = processTravelEvents(travelEvents);
+    const feedKeys = feedKey === 'all' ? TRAVEL_FEED_KEYS : [feedKey];
+    const artifactsByKey = Object.fromEntries(
+      feedKeys.map((key) => [key, buildTravelFeedArtifacts(processedTravelEvents, key)])
+    );
 
-    // Generate and cache ICS
-    const calendar = ical({ 
-      name: 'Travel Calendar',
-      description: 'All travel events',
-      ttl: 300
-    });
-    
-    allCalendarEvents.forEach(event => {
-      const startDate = event.start instanceof Date ? event.start : new Date(event.start);
-      const endDate = event.end instanceof Date ? event.end : new Date(event.end);
-      
-      calendar.createEvent({
-        id: event.uid || undefined,
-        start: startDate,
-        end: endDate,
-        summary: event.title,
-        description: event.description,
-        location: event.location,
-        url: event.url || '',
-        floating: true,
-        allDay: event.allDay === true,
-        alarms: []  // No alarms for travel calendar
-      });
-    });
-    
-    const icsData = serializeCalendar(calendar);
-    
-    // Generate JSON
-    const jsonData = JSON.stringify({
-      calendar_name: 'Travel Calendar',
-      total_events: allCalendarEvents.length,
-      events: allCalendarEvents
-    }, null, 2);
-
-    // Cache both formats
+    let cacheReplaced = false;
     if (redis && cacheEnabled) {
       try {
-        const metadataOptions = {
-          sourceRevision: travelEvents?.sourceRevision,
-          sourceUpdatedAt: travelEvents?.sourceUpdatedAt,
-          eventCount: allCalendarEvents.length,
-        };
-        await Promise.all([
-          cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'ics'), icsData, metadataOptions),
-          cacheCalendarArtifact(buildSharedCalendarCacheKey('travel', 'json'), jsonData, metadataOptions),
-        ]);
-        console.log(`💾 Travel calendar regenerated and cached (${allCalendarEvents.length} events)`);
+        await Promise.all(
+          feedKeys.map((key) => cacheTravelFeedArtifacts(artifactsByKey[key], travelEvents))
+        );
+        cacheReplaced = true;
+        console.log(`💾 Regenerated Travel feeds: ${feedKeys.map((key) => `${key}=${artifactsByKey[key].events.length}`).join(', ')}`);
       } catch (cacheError) {
         console.error('Redis cache write error:', cacheError);
       }
     }
 
-    // Return success response
+    const requestedArtifacts = artifactsByKey[feedKey];
     res.json({
       success: true,
-      message: 'Travel calendar regenerated successfully',
-      total_events: allCalendarEvents.length,
+      message: `${feed.calendarName} regenerated successfully`,
+      total_events: requestedArtifacts.events.length,
+      feeds: Object.fromEntries(
+        feedKeys.map((key) => [key, artifactsByKey[key].events.length])
+      ),
       sourceRevision: travelEvents?.sourceRevision || null,
-      cache_replaced: redis && cacheEnabled,
-      cached_for_seconds: CACHE_TTL
+      cache_replaced: cacheReplaced,
+      cached_for_seconds: CACHE_TTL,
     });
 
   } catch (error) {
-    console.error('Travel calendar regen error:', error);
+    console.error(`${feed.calendarName} regen error:`, error);
     try {
       const hasCachedCalendar = await hasUsableSharedCalendarCache({
-        jsonCacheKey: buildSharedCalendarCacheKey('travel', 'json'),
-        icsCacheKey: buildSharedCalendarCacheKey('travel', 'ics'),
-        name: 'Travel Calendar',
-        description: 'All travel events'
+        jsonCacheKey: buildSharedCalendarCacheKey(feed.cacheKind, 'json'),
+        icsCacheKey: buildSharedCalendarCacheKey(feed.cacheKind, 'ics'),
+        name: feed.calendarName,
+        description: feed.calendarDescription,
       });
       if (hasCachedCalendar) {
         return res.json({
           success: true,
-          message: 'Travel calendar refresh timed out; using last successful cached calendar',
+          message: `${feed.calendarName} refresh timed out; using last successful cached calendar`,
           stale: true,
           cache_replaced: false,
-          warning: error.message
+          warning: error.message,
         });
       }
     } catch (cacheError) {
-      console.error('Travel calendar cached fallback error:', cacheError);
+      console.error(`${feed.calendarName} cached fallback error:`, cacheError);
     }
     res.status(500).json({ 
-      error: 'Error regenerating travel calendar',
-      message: error.message
+      error: `Error regenerating ${feed.calendarName}`,
+      message: error.message,
     });
   }
-});
+}
+
+app.post('/travel/calendar/regen', requireCalendarFeedServiceKey, (req, res) => handleTravelCalendarRegen(req, res, 'all'));
+app.post('/travel/flights/calendar/regen', requireCalendarFeedServiceKey, (req, res) => handleTravelCalendarRegen(req, res, 'flights'));
+app.post('/travel/ground/calendar/regen', requireCalendarFeedServiceKey, (req, res) => handleTravelCalendarRegen(req, res, 'ground'));
+app.post('/travel/hotels/calendar/regen', requireCalendarFeedServiceKey, (req, res) => handleTravelCalendarRegen(req, res, 'hotels'));
 
 // ============================================
 // BLOCKOUT CALENDAR ENDPOINTS
@@ -10617,7 +10630,31 @@ app.get('/calendar/travel.ics', async (req, res) => {
 });
 
 app.get('/calendar/travel', async (req, res) => {
-  return handleTravelCalendar(req, res, 'ics');
+  return handleTravelCalendar(req, res, 'ics', 'all');
+});
+
+app.get('/calendar/travel-flights.ics', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'flights');
+});
+
+app.get('/calendar/travel-flights', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'flights');
+});
+
+app.get('/calendar/travel-ground.ics', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'ground');
+});
+
+app.get('/calendar/travel-ground', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'ground');
+});
+
+app.get('/calendar/travel-hotels.ics', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'hotels');
+});
+
+app.get('/calendar/travel-hotels', async (req, res) => {
+  return handleTravelCalendar(req, res, 'ics', 'hotels');
 });
 
 // Blockout calendar compatibility routes (must come before /:personId routes)
