@@ -106,7 +106,7 @@ export function calendarAdminRehearsalTitle(event = {}) {
   const day = clean(event.event_day, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/u);
   const date = day ? `${Number(day[2])}/${Number(day[3])}/${day[1].slice(-2)}` : '';
   const place = clean(event.event_city || event.event_name || event.eventName, 500);
-  return [band, 'Rehearsal', date, place].filter(Boolean).join(' ');
+  return `🎹 ${[band, 'Rehearsal', date, place].filter(Boolean).join(' ')}`;
 }
 
 function validHttpUrl(value) {
