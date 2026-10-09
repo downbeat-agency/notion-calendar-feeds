@@ -509,10 +509,10 @@ test('personnel calendars publish App URLs while Admin retains Event Hub URLs', 
 
 test('admin rehearsal title identifies the gig date and city without changing personal titles', () => {
   const event = { band: 'Soultones', event_day: '2026-10-03', event_city: 'Carmel Valley', event_name: 'Carmel Valley Wedding', rehearsal_date: '2026-09-30' };
-  assert.equal(calendarAdminRehearsalTitle(event), 'Soultones Rehearsal 10/3/26 Carmel Valley');
+  assert.equal(calendarAdminRehearsalTitle(event), '🎹 Soultones Rehearsal 10/3/26 Carmel Valley');
   assert.equal(calendarRehearsalTitle(event), '🎤 Rehearsal (Soultones)');
-  assert.equal(calendarAdminRehearsalTitle({}), 'Rehearsal');
-  assert.equal(calendarAdminRehearsalTitle({ band: 'AMFM', event_name: 'Private Event' }), 'AMFM Rehearsal Private Event');
+  assert.equal(calendarAdminRehearsalTitle({}), '🎹 Rehearsal');
+  assert.equal(calendarAdminRehearsalTitle({ band: 'AMFM', event_name: 'Private Event' }), '🎹 AMFM Rehearsal Private Event');
   const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
   assert.match(source.slice(source.indexOf('function processAdminEvents')), /const title = calendarAdminRehearsalTitle\(event\)/u);
 });
