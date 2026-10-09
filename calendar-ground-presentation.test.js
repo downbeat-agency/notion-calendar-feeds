@@ -7,6 +7,7 @@ import {
   groundStopCalendarDescription,
   groundTravelDropOffPresentation,
   groundTravelOccurrencePeople,
+  groundTravelRoleDescription,
 } from './calendar-ground-presentation.js';
 
 test('stop title is only its saved name, with a safe blank fallback', () => {
@@ -47,6 +48,8 @@ test('Travel ground events prefer their own stop participants over journey-wide 
     personnel: { personnel_name: ['Legacy Driver'] },
     drivers: ['Legacy Driver'],
     passengers: [],
+    journey_drivers: ['Pickup Driver', 'Drop-off Driver'],
+    journey_passengers: ['Trip Passenger'],
     pickup_personnel: { personnel_name: ['Pickup Driver'] },
     pickup_drivers: ['Pickup Driver'],
     pickup_passengers: [],
@@ -58,11 +61,15 @@ test('Travel ground events prefer their own stop participants over journey-wide 
     personnel: ['Pickup Driver'],
     drivers: ['Pickup Driver'],
     passengers: [],
+    journeyDrivers: ['Pickup Driver', 'Drop-off Driver'],
+    journeyPassengers: ['Trip Passenger'],
   });
   assert.deepEqual(groundTravelOccurrencePeople(transport, 'dropoff'), {
     personnel: ['Drop-off Driver'],
     drivers: ['Drop-off Driver'],
     passengers: [],
+    journeyDrivers: ['Pickup Driver', 'Drop-off Driver'],
+    journeyPassengers: ['Trip Passenger'],
   });
 });
 
@@ -75,6 +82,8 @@ test('Travel ground stop participant fields are backward compatible and honor ex
     personnel: ['Legacy Passenger'],
     drivers: [],
     passengers: ['Legacy Passenger'],
+    journeyDrivers: [],
+    journeyPassengers: ['Legacy Passenger'],
   });
   assert.deepEqual(groundTravelOccurrencePeople({
     personnel: { personnel_name: ['Stale Driver'] },
@@ -87,7 +96,32 @@ test('Travel ground stop participant fields are backward compatible and honor ex
     personnel: [],
     drivers: [],
     passengers: [],
+    journeyDrivers: [],
+    journeyPassengers: [],
   });
+});
+
+test('Travel ground roles distinguish this stop from later trip passengers', () => {
+  assert.equal(
+    groundTravelRoleDescription({
+      personnel: ['Pickup Driver'],
+      drivers: ['Pickup Driver'],
+      passengers: [],
+      journeyDrivers: ['Pickup Driver'],
+      journeyPassengers: ['Trip Passenger One', 'Trip Passenger Two'],
+    }),
+    '🚘 Driver:\nPickup Driver\n\n🧳 Trip Passengers:\nTrip Passenger One\nTrip Passenger Two'
+  );
+  assert.equal(
+    groundTravelRoleDescription({
+      personnel: ['Pickup Driver'],
+      drivers: ['Pickup Driver'],
+      passengers: [],
+      journeyDrivers: ['Pickup Driver'],
+      journeyPassengers: [],
+    }),
+    '🚘 Driver:\nPickup Driver\n\n🧳 Passengers:\nNone assigned at this stop'
+  );
 });
 
 test('global Travel ground renderer resolves pickup and drop-off people independently', () => {
@@ -95,8 +129,8 @@ test('global Travel ground renderer resolves pickup and drop-off people independ
   const travelRenderer = source.slice(source.indexOf('function processTravelEvents('));
   assert.match(travelRenderer, /groundTravelOccurrencePeople\(transport, 'pickup'\)/u);
   assert.match(travelRenderer, /groundTravelOccurrencePeople\(transport, 'dropoff'\)/u);
-  assert.match(travelRenderer, /pickupPeople\.drivers/u);
-  assert.match(travelRenderer, /dropOffPeople\.drivers/u);
+  assert.match(travelRenderer, /groundTravelRoleDescription\(pickupPeople\)/u);
+  assert.match(travelRenderer, /groundTravelRoleDescription\(dropOffPeople\)/u);
 });
 
 test('stop notes stay multiline and precede useful existing details', () => {

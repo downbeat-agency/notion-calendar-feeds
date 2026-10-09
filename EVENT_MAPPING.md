@@ -9,8 +9,10 @@ Each data source can generate multiple calendar events (main events + flights + 
 > Postgres. Their `flight_url`, `hotel_url`, and `transportation_url` values open the
 > matching authenticated Event Hub travel tab for the related event. Unattached
 > bookings omit the URL. Shared ground records can carry stop-scoped `pickup_*` and
-> `drop_off_*` participant fields; the renderer prefers those fields and falls back to
-> journey-wide personnel only for older payloads. The Notion examples below document
+> `drop_off_*` participant fields plus `journey_drivers` and `journey_passengers`.
+> The renderer labels the current stop's driver/passengers separately from people who
+> join elsewhere in the trip, and falls back to journey-wide personnel only for older
+> payloads. The Notion examples below document
 > the legacy formula payload and remain supported during compatibility reads.
 
 ## Data Source
