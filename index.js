@@ -50,7 +50,11 @@ import {
 } from './calendar-cache-policy.js';
 import { createCalendarObservability } from './calendar-observability.js';
 import { createPostgresCalendarRefreshWorker } from './calendar-refresh-worker.js';
-import { groundStopCalendarTitle, groundStopCalendarDescription } from './calendar-ground-presentation.js';
+import {
+  groundStopCalendarTitle,
+  groundStopCalendarDescription,
+  groundTravelDropOffPresentation,
+} from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
 import {
   configuredCalendarTimeMode,
@@ -6081,7 +6085,7 @@ function processTravelEvents(travelGroupsArray) {
               description += `\n📍 ${transport.drop_off_address}`;
             }
 
-            const location = transport.drop_off_name || transport.drop_off_address || '';
+            const dropOffPresentation = groundTravelDropOffPresentation(transport);
             const url = transport.transportation_url ||
               transport.url ||
               transport.notion_url ||
@@ -6093,11 +6097,9 @@ function processTravelEvents(travelGroupsArray) {
               ...calendarOccurrence(transport, 'dropoff_uid', 'dropoff_occurrence_key'),
               start: dropOffTime,
               end: new Date(dropOffTime.getTime() + 30 * 60 * 1000), // 30 minute event
-              title: transport.transportation_name
-                ? `${transport.transportation_name} - Drop-off`
-                : (transport.title || `Transportation Drop-off: ${transport.drop_off_name || 'Drop-off'}`),
+              title: dropOffPresentation.title,
               description: description.trim(),
-              location: location,
+              location: dropOffPresentation.location,
               url: url,
               type: 'transportation_dropoff'
             });
