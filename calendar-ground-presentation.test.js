@@ -6,6 +6,7 @@ import {
   groundStopCalendarTitle,
   groundStopCalendarDescription,
   groundTravelDropOffPresentation,
+  groundTravelOccurrencePeople,
 } from './calendar-ground-presentation.js';
 
 test('stop title is only its saved name, with a safe blank fallback', () => {
@@ -39,6 +40,63 @@ test('global Travel drop-off renderer uses the action and address presentation',
   assert.match(travelRenderer, /title: dropOffPresentation\.title/u);
   assert.match(travelRenderer, /location: dropOffPresentation\.location/u);
   assert.doesNotMatch(travelRenderer, /`\$\{transport\.transportation_name\} - Drop-off`/u);
+});
+
+test('Travel ground events prefer their own stop participants over journey-wide fallbacks', () => {
+  const transport = {
+    personnel: { personnel_name: ['Legacy Driver'] },
+    drivers: ['Legacy Driver'],
+    passengers: [],
+    pickup_personnel: { personnel_name: ['Pickup Driver'] },
+    pickup_drivers: ['Pickup Driver'],
+    pickup_passengers: [],
+    drop_off_personnel: { personnel_name: ['Drop-off Driver'] },
+    drop_off_drivers: ['Drop-off Driver'],
+    drop_off_passengers: [],
+  };
+  assert.deepEqual(groundTravelOccurrencePeople(transport, 'pickup'), {
+    personnel: ['Pickup Driver'],
+    drivers: ['Pickup Driver'],
+    passengers: [],
+  });
+  assert.deepEqual(groundTravelOccurrencePeople(transport, 'dropoff'), {
+    personnel: ['Drop-off Driver'],
+    drivers: ['Drop-off Driver'],
+    passengers: [],
+  });
+});
+
+test('Travel ground stop participant fields are backward compatible and honor explicit empties', () => {
+  assert.deepEqual(groundTravelOccurrencePeople({
+    personnel: { personnel_name: ['Legacy Passenger'] },
+    drivers: [],
+    passengers: ['Legacy Passenger'],
+  }, 'pickup'), {
+    personnel: ['Legacy Passenger'],
+    drivers: [],
+    passengers: ['Legacy Passenger'],
+  });
+  assert.deepEqual(groundTravelOccurrencePeople({
+    personnel: { personnel_name: ['Stale Driver'] },
+    drivers: ['Stale Driver'],
+    passengers: ['Stale Passenger'],
+    drop_off_personnel: { personnel_name: [] },
+    drop_off_drivers: [],
+    drop_off_passengers: [],
+  }, 'dropoff'), {
+    personnel: [],
+    drivers: [],
+    passengers: [],
+  });
+});
+
+test('global Travel ground renderer resolves pickup and drop-off people independently', () => {
+  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  const travelRenderer = source.slice(source.indexOf('function processTravelEvents('));
+  assert.match(travelRenderer, /groundTravelOccurrencePeople\(transport, 'pickup'\)/u);
+  assert.match(travelRenderer, /groundTravelOccurrencePeople\(transport, 'dropoff'\)/u);
+  assert.match(travelRenderer, /pickupPeople\.drivers/u);
+  assert.match(travelRenderer, /dropOffPeople\.drivers/u);
 });
 
 test('stop notes stay multiline and precede useful existing details', () => {
