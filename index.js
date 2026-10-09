@@ -54,6 +54,8 @@ import {
   groundStopCalendarTitle,
   groundStopCalendarDescription,
   groundTravelDropOffPresentation,
+  groundTravelOccurrencePeople,
+  groundTravelRoleDescription,
 } from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
 import {
@@ -5951,6 +5953,7 @@ function processTravelEvents(travelGroupsArray) {
           const pickupTime = pickupTimes ? pickupTimes.start : new Date(transport.pickup_time);
           if (!isNaN(pickupTime.getTime())) {
             let description = '';
+            const pickupPeople = groundTravelOccurrencePeople(transport, 'pickup');
 
             if (transport.event_name) {
               description += `🎉 Event: ${transport.event_name}\n`;
@@ -5963,34 +5966,8 @@ function processTravelEvents(travelGroupsArray) {
             if (transport.pickup_name) {
               description += `Pickup: ${transport.pickup_name}\n`;
             }
-            
-            // Personnel
-            if (transport.personnel && transport.personnel.personnel_name && Array.isArray(transport.personnel.personnel_name) && transport.personnel.personnel_name.length > 0) {
-              description += `\n👥 Personnel:\n`;
-              transport.personnel.personnel_name.forEach(person => {
-                if (person && typeof person === 'string') {
-                  description += `${person}\n`;
-                }
-              });
-            }
-
-            if (Array.isArray(transport.drivers) && transport.drivers.length > 0) {
-              description += `\n🚘 Drivers:\n`;
-              transport.drivers.forEach(driver => {
-                if (driver && typeof driver === 'string') {
-                  description += `${driver}\n`;
-                }
-              });
-            }
-
-            if (Array.isArray(transport.passengers) && transport.passengers.length > 0) {
-              description += `\n🧳 Passengers:\n`;
-              transport.passengers.forEach(passenger => {
-                if (passenger && typeof passenger === 'string') {
-                  description += `${passenger}\n`;
-                }
-              });
-            }
+            const pickupRoles = groundTravelRoleDescription(pickupPeople);
+            if (pickupRoles) description += `\n${pickupRoles}\n`;
             
             if (transport.confirmation) {
               description += `\n📋 Confirmation: ${transport.confirmation}\n`;
@@ -6036,6 +6013,7 @@ function processTravelEvents(travelGroupsArray) {
           const dropOffTime = dropOffTimes ? dropOffTimes.start : new Date(transport.drop_off_time);
           if (!isNaN(dropOffTime.getTime())) {
             let description = '';
+            const dropOffPeople = groundTravelOccurrencePeople(transport, 'dropoff');
 
             if (transport.event_name) {
               description += `🎉 Event: ${transport.event_name}\n`;
@@ -6048,34 +6026,8 @@ function processTravelEvents(travelGroupsArray) {
             if (transport.drop_off_name) {
               description += `Drop-off: ${transport.drop_off_name}\n`;
             }
-            
-            // Personnel
-            if (transport.personnel && transport.personnel.personnel_name && Array.isArray(transport.personnel.personnel_name) && transport.personnel.personnel_name.length > 0) {
-              description += `\n👥 Personnel:\n`;
-              transport.personnel.personnel_name.forEach(person => {
-                if (person && typeof person === 'string') {
-                  description += `${person}\n`;
-                }
-              });
-            }
-
-            if (Array.isArray(transport.drivers) && transport.drivers.length > 0) {
-              description += `\n🚘 Drivers:\n`;
-              transport.drivers.forEach(driver => {
-                if (driver && typeof driver === 'string') {
-                  description += `${driver}\n`;
-                }
-              });
-            }
-
-            if (Array.isArray(transport.passengers) && transport.passengers.length > 0) {
-              description += `\n🧳 Passengers:\n`;
-              transport.passengers.forEach(passenger => {
-                if (passenger && typeof passenger === 'string') {
-                  description += `${passenger}\n`;
-                }
-              });
-            }
+            const dropOffRoles = groundTravelRoleDescription(dropOffPeople);
+            if (dropOffRoles) description += `\n${dropOffRoles}\n`;
             
             if (transport.confirmation) {
               description += `\n📋 Confirmation: ${transport.confirmation}\n`;
