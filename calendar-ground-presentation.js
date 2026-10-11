@@ -1,6 +1,6 @@
 export function groundStopCalendarTitle(value) {
   const title = typeof value === 'string' ? value.trim() : '';
-  return `🚐 ${title.replace(/^(?:(?:🚐|🚙|🚗|🚕)\s*)+/gu, '').trim() || 'Ground transportation'}`;
+  return `🚐 ${title.replace(/^(?:(?:🚐|🚙|🚗|🚕)\uFE0F?\s*)+/gu, '').trim() || 'Ground transportation'}`;
 }
 
 export function groundTravelDropOffPresentation(transport = {}) {

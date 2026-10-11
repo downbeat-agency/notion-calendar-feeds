@@ -12,6 +12,7 @@ import {
 test('ground title has exactly one van across updates and legacy vehicle prefixes', () => {
   assert.equal(groundStopCalendarTitle('  Airport shuttle to hotel  '), '🚐 Airport shuttle to hotel');
   assert.equal(groundStopCalendarTitle('🚐 🚐 Airport shuttle to hotel'), '🚐 Airport shuttle to hotel');
+  assert.equal(groundStopCalendarTitle('🚐️ 🚐 Pickup'), '🚐 Pickup');
   assert.equal(groundStopCalendarTitle('🚙 Passenger drop-off'), '🚐 Passenger drop-off');
   assert.equal(groundStopCalendarTitle(' \n '), '🚐 Ground transportation');
   assert.equal(groundStopCalendarTitle(null), '🚐 Ground transportation');
