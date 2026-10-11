@@ -54,6 +54,7 @@ import { createPostgresCalendarRefreshWorker } from './calendar-refresh-worker.j
 import {
   groundStopCalendarTitle,
   groundStopCalendarDescription,
+  groundStopPersonnelDescription,
   groundTravelDropOffPresentation,
 } from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
@@ -3501,6 +3502,9 @@ function buildTransportDescriptionDetails(transport) {
 }
 
 function buildTransportDescription(transport) {
+  if (Array.isArray(transport?.stop_participants)) {
+    return groundStopPersonnelDescription(transport);
+  }
   return groundStopCalendarDescription(transport?.notes, buildTransportDescriptionDetails(transport));
 }
 
