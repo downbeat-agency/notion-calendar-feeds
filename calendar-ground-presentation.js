@@ -1,7 +1,6 @@
 export function groundStopCalendarTitle(value) {
-  return typeof value === 'string' && value.trim()
-    ? value.trim()
-    : 'Ground transportation';
+  const title = typeof value === 'string' ? value.trim() : '';
+  return `🚐 ${title.replace(/^(?:(?:🚐|🚙|🚗|🚕)\s*)+/gu, '').trim() || 'Ground transportation'}`;
 }
 
 export function groundTravelDropOffPresentation(transport = {}) {
@@ -23,4 +22,22 @@ export function groundStopCalendarDescription(notes, details) {
   return [stopNotes, details === 'Ground transportation details' ? '' : details]
     .filter(Boolean)
     .join('\n\n');
+}
+
+export function groundStopPersonnelDescription(transport = {}) {
+  const participants = Array.isArray(transport.stop_participants)
+    ? transport.stop_participants : [];
+  const lines = [];
+  for (const [role, heading] of [['driver', 'Drivers'], ['passenger', 'Passengers']]) {
+    const names = participants.filter((person) => person?.role === role
+      && typeof person.name === 'string' && person.name.trim())
+      .map((person) => `- ${person.name.trim()}`);
+    if (names.length) lines.push(`${heading}:\n${names.join('\n')}`);
+  }
+  const notes = typeof transport.notes === 'string' ? transport.notes.trim() : '';
+  if (notes) lines.push(`Stop Notes:\n${notes}`);
+  const url = typeof transport.transportation_url === 'string'
+    ? transport.transportation_url.trim() : '';
+  if (url) lines.push(`Ground Details: ${url}`);
+  return lines.join('\n\n') || 'Ground transportation details';
 }
