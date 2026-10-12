@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import ical from 'ical-generator';
 import {
   calendarAppUrl,
   calendarContractUpdatedLabel,
@@ -11,6 +12,8 @@ import {
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
   calendarPersonnelEventWithAppLink,
+  calendarPersonnelTravelDescriptionUrl,
+  calendarPersonnelTravelDescriptionLink,
   calendarRehearsalAppUrl,
   calendarRehearsalTitle,
   calendarAdminRehearsalTitle,
@@ -45,6 +48,67 @@ test('Event Hub travel links receive booking-specific labels', () => {
     ),
     'Ground Details'
   );
+});
+
+test('personnel travel notes prefer the web destination and never repeat the app URL', () => {
+  const web = `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}?section=travel&travel=flights`;
+  const app = `https://app.downbeat.agency/event/${EVENT_NOTION_PAGE_ID}/itinerary/flight-leg-77777777-7777-4777-8777-777777777777`;
+  assert.equal(calendarPersonnelTravelDescriptionUrl(web, app), web);
+  assert.equal(calendarPersonnelTravelDescriptionUrl('', app), '');
+  assert.equal(calendarPersonnelTravelDescriptionUrl('', web), web);
+  assert.equal(calendarPersonnelTravelDescriptionUrl('', 'https://www.notion.so/legacy'),
+    'https://www.notion.so/legacy');
+  assert.equal(calendarPersonnelTravelDescriptionUrl('https://example.test/unrelated', app), '');
+  for (const [type, label] of [['flights', 'Flight Details'], ['hotels', 'Hotel Details'], ['ground', 'Ground Details']]) {
+    const typedWeb = `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}?section=travel&travel=${type}`;
+    assert.equal(calendarPersonnelTravelDescriptionLink(typedWeb, app, type), `${label}: ${typedWeb}`);
+    assert.equal(calendarPersonnelTravelDescriptionLink('', app, type), '');
+  }
+});
+
+test('personnel flight, hotel, ground, and rehearsal ICS keep app URL and web notes separate', () => {
+  const types = [
+    ['flight_departure', 'flights', 'Flight Details', 'flight-leg-77777777-7777-4777-8777-777777777777'],
+    ['hotel', 'hotels', 'Hotel Details', 'hotel-88888888-8888-4888-8888-888888888888-check-in'],
+    ['ground_transport_meeting', 'ground', 'Ground Details', 'ground-stop-aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa-meetup'],
+  ];
+  const cases = types.map(([type, tab, label, item]) => {
+    const app = `${EVENT_APP_URL}/itinerary/${item}`;
+    const web = `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}?section=travel&travel=${tab}`;
+    return calendarPersonnelEventWithAppLink({
+      type, url: app,
+      description: `Keep gate A, then B; call dispatch\\now.\n\n${calendarPersonnelTravelDescriptionLink(web, app, tab)}`,
+      expectedApp: app, expectedWeb: `${label}: ${web}`,
+    });
+  });
+  const rehearsalApp = 'https://app.downbeat.agency/rehearsal/33333333-3333-4333-8333-333333333333';
+  const rehearsalWeb = `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}?section=rehearsals&rehearsalId=33333333-3333-4333-8333-333333333333`;
+  cases.push(calendarPersonnelEventWithAppLink({ type: 'rehearsal',
+    app_link: rehearsalApp, rehearsal_link: rehearsalWeb,
+    description: 'Full run, then notes; keep the accents José.',
+    expectedApp: rehearsalApp, expectedWeb: `Rehearsal Link: ${rehearsalWeb}`,
+  }));
+  for (const [index, item] of cases.entries()) {
+    const refreshed = calendarPersonnelEventWithAppLink(item);
+    assert.equal(refreshed.url, item.url);
+    assert.equal(refreshed.description, item.description);
+    const calendar = ical({ name: 'Downbeat' });
+    calendar.createEvent({ id: `stable-${index}@calendar.downbeat.agency`,
+      start: new Date('2026-10-03T16:00:00Z'), end: new Date('2026-10-03T17:00:00Z'),
+      summary: 'Travel', description: item.description, url: item.url });
+    const output = calendar.toString();
+    const unfolded = output.replace(/\r\n /gu, '');
+    const description = unfolded.split('\r\n').find((line) => line.startsWith('DESCRIPTION:')) || '';
+    assert.equal(item.url, item.expectedApp);
+    assert.ok(unfolded.includes(`URL;VALUE=URI:${item.expectedApp}`));
+    assert.ok(description.includes(item.expectedWeb));
+    assert.equal(description.split(item.expectedWeb).length - 1, 1);
+    assert.doesNotMatch(description, /app\.downbeat\.agency/u);
+    assert.match(unfolded, new RegExp(`UID:stable-${index}@calendar\\.downbeat\\.agency`, 'u'));
+    if (index < 3) assert.match(description, /gate A\\, then B\\; call dispatch/u);
+    else assert.match(description, /notes\\; keep the accents José/u);
+    assert.ok(output.split('\r\n').every((line) => Buffer.byteLength(line, 'utf8') <= 75));
+  }
 });
 
 test('legacy Notion travel URLs keep their honest label', () => {
@@ -323,20 +387,21 @@ test('personnel main events never turn an Event Link into an App Link', () => {
   assert.doesNotMatch(event.description, /App Link:/u);
 });
 
-test('personnel rehearsals prefer the App link and never retain a PCO URL', () => {
-  const appLink = 'https://app.downbeat.agency/events/event-id?section=rehearsals&rehearsalId=rehearsal-id';
+test('personnel rehearsals keep the App URL and show the matching web link once in notes', () => {
+  const appLink = 'https://app.downbeat.agency/rehearsal/33333333-3333-4333-8333-333333333333';
+  const webLink = `https://music.downbeat.agency/events/${POSTGRES_EVENT_ID}?section=rehearsals&rehearsalId=33333333-3333-4333-8333-333333333333`;
   const rehearsal = calendarPersonnelEventWithAppLink({
     type: 'rehearsal',
     appUrl: appLink,
+    rehearsalLink: webLink,
     url: 'https://services.planningcenteronline.com/plans/123',
-    description: 'Full run\n\nLINKS\n\nPCO Link: https://services.planningcenteronline.com/plans/123',
+    description: `Full run\n\nLINKS\n\nApp Link: ${appLink}\n\nPCO Link: https://services.planningcenteronline.com/plans/123`,
   });
   assert.equal(rehearsal.url, appLink);
-  assert.equal(
-    rehearsal.description,
-    `Full run\n\nLINKS\n\nApp Link: ${appLink}`
-  );
-  assert.doesNotMatch(rehearsal.description, /PCO|planningcenter/iu);
+  assert.equal(rehearsal.description, `Full run\n\nLINKS\n\nRehearsal Link: ${webLink}`);
+  assert.equal(calendarPersonnelEventWithAppLink(rehearsal).description, rehearsal.description);
+  assert.equal(calendarPersonnelEventWithAppLink(rehearsal).url, appLink);
+  assert.doesNotMatch(rehearsal.description, /PCO|planningcenter|App Link/iu);
   assert.equal(Object.hasOwn(rehearsal, 'appUrl'), false);
 
   assert.equal(
