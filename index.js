@@ -33,11 +33,11 @@ import {
   calendarEventWithEventHubLink,
   calendarMainEventTitle,
   calendarPersonnelEventWithAppLink,
+  calendarPersonnelTravelDescriptionLink,
   calendarRehearsalAppUrl,
   calendarRehearsalTitle,
   calendarAdminRehearsalTitle,
   calendarTeamEventUrl,
-  calendarTravelLinkLabel,
 } from './calendar-event-links.js';
 import { readStableFormulaSnapshot } from './stable-formula-snapshot.js';
 import {
@@ -3341,12 +3341,6 @@ function normalizeTransportTitle(rawTitle) {
   return groundStopCalendarTitle(rawTitle);
 }
 
-function calendarTravelDescriptionLink(url, travelType) {
-  const value = typeof url === 'string' ? url.trim() : '';
-  if (!value) return '';
-  return `${calendarTravelLinkLabel(value, travelType)}: ${value}`;
-}
-
 function buildTransportDescriptionDetails(transport) {
   const rawDescription = transport?.description;
   if (!rawDescription) {
@@ -3438,8 +3432,9 @@ function buildTransportDescriptionDetails(transport) {
       }
     }
 
-    const travelUrl = transport.transportation_url || transport.notion_url;
-    const travelLink = calendarTravelDescriptionLink(travelUrl, 'ground');
+    const travelLink = calendarPersonnelTravelDescriptionLink(
+      transport.transportation_web_url, transport.transportation_url || transport.notion_url, 'ground'
+    );
     if (travelLink) {
       description += `\n${travelLink}`;
     }
@@ -3489,8 +3484,9 @@ function buildTransportDescriptionDetails(transport) {
       description += `Confirmation: ${confirmation}\n`;
     }
 
-    const travelUrl = transport.transportation_url || transport.notion_url;
-    const travelLink = calendarTravelDescriptionLink(travelUrl, 'ground');
+    const travelLink = calendarPersonnelTravelDescriptionLink(
+      transport.transportation_web_url, transport.transportation_url || transport.notion_url, 'ground'
+    );
     if (travelLink) {
       description += `\n${travelLink}`;
     }
@@ -3707,7 +3703,9 @@ function buildFlightDescription(flight, legType, start, end, personName) {
   if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
   if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
-  const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
+  const travelLink = calendarPersonnelTravelDescriptionLink(
+    flight.flight_web_url, flight.flight_url || flight.notion_url, 'flights'
+  );
   if (travelLink) desc += `\n${travelLink}\n`;
   return calendarTravelDescription(
     appendFlightAwareDetails(desc.trim(), flight, legType),
@@ -3736,7 +3734,9 @@ function buildLayoverDescription(flight, legType, start, end, personName) {
   if (departureTime) desc += `Flight Departure: ${departureTime}\n`;
   if (arrivalTime) desc += `Flight Arrival: ${arrivalTime}\n\n`;
   if (personName) desc += `Passengers:\n• ${personName}\n`;
-  const travelLink = calendarTravelDescriptionLink(flight.flight_url || flight.notion_url, 'flights');
+  const travelLink = calendarPersonnelTravelDescriptionLink(
+    flight.flight_web_url, flight.flight_url || flight.notion_url, 'flights'
+  );
   if (travelLink) desc += `\n${travelLink}\n`;
   return calendarTravelDescription(desc.trim(), flight.booking_notes, flight.leg_notes, 'Flight Notes');
 }
@@ -4160,7 +4160,9 @@ function buildCalendarEventsFromCalendarData(calendarData) {
       if (hotelTimes) {
         hotelTimes = shiftRangeByDays(hotelTimes, helperDeltaDays);
         const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-        const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
+        const hotelLink = calendarPersonnelTravelDescriptionLink(
+          hotel.hotel_web_url, hotel.hotel_url, 'hotels'
+        );
         allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: calendarTravelDescription(`Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, hotel.booking_notes, hotel.property_notes, 'Property Notes'), location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: event.event_name });
       }
     });
@@ -4220,7 +4222,9 @@ function buildCalendarEventsFromCalendarData(calendarData) {
     const hotelTimes = hotel.dates_booked ? parseUnifiedDateTime(hotel.dates_booked) : null;
     if (hotelTimes) {
       const names = hotel.names_on_reservation ? '\n' + hotel.names_on_reservation.split(',').map(n => n.trim()).filter(Boolean).join('\n') : 'N/A';
-      const hotelLink = calendarTravelDescriptionLink(hotel.hotel_url, 'hotels');
+      const hotelLink = calendarPersonnelTravelDescriptionLink(
+        hotel.hotel_web_url, hotel.hotel_url, 'hotels'
+      );
       allCalendarEvents.push({ ...calendarOccurrence(hotel), type: 'hotel', title: `🏨 ${hotel.hotel_name || hotel.title || 'Hotel'}`, start: hotelTimes.start, end: hotelTimes.end, description: calendarTravelDescription(`Hotel Stay\nConfirmation: ${hotel.confirmation || 'N/A'}${hotel.hotel_phone ? `\nPhone: ${hotel.hotel_phone}` : ''}\n\nNames on Reservation:${names}\nBooked Under: ${hotel.booked_under || 'N/A'}${hotelLink ? `\n\n${hotelLink}` : ''}`, hotel.booking_notes, hotel.property_notes, 'Property Notes'), location: hotel.hotel_address || hotel.hotel_name || 'Hotel', url: hotel.hotel_url || '', mainEvent: '' });
     }
   });

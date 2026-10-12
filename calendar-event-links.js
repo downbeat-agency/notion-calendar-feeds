@@ -137,6 +137,23 @@ export function calendarRehearsalAppUrl(rehearsal = {}) {
   );
 }
 
+export function calendarPersonnelTravelDescriptionUrl(webUrl, fallbackUrl) {
+  const web = validHttpUrl(webUrl);
+  if (web && new URL(web).hostname.toLowerCase() === 'music.downbeat.agency') return web;
+  const fallback = validHttpUrl(fallbackUrl);
+  if (!fallback) return '';
+  const host = new URL(fallback).hostname.toLowerCase();
+  return host === 'music.downbeat.agency'
+    || host === 'notion.so' || host.endsWith('.notion.so')
+    || host === 'notion.com' || host.endsWith('.notion.com')
+    ? fallback : '';
+}
+
+export function calendarPersonnelTravelDescriptionLink(webUrl, fallbackUrl, travelType) {
+  const url = calendarPersonnelTravelDescriptionUrl(webUrl, fallbackUrl);
+  return url ? `${calendarTravelLinkLabel(url, travelType)}: ${url}` : '';
+}
+
 export function calendarTeamEventUrl(event = {}) {
   return validHttpUrl(
     event.schedule_url
@@ -477,10 +494,13 @@ function calendarRehearsalWithLinks(event = {}, options = {}) {
   const rehearsalUrl = validHttpUrl(
     event.rehearsalLink || event.rehearsal_link || embeddedRehearsalUrl
   );
-  const appUrl = calendarRehearsalAppUrl(event) || validHttpUrl(embeddedAppUrl);
+  const currentUrl = validHttpUrl(event.url);
+  const retainedAppUrl = currentUrl && new URL(currentUrl).hostname.toLowerCase() === 'app.downbeat.agency'
+    ? currentUrl : '';
+  const appUrl = calendarRehearsalAppUrl(event) || validHttpUrl(embeddedAppUrl) || retainedAppUrl;
   const linkLines = [
     rehearsalUrl ? `Rehearsal Link: ${rehearsalUrl}` : '',
-    appUrl ? `App Link: ${appUrl}` : '',
+    !useAppUrl && appUrl ? `App Link: ${appUrl}` : '',
   ].filter(Boolean);
   const decorated = {
     ...event,

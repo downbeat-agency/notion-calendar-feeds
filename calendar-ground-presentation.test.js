@@ -57,6 +57,8 @@ test('stop notes stay multiline and precede useful existing details', () => {
 
 test('stop presentation serializes to ICS summary and notes without changing identity or location', () => {
   const calendar = ical({ name: 'Downbeat' });
+  const appUrl = 'https://app.downbeat.agency/event/23939e4a-65a9-8032-be86-df28748fcd61/itinerary/ground-stop-aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa-meetup';
+  const webUrl = 'https://music.downbeat.agency/events/22222222-2222-4222-8222-222222222222?section=travel&travel=ground';
   calendar.createEvent({
     id: 'stable-stop@calendar.downbeat.agency',
     start: new Date('2026-10-03T16:00:00Z'),
@@ -65,8 +67,11 @@ test('stop presentation serializes to ICS summary and notes without changing ide
     description: groundStopPersonnelDescription({
       stop_participants: [{ role: 'driver', name: 'Diego' }, { role: 'passenger', name: 'Alex' }],
       notes: 'Wait for final passenger.\nCall dispatch.',
+      transportation_url: appUrl,
+      transportation_web_url: webUrl,
     }),
     location: '9800 Airport Blvd',
+    url: appUrl,
   });
   const output = calendar.toString();
   const unfolded = output.replace(/\r\n /gu, '');
@@ -74,6 +79,10 @@ test('stop presentation serializes to ICS summary and notes without changing ide
   assert.match(unfolded, /DESCRIPTION:Drivers:\\n- Diego\\n\\nPassengers:\\n- Alex\\n\\nStop Notes:\\nWait for final passenger\.\\nCall dispatch\./u);
   assert.match(output, /LOCATION:9800 Airport Blvd/u);
   assert.match(output, /UID:stable-stop@calendar\.downbeat\.agency/u);
+  assert.match(unfolded, /Ground Details: https:\/\/music\.downbeat\.agency\/events\/22222222-2222-4222-8222-222222222222\?section=travel&travel=ground/u);
+  assert.match(unfolded, /URL;VALUE=URI:https:\/\/app\.downbeat\.agency\/event\/23939e4a-65a9-8032-be86-df28748fcd61\/itinerary\/ground-stop-aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa-meetup/u);
+  assert.equal(unfolded.match(/Ground Details:/gu)?.length, 1);
+  assert.doesNotMatch(unfolded.split('\r\n').find((line) => line.startsWith('DESCRIPTION:')), /app\.downbeat\.agency/u);
 });
 
 test('stop descriptions use only that stop, omit missing fields and private phones', () => {
@@ -89,6 +98,9 @@ test('stop descriptions use only that stop, omit missing fields and private phon
   assert.doesNotMatch(first, /private|Sam|rear entrance/u);
   assert.equal(second, 'Drivers:\n- Sam\n\nStop Notes:\nUse rear entrance');
   assert.equal(groundStopPersonnelDescription({ stop_participants: [] }), 'Ground transportation details');
+  assert.equal(groundStopPersonnelDescription({ stop_participants: [],
+    transportation_url: 'https://app.downbeat.agency/event/23939e4a-65a9-8032-be86-df28748fcd61/itinerary/ground-stop-aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa-pickup',
+  }), 'Ground transportation details');
   assert.equal(groundStopPersonnelDescription({ stop_participants: [],
     description: { Drivers: [{ driver_name: 'Unrelated trip driver' }] },
   }), 'Ground transportation details');

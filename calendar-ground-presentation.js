@@ -1,3 +1,5 @@
+import { calendarPersonnelTravelDescriptionUrl } from './calendar-event-links.js';
+
 export function groundStopCalendarTitle(value) {
   const title = typeof value === 'string' ? value.trim() : '';
   return `🚐 ${title.replace(/^(?:(?:🚐|🚙|🚗|🚕)\uFE0F?\s*)+/gu, '').trim() || 'Ground transportation'}`;
@@ -36,8 +38,9 @@ export function groundStopPersonnelDescription(transport = {}) {
   }
   const notes = typeof transport.notes === 'string' ? transport.notes.trim() : '';
   if (notes) lines.push(`Stop Notes:\n${notes}`);
-  const url = typeof transport.transportation_url === 'string'
-    ? transport.transportation_url.trim() : '';
+  const url = calendarPersonnelTravelDescriptionUrl(
+    transport.transportation_web_url, transport.transportation_url
+  );
   if (url) lines.push(`Ground Details: ${url}`);
   return lines.join('\n\n') || 'Ground transportation details';
 }
