@@ -190,7 +190,8 @@ export function travelCalendarEventsForFeed(events, feed = 'all') {
 
   const sourceEvents = Array.isArray(events) ? events : [];
   if (feed === 'all') {
-    return [...sourceEvents];
+    // Older cached travel JSON can still contain the retired checkout occurrence.
+    return sourceEvents.filter((event) => normalizedEventType(event) !== 'hotel_checkout');
   }
   if (feed === 'flights') {
     return sourceEvents.filter(isFlightEvent).map((event) => withFeedScopedUid(event, 'flights'));

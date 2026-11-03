@@ -46,6 +46,15 @@ const baseEvents = [
 
 const indexSource = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
 
+test('travel projector retains checkout time in the stay and does not emit a checkout event', () => {
+  const travelSource = indexSource.split('function processTravelEvents(travelGroupsArray)')[1]
+    .split('function serializeTravelFeedCalendar')[0];
+  assert.match(travelSource, /Check-out: \$\{checkoutHasTime/u);
+  assert.match(travelSource, /toLocaleString\('en-US', \{ timeZone: 'UTC'/u);
+  assert.match(travelSource, /toLocaleDateString\('en-US', \{ timeZone: 'UTC'/u);
+  assert.doesNotMatch(travelSource, /type: 'hotel_checkout'|checkout_occurrence_key/u);
+});
+
 test('Travel feed definitions retain Travel All and add three category feeds', () => {
   assert.deepEqual(TRAVEL_FEED_KEYS, ['all', 'flights', 'ground', 'hotels']);
   assert.deepEqual(
@@ -65,9 +74,46 @@ test('Travel feed definitions retain Travel All and add three category feeds', (
   assert.equal(travelFeedKeyFromSubscriptionPath('/subscribe/unknown'), null);
 });
 
-test('Travel All preserves the existing event set and presentation', () => {
+test('Travel All omits retired checkout occurrences while preserving stay and other travel UIDs', () => {
   const events = travelCalendarEventsForFeed(baseEvents, 'all');
-  assert.deepEqual(events, baseEvents);
+  assert.deepEqual(events, baseEvents.slice(0, 3));
+  const calendar = ical({ name: 'Travel Calendar' });
+  for (const event of events) {
+    calendar.createEvent({
+      id: event.uid,
+      start: new Date(event.start),
+      end: new Date(event.end),
+      summary: event.title,
+      description: event.description,
+      floating: true,
+    });
+  }
+  const ics = serializeCalendarWithTimePolicy(calendar, { mode: 'floating' });
+  assert.match(ics, /UID:downbeat-hotel@calendar\.downbeat\.agency/u);
+  assert.match(ics, /UID:downbeat-flight@calendar\.downbeat\.agency/u);
+  assert.match(ics, /UID:downbeat-ground@calendar\.downbeat\.agency/u);
+  assert.doesNotMatch(ics, /downbeat-checkout|Check-out/u);
+});
+
+test('hotel feed keeps multi-night, same-day, missing checkout and DST boundary stays as one occurrence', () => {
+  const cases = [
+    ['multi-night', '2026-10-10T15:00:00.000Z', '2026-10-12T11:00:00.000Z', '2026-10-12T00:00:00.000Z'],
+    ['same-day', '2026-10-10T08:00:00.000Z', '2026-10-10T20:00:00.000Z', '2026-10-11T00:00:00.000Z'],
+    ['missing checkout', '2026-10-10T15:00:00.000Z', null, '2026-10-11T00:00:00.000Z'],
+    ['spring DST', '2026-03-07T15:00:00.000Z', '2026-03-09T11:00:00.000Z', '2026-03-09T00:00:00.000Z'],
+    ['fall DST', '2026-10-31T15:00:00.000Z', '2026-11-02T11:00:00.000Z', '2026-11-02T00:00:00.000Z'],
+  ];
+  for (const [label, start, end, expectedEnd] of cases) {
+    const source = { ...baseEvents[2], start, end };
+    const all = travelCalendarEventsForFeed([source, baseEvents[3]], 'all');
+    assert.equal(all.length, 1, label);
+    assert.equal(all[0].uid, source.uid, label);
+    const hotels = travelCalendarEventsForFeed([source, baseEvents[3]], 'hotels');
+    assert.equal(hotels.length, 1, label);
+    assert.equal(hotels[0].end.toISOString(), expectedEnd, label);
+    assert.equal(hotels[0].uid, 'downbeat-hotel-travel-hotels@calendar.downbeat.agency', label);
+    assert.match(hotels[0].description, /Check-out: /u, label);
+  }
 });
 
 test('Flights feed includes only flight occurrences with feed-scoped UIDs', () => {
