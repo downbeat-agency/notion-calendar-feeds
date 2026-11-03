@@ -5788,8 +5788,12 @@ function processTravelEvents(travelGroupsArray) {
               const checkOutDesc = checkOutDate;
               if (!isNaN(checkOutDesc.getTime())) {
                 const nights = Math.ceil((checkOutDesc - checkIn) / (1000 * 60 * 60 * 24));
+                const checkoutSource = hotel.check_out || hotel.dates_booked || '';
+                const checkoutHasTime = /T\d{2}:\d{2}|\b\d{1,2}(?::\d{2})?\s*[AP]M\b/iu.test(checkoutSource);
                 description += `\n📅 Dates:\n`;
-                description += `   Check-out: ${checkOutDesc.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
+                description += `   Check-out: ${checkoutHasTime
+                  ? checkOutDesc.toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'long', timeStyle: 'short' })
+                  : checkOutDesc.toLocaleDateString('en-US', { timeZone: 'UTC', dateStyle: 'long' })}\n`;
                 description += `   Duration: ${nights} night${nights !== 1 ? 's' : ''}\n`;
               }
             }
@@ -5832,68 +5836,6 @@ function processTravelEvents(travelGroupsArray) {
               location: location,
               url: url,
               type: 'hotel_checkin'
-            });
-          }
-        }
-
-        // Hotel check-out
-        if (checkOutDate) {
-          const checkOut = checkOutDate;
-          if (!isNaN(checkOut.getTime())) {
-            let description = '';
-            
-            if (hotel.hotel_name) {
-              description += `🏨 ${hotel.hotel_name} - Check-out\n`;
-            }
-            
-            // Personnel
-            if (hotel.personnel && hotel.personnel.personnel_name && Array.isArray(hotel.personnel.personnel_name) && hotel.personnel.personnel_name.length > 0) {
-              description += `\n👥 Personnel:\n`;
-              hotel.personnel.personnel_name.forEach(person => {
-                if (person && typeof person === 'string') {
-                  description += `${person}\n`;
-                }
-              });
-            }
-            
-            const reservationNames = typeof hotel.names_on_reservation === 'string'
-              ? hotel.names_on_reservation.split(',').map(name => name.trim()).filter(Boolean)
-              : [];
-            if (hotel.confirmation || reservationNames.length > 0) {
-              description += `\n📋 Booking Details:\n`;
-              if (hotel.confirmation) {
-                description += `   Confirmation: ${hotel.confirmation}\n`;
-              }
-              if (reservationNames.length > 0) {
-                description += `   Names on Reservation:\n`;
-                reservationNames.forEach(name => {
-                  description += `   - ${name}\n`;
-                });
-              }
-            }
-
-            // Location field: combine hotel name and address
-            let location = '';
-            if (hotel.hotel_name && hotel.hotel_address) {
-              location = `${hotel.hotel_name} ${hotel.hotel_address}`;
-            } else if (hotel.hotel_address) {
-              location = hotel.hotel_address;
-            } else if (hotel.hotel_name) {
-              location = hotel.hotel_name;
-            }
-
-            // Prefer the explicit hotel URL from the formula, but keep legacy support.
-            const url = hotel.hotel_url || hotel.notion_url || '';
-
-            allCalendarEvents.push({
-              ...calendarOccurrence(hotel, 'checkout_uid', 'checkout_occurrence_key'),
-              start: checkOut,
-              end: new Date(checkOut.getTime() + 60 * 60 * 1000), // 1 hour event
-              title: hotel.hotel_name ? `${hotel.hotel_name} - Check-out` : 'Hotel Check-out',
-              description: calendarTravelDescription(description.trim(), hotel.booking_notes, hotel.property_notes, 'Property Notes'),
-              location: location,
-              url: url,
-              type: 'hotel_checkout'
             });
           }
         }

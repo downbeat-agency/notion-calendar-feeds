@@ -16,14 +16,16 @@ Each data source can generate multiple calendar events (main events + flights + 
 The original Travel calendar remains the complete compatibility feed. Three additional
 views are derived from the same rendered event set and can be subscribed independently:
 
-- **Travel All** — `/calendar/travel.ics`; preserves the existing event set and presentation.
+- **Travel All** — `/calendar/travel.ics`; includes flights, ground transportation,
+  and hotel stays. Hotel checkout remains in the stay details, with no separate
+  checkout occurrence.
 - **✈️ Travel • Flights** — `/calendar/travel-flights.ics`; includes only flight occurrences.
 - **🚐 Travel • Ground** — `/calendar/travel-ground.ics`; includes only transportation
   occurrences and prefixes each title with `🚐`.
 - **🏨 Travel • Hotels** — `/calendar/travel-hotels.ics`; emits one `hotel_stay` event for
   each check-in occurrence, prefixes its title with `🏨`, and renders the stay as an
   all-day date range. Exact check-in and check-out times remain in the description;
-  separate check-out occurrences are intentionally omitted from this compact view.
+  separate check-out occurrences are omitted from all Travel views.
 
 The corresponding subscription pages are `/subscribe/travel`,
 `/subscribe/travel-flights`, `/subscribe/travel-ground`, and `/subscribe/travel-hotels`.
