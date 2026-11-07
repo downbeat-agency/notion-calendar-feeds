@@ -58,6 +58,7 @@ import {
   groundTravelDropOffPresentation,
 } from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
+import { assignmentsBlock, totalPayLine } from './calendar-assignment-presentation.js';
 import {
   TRAVEL_FEED_KEYS,
   travelCalendarEventsForFeed,
@@ -4092,8 +4093,8 @@ function buildCalendarEventsFromCalendarData(calendarData) {
           !(typeof payTotalNumeric === 'number' && payTotalNumeric <= 0);
         if (hasPosition || hasAssignments || hasPayTotal) {
           if (hasPosition) payrollInfo += `Position: ${positionValue}\n`;
-          if (hasAssignments) payrollInfo += `Assignments: ${assignmentsValue}\n`;
-          if (hasPayTotal) payrollInfo += `Total Pay: ${payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`}\n(Pay includes add-ons)\n`;
+          if (hasAssignments) payrollInfo += assignmentsBlock(assignmentsValue);
+          if (hasPayTotal) payrollInfo += totalPayLine(payTotalStr);
           payrollInfo += '\n';
         }
         let calltimeInfo = '';
@@ -5211,11 +5212,10 @@ function processAdminEvents(eventsArray) {
             payrollInfo += `Position: ${positionValue}\n`;
           }
           if (hasAssignments) {
-            payrollInfo += `Assignments: ${assignmentsValue}\n`;
+            payrollInfo += assignmentsBlock(assignmentsValue);
           }
           if (hasPayTotal) {
-            const payDisplay = payTotalStr.startsWith('$') ? payTotalStr : `$${payTotalStr}`;
-            payrollInfo += `Total Pay: ${payDisplay}\n(Pay includes add-ons)\n`;
+            payrollInfo += totalPayLine(payTotalStr);
           }
           payrollInfo += '\n---\n\n';
         }
