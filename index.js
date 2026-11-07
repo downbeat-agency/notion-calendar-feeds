@@ -58,7 +58,7 @@ import {
   groundTravelDropOffPresentation,
 } from './calendar-ground-presentation.js';
 import { calendarTravelDescription } from './calendar-travel-notes.js';
-import { assignmentsBlock, totalPayLine } from './calendar-assignment-presentation.js';
+import { assignmentsBlock, personalMainEventDescription, totalPayLine } from './calendar-assignment-presentation.js';
 import {
   TRAVEL_FEED_KEYS,
   travelCalendarEventsForFeed,
@@ -4100,15 +4100,15 @@ function buildCalendarEventsFromCalendarData(calendarData) {
         let calltimeInfo = '';
         if (event.calltime) {
           const displayCalltime = alignmentResult.helperClockCorrected ? formatFloatingTimeFromDate(eventTimes.start) : formatCallTime(event.calltime);
-          calltimeInfo = `➡️ Call Time: ${displayCalltime}\n\n`;
+          calltimeInfo = `Call Time: ${displayCalltime}\n\n`;
         }
-        let gearChecklistInfo = event.gear_checklist?.trim() ? `🔧 Gear Checklist: ${event.gear_checklist}\n\n` : '';
+        let gearChecklistInfo = event.gear_checklist?.trim() ? `GEAR CHECKLIST\n${event.gear_checklist.trim()}\n\n` : '';
         const personnelConverted = convertPersonnelTimesUTCToPacific(event.event_personnel?.trim() || '', eventTimes.start);
         const personnelText = sanitizePersonnelTimesAsText(personnelConverted);
-        let eventPersonnelInfo = personnelText ? `👥 Event Personnel:\n${personnelText}\n\n` : '';
+        let eventPersonnelInfo = personnelText ? `BAND\n${personnelText}\n\n` : '';
         const eventHubUrl = calendarEventHubUrl(event);
         const eventUrlInfo = eventHubUrl ? `Event Link: ${eventHubUrl}\n\n` : '';
-        allCalendarEvents.push({ ...calendarMainEventOccurrence(event), type: 'main_event', title: calendarMainEventTitle(event), start: eventTimes.start, end: eventTimes.end, description: payrollInfo + calltimeInfo + gearChecklistInfo + eventPersonnelInfo + eventUrlInfo + (event.general_info || ''), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
+        allCalendarEvents.push({ ...calendarMainEventOccurrence(event), type: 'main_event', title: calendarMainEventTitle(event), start: eventTimes.start, end: eventTimes.end, description: personalMainEventDescription({ calltimeInfo, payrollInfo, gearChecklistInfo, generalInfo: event.general_info, eventPersonnelInfo, eventUrlInfo }), location: event.venue_address || event.venue || '', band: event.band || '', mainEvent: event.event_name });
       }
     }
     (event.flights || []).forEach(flight => {
