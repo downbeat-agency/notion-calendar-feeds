@@ -93,3 +93,29 @@ export function payDisplay(payTotalStr) {
 export function totalPayLine(payTotalStr) {
   return `Total Pay: ${payDisplay(payTotalStr)} (includes add-ons)\n`;
 }
+
+function section(value) {
+  const text = String(value ?? '').trim();
+  return text ? `${text}\n\n` : '';
+}
+
+// Order of a gig's notes in a musician's own calendar: day-of info first,
+// then event details and contract, then the band list. The links and
+// "Updated" lines are appended after this by calendarPersonnelEventWithAppLink.
+export function personalMainEventDescription({
+  calltimeInfo = '',
+  payrollInfo = '',
+  gearChecklistInfo = '',
+  generalInfo = '',
+  eventPersonnelInfo = '',
+  eventUrlInfo = '',
+} = {}) {
+  return [
+    calltimeInfo,
+    payrollInfo,
+    gearChecklistInfo,
+    generalInfo,
+    eventPersonnelInfo,
+    eventUrlInfo,
+  ].map(section).join('');
+}

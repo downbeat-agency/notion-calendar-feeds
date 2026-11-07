@@ -302,14 +302,19 @@ function nonEmptyMainEventLines(lines = []) {
   });
 }
 
-function spacedMainEventBody(lines = []) {
+function spacedMainEventBody(lines = [], options = {}) {
+  const personalLayout = options.personalLayout === true;
   const output = [];
   lines.forEach((rawLine) => {
     const line = String(rawLine || '').trimEnd();
     const heading = mainEventHeading(line);
     if (heading) {
       if (output.length && output.at(-1) !== '') output.push('');
-      if (output.at(-2) !== heading.label) output.push(heading.label);
+      // A musician's own calendar uses one heading style: every section in caps,
+      // with the details listed directly instead of under an EVENT DETAILS group.
+      if (personalLayout && heading.label === 'EVENT DETAILS') return;
+      const label = personalLayout ? heading.label.toUpperCase() : heading.label;
+      if (output.at(-2) !== label) output.push(label);
       if (heading.kind === 'group') output.push('');
       return;
     }
@@ -323,7 +328,7 @@ function spacedMainEventBody(lines = []) {
   return output.join('\n').replace(/\n{3,}/gu, '\n\n').trim();
 }
 
-function cleanMainEventDescription(value = '') {
+function cleanMainEventDescription(value = '', options = {}) {
   let pcoUrl = '';
   let embeddedEventUrl = '';
   let embeddedAppUrl = '';
@@ -360,6 +365,13 @@ function cleanMainEventDescription(value = '') {
       return;
     }
     if (/^(?:n\/?a|none|null|-+)$/iu.test(line)) return;
+    // The band list follows CONTRACTED in a musician's own calendar; its lines
+    // must not be reformatted as contract lines.
+    if (options.personalLayout === true && line === 'BAND') {
+      inContracted = false;
+      lines.push(rawLine);
+      return;
+    }
     const headingParts = mainEventHeadingParts(line);
     const heading = headingParts?.heading || null;
     if (heading?.label === 'LINKS') {
@@ -382,7 +394,7 @@ function cleanMainEventDescription(value = '') {
     lines.push(rawLine);
   });
   return {
-    body: spacedMainEventBody(nonEmptyMainEventLines(lines)),
+    body: spacedMainEventBody(nonEmptyMainEventLines(lines), options),
     embeddedAppUrl,
     embeddedContractUpdated,
     embeddedDetailsUpdated,
@@ -527,7 +539,9 @@ function calendarMainEventWithLinks(event = {}, options = {}) {
   const useAppUrl = options.useAppUrl === true;
   const normalizedDescription = calendarDescriptionWithoutTimelineLink(event.description || '');
   const notionLink = normalizedDescription.match(/(^|\n)Notion Link:\s*(https?:\/\/[^\s\r\n]+)/u);
-  const cleaned = cleanMainEventDescription(normalizedDescription);
+  const cleaned = cleanMainEventDescription(normalizedDescription, {
+    personalLayout: options.personalLayout === true,
+  });
   const eventHubUrl = calendarEventHubUrl(event)
     || eventHubUrlFromEmbeddedUrl(cleaned.embeddedEventUrl)
     || (notionLink ? calendarEventHubUrl({ notion_url: notionLink[2] }) : '');
@@ -598,6 +612,7 @@ export function calendarPersonnelEventWithAppLink(event = {}) {
     return calendarMainEventWithLinks(event, {
       includePco: false,
       useAppUrl: true,
+      personalLayout: true,
     });
   }
   if (eventType === 'rehearsal') {
