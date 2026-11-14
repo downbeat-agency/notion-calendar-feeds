@@ -5931,7 +5931,7 @@ function processTravelEvents(travelGroupsArray) {
               description: description.trim(),
               location: location,
               url: url,
-              drivers: calendarDriverNames(transport.drivers),
+              drivers: calendarDriverNames(transport.pickup_drivers ?? transport.drivers),
               type: 'transportation_pickup'
             });
           }
@@ -6009,7 +6009,7 @@ function processTravelEvents(travelGroupsArray) {
               description: description.trim(),
               location: dropOffPresentation.location,
               url: url,
-              drivers: calendarDriverNames(transport.drivers),
+              drivers: calendarDriverNames(transport.dropoff_drivers ?? transport.drivers),
               type: 'transportation_dropoff'
             });
           }
