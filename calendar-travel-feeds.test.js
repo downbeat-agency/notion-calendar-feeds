@@ -205,3 +205,19 @@ test('unknown Travel feed keys fail closed', () => {
     /Unknown Travel feed/u
   );
 });
+
+test('Ground feed titles show driver first names', () => {
+  const events = [
+    { type: 'transportation_pickup', title: 'Lobby Call', uid: 'g1@x', drivers: ['Alex Rivera', 'Coen Smith (555) 123-4567'] },
+    { type: 'transportation_dropoff', title: 'Drop Off', uid: 'g2@x', drivers: ['Alex Rivera', 'Alex Rivera'] },
+    { type: 'transportation_pickup', title: 'Shuttle', uid: 'g3@x', drivers: [] },
+  ];
+  assert.deepEqual(
+    travelCalendarEventsForFeed(events, 'ground').map((event) => event.title),
+    ['🚐 Lobby Call · Alex/Coen', '🚐 Drop Off · Alex', '🚐 Shuttle'],
+  );
+  assert.deepEqual(
+    travelCalendarEventsForFeed(events, 'all').map((event) => event.title),
+    ['Lobby Call', 'Drop Off', 'Shuttle'],
+  );
+});

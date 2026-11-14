@@ -183,6 +183,38 @@ function hotelStayEvent(event) {
   };
 }
 
+// Short driver label for Ground titles: "Alex Smith (555-1234)" -> "Alex".
+export function groundDriverShortName(value) {
+  const text = String(value || '')
+    .replace(/\(.*?\)/gu, ' ')
+    .split(/\s[-–—|•]\s|[,;:]|\d/u)[0]
+    .trim();
+  return text.split(/\s+/u)[0] || '';
+}
+
+export function groundDriversLabel(drivers) {
+  if (!Array.isArray(drivers)) {
+    return '';
+  }
+  const names = [];
+  for (const driver of drivers) {
+    const name = groundDriverShortName(driver);
+    if (name && !names.includes(name)) {
+      names.push(name);
+    }
+  }
+  return names.join('/');
+}
+
+function groundFeedTitle(event) {
+  const title = withEmojiPrefix(event.title, '🚐', 'Ground Transportation');
+  const drivers = groundDriversLabel(event.drivers);
+  if (!drivers || title.endsWith(` · ${drivers}`)) {
+    return title;
+  }
+  return `${title} · ${drivers}`;
+}
+
 export function travelCalendarEventsForFeed(events, feed = 'all') {
   if (!travelFeedDefinition(feed)) {
     throw new Error(`Unknown Travel feed: ${feed}`);
@@ -199,7 +231,7 @@ export function travelCalendarEventsForFeed(events, feed = 'all') {
   if (feed === 'ground') {
     return sourceEvents.filter(isGroundEvent).map((event) => ({
       ...withFeedScopedUid(event, 'ground'),
-      title: withEmojiPrefix(event.title, '🚐', 'Ground Transportation'),
+      title: groundFeedTitle(event),
     }));
   }
 

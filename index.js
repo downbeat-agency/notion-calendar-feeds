@@ -5538,6 +5538,12 @@ async function getTravelCalendarData() {
   }
 }
 
+function calendarDriverNames(drivers) {
+  return Array.isArray(drivers)
+    ? drivers.filter((driver) => typeof driver === 'string' && driver.trim()).map((driver) => driver.trim())
+    : [];
+}
+
 // Helper function to process travel events into calendar format
 function processTravelEvents(travelGroupsArray) {
   const allCalendarEvents = [];
@@ -5925,6 +5931,7 @@ function processTravelEvents(travelGroupsArray) {
               description: description.trim(),
               location: location,
               url: url,
+              drivers: calendarDriverNames(transport.drivers),
               type: 'transportation_pickup'
             });
           }
@@ -6002,6 +6009,7 @@ function processTravelEvents(travelGroupsArray) {
               description: description.trim(),
               location: dropOffPresentation.location,
               url: url,
+              drivers: calendarDriverNames(transport.drivers),
               type: 'transportation_dropoff'
             });
           }
